@@ -42,19 +42,36 @@ This repository is strictly organized to provide 100% traceability for evaluatio
 
 ```text
 async-agentic-sdlc/
+├── src/                        # Source code (the Software Factory itself)
+│   ├── core/                   # Pydantic models, observability, env config
+│   ├── agents/                 # Architect, Developer, QA, Reviewer logic
+│   ├── nodes/                  # FSM validation gates (functional tests, SAST)
+│   └── utils/                  # Subprocess + workspace-path-safe helpers
+├── artifacts/                  # Volatile runtime state (created dynamically, ignored by git)
+│   ├── code/                   # Generated production source files
+│   ├── tests/                  # Generated unit test files
+│   ├── logs/                   # Log outputs (sdlc_audit.log)
+│   └── reports/                # Incident reports and json states
 ├── docs/
 │   ├── archive/                # Chronological snapshot history
 │   │   ├── iteration_000/      # Cloud Infra & FSM Architecture Research
 │   │   ├── iteration_001/      # Baseline sequential loop (Trapped Test Sabotage)
 │   │   ├── iteration_002/      # Async Fork-Join & QA Node Isolation (Success)
-│   │   └── iteration_003/      # Observability, Token Tracking & Gemini 2.5 Routing (Current)
+│   │   └── iteration_003/      # Observability, Token Tracking & Gemini 2.5 Routing
+│   │   └── iteration_004/      # Architectural decoupling & modularization
 │   ├── docker-on-windows.md    # Active host runtime configuration
 │   └── setup.md                # Active environment configuration
-├── orchestrator.py             # Current operational workflow engine
+├── orchestrator.py             # Thin entrypoint: wires src/ components + FSM loop
 ├── PRACTICUM.md                # Global Executive Summary & Engineering Journal
 ├── requirements.txt            # Explicit dependency manifest
+├── .gitignore                  # Ignores artifacts/ — runtime state stays out of git
 └── README.md                   # System mission briefing & specifications
 ```
+
+**Separation of concerns:** `src/` holds the committed source code, while `artifacts/` holds
+all volatile runtime state produced by the agents. The repo root stays clean because
+`.gitignore` excludes `artifacts/` — you keep local iteration history without polluting
+`git status`.
 
 ---
 
@@ -64,7 +81,7 @@ async-agentic-sdlc/
 
 For full environment setup (WSL2, Docker, Python venv, Claude CLI), see [docs/setup.md](./docs/setup.md).
 
-Ensure your local environment variable contains a valid Gemini credential and that the Docker engine is running natively (without Docker Desktop if restricted):
+Ensure your local environment variable contains a valid Gemini credential:
 
 ```bash
 export GEMINI_API_KEY="your-api-key-here"

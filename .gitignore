@@ -46,6 +46,9 @@ Thumbs.db
 *.log
 logs/
 
+# Agent-generated artifacts (code, tests, logs, reports)
+artifacts/
+
 # Testing
 .pytest_cache/
 .coverage

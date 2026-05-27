@@ -88,14 +88,14 @@ async def run_developer_node(contract: ArchitectureContract, error_trace: str = 
     await proc.wait()
 
 async def run_qa_generation_node(contract: ArchitectureContract) -> str:
-    """Новый выделенный узел QA-Агента: Физически генерирует файл тестов."""
+    """New dedicated QA-Agent node: physically generates the test file."""
     print("========================================================================")
     print(f"[NODE][QA-GENERATOR] Writing physical test suite based on contract signatures...")
     print("========================================================================")
     
     test_file_name = "test_math_lib.py"
     
-    # Инициируем вызов Gemini для генерации кода тестов на основе контракта
+    # Trigger the Gemini call to generate test code based on the contract
     client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
     prompt = (
         f"You are a QA Engineer Agent. Write a comprehensive, robust Python unittest suite for the following specifications:\n"
@@ -128,7 +128,7 @@ async def run_qa_unit_tests(test_file: str) -> tuple[bool, str]:
     prefix = "  [DOCKER-QA]"
     print(f"{prefix} Initializing ephemeral testing container...")
     
-    # Тестовая команда жестко зашита в логику оркестратора — никаких doctest читов
+    # Test command is hardcoded into the orchestrator logic — no doctest cheats
     test_command = f"python3 -m unittest {test_file}"
     
     cmd = [
@@ -202,7 +202,7 @@ async def main():
     
     contract = await run_architect_node(pr_description)
     
-    # Генерация тестов происходит один раз на этапе планирования (до цикла разработки)
+    # Test generation happens once at the planning stage (before the development loop)
     test_file = await run_qa_generation_node(contract)
 
     max_retries = 3
