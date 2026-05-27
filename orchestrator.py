@@ -1,4 +1,5 @@
 import sys
+import argparse
 import asyncio
 from pathlib import Path
 
@@ -12,11 +13,38 @@ from src.agents.reviewer import run_reviewer_node
 from src.nodes.gates import run_qa_unit_tests, run_security_scan
 
 # ==========================================
+# CLI ARGUMENT PARSER
+# ==========================================
+def parse_args() -> str:
+    parser = argparse.ArgumentParser(
+        description="Antigravity SDLC Orchestrator — pass a task description inline or from a file."
+    )
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument("description", nargs="?", help="Inline task description string.")
+    group.add_argument("-f", "--file", help="Path to a file containing the task description.")
+
+    args = parser.parse_args()
+
+    if args.file:
+        path = Path(args.file)
+        if not path.exists():
+            log.error(f"🚨 File not found: {args.file}")
+            sys.exit(1)
+        return path.read_text(encoding="utf-8")
+
+    if args.description:
+        return args.description
+
+    parser.print_help()
+    sys.exit(0)
+
+
+# ==========================================
 # MAIN ORCHESTRATOR
 # ==========================================
 async def main():
     check_environment()
-    pr_description = "Implement factorial(n) in math_lib.py. Handle negative n with ValueError."
+    pr_description = parse_args()
 
     # Initialize unified context state
     ctx = GlobalPipelineContext(pr_description=pr_description)

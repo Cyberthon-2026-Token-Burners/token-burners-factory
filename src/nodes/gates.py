@@ -12,14 +12,12 @@ from src.utils.subprocess_helpers import stream_subprocess_output
 async def run_qa_unit_tests(test_module: str, artifacts_base_abs: str) -> tuple[bool, list[str]]:
     # Mount framework code read-only and the agent sandbox read-write — never the whole cwd.
     # The artifacts base maps to a FIXED in-container path, so any PIPELINE_ARTIFACTS_BASE works.
-    src_abs = os.path.abspath("src")
     test_command = (
-        "export PYTHONPATH=$PYTHONPATH:/workspace/src:/workspace/artifacts/code:/workspace/artifacts/tests; "
+        "export PYTHONPATH=$PYTHONPATH:/workspace/artifacts/code:/workspace/artifacts/tests; "
         f"python3 -m unittest {test_module}"
     )
     cmd = [
         "docker", "run", "--rm",
-        "-v", f"{src_abs}:/workspace/src:ro",
         "-v", f"{artifacts_base_abs}:/workspace/artifacts:rw",
         "-w", "/workspace",
         "python:3.11-slim",

@@ -18,12 +18,12 @@ async def run_qa_agent_node(ctx: GlobalPipelineContext, error_trace: str = "") -
 
     # Dynamically derive the test file name based on production code
     prod_file = ctx.contract.files_to_modify[0]
-    module_name = Path(prod_file).stem
-    ctx.test_file_name = (ctx.workspace_paths.tests_dir / f"test_{prod_file}").as_posix()
+    module_dot_path = prod_file.removesuffix(".py").replace("/", ".")
+    ctx.test_file_name = (ctx.workspace_paths.tests_dir / f"test_{Path(prod_file).name}").as_posix()
 
     prompt = (
         f"You are a QA Agent. Write a comprehensive, robust Python unittest suite for: {ctx.contract.function_signatures}\n"
-        f"Target module to import: {module_name}\n"
+        f"Target module to import: {module_dot_path}\n"
         f"Strict validation rules to enforce: {ctx.contract.strict_type_validation_rules}\n"
         f"CRITICAL RULE: The generated test suite must be completely deterministic. You are STRICTLY FORBIDDEN from wrapping boundary tests or type validation checks in try-except blocks, pass statements, or conditional if-else assertions. If a type or value is invalid according to the contract, use self.assertRaises() exclusively."
     )
