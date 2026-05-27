@@ -1,6 +1,7 @@
 import os
 import sys
 import asyncio
+from pathlib import Path
 
 from src.core.observability import log, log_token_usage
 from src.core.config import instructor_client, QA_MODEL
@@ -17,7 +18,7 @@ async def run_qa_agent_node(ctx: GlobalPipelineContext, error_trace: str = "") -
 
     # Dynamically derive the test file name based on production code
     prod_file = ctx.contract.files_to_modify[0]
-    module_name = prod_file.replace(".py", "")
+    module_name = Path(prod_file).stem
     ctx.test_file_name = (ctx.workspace_paths.tests_dir / f"test_{prod_file}").as_posix()
 
     prompt = (
