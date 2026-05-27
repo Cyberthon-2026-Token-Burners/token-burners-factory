@@ -48,7 +48,7 @@ async def run_qa_agent_node(ctx: GlobalPipelineContext, error_trace: str = "") -
     ctx.test_code_snapshot = suite.test_code
     log_token_usage("QA Agent", raw_response)
 
-    with open(ctx.test_file_name, "w") as f:
+    with open(ctx.test_file_name, "w", encoding="utf-8") as f:
         f.write(ctx.test_code_snapshot)
 
     log.info("   [THOUGHT] Generated deterministic unittest suite targeting strict type enforcement and contract safety.")

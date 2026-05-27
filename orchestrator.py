@@ -95,7 +95,7 @@ async def main():
     log.error("\n🚨 CIRCUIT BREAKER OPEN: Retries exhausted.")
 
     incident_file = str(ctx.workspace_paths.reports_dir / "incident_report.json")
-    with open(incident_file, "w") as f:
+    with open(incident_file, "w", encoding="utf-8") as f:
         f.write(ctx.model_dump_json(indent=2))
     log.error(f"  └── Incident report written to {incident_file}")
 

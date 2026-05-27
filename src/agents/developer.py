@@ -27,7 +27,7 @@ async def run_developer_node(ctx: GlobalPipelineContext, error_trace: str = "") 
     # Save a snapshot of the fresh code into state
     prod_file = ctx.workspace_paths.code_dir / ctx.contract.files_to_modify[0]
     if os.path.exists(prod_file):
-        with open(prod_file, "r") as f:
+        with open(prod_file, "r", encoding="utf-8") as f:
             ctx.production_code_snapshot = f.read()
 
     log.info(f"   [MUTATION] Modified: {code_files} (Exit Code: {returncode})\n")

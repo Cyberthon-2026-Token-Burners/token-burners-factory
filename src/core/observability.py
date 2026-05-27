@@ -1,6 +1,7 @@
 import sys
 import logging
 from logging.handlers import RotatingFileHandler
+from typing import Any
 
 from src.core.models import LOGS_DIR
 
@@ -35,7 +36,7 @@ log = setup_observability()
 # ==========================================
 # TOKEN OBSERVABILITY HELPER
 # ==========================================
-def log_token_usage(agent_name: str, raw_response: any):
+def log_token_usage(agent_name: str, raw_response: Any):
     """Extracts and logs token usage from Gemini API raw responses."""
     try:
         if hasattr(raw_response, 'usage_metadata') and raw_response.usage_metadata:
