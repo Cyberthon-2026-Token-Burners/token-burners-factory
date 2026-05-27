@@ -1,11 +1,10 @@
-import sys
 import asyncio
 import instructor
-from google.genai.errors import ClientError
 
 from src.core.observability import log, log_token_usage
-from src.core.config import get_genai_client, handle_quota_error, REVIEWER_MODEL
+from src.core.config import get_genai_client, REVIEWER_MODEL
 from src.core.models import ReviewReport, GlobalPipelineContext
+from src.utils.api_retry import with_api_retry
 
 async def run_reviewer_node(ctx: GlobalPipelineContext, qa_success: bool, qa_log: list[str], sec_success: bool, sec_log: list[str]) -> None:
     model_name = REVIEWER_MODEL
@@ -34,45 +33,30 @@ async def run_reviewer_node(ctx: GlobalPipelineContext, qa_success: bool, qa_log
         "the contract (strictly reject any try-except blocks, pass, or softness), and interpret the raw runner outputs."
     )
 
-    max_api_retries = 3
-    for api_attempt in range(1, max_api_retries + 1):
-        try:
-            loop = asyncio.get_running_loop()
-            report, raw_response = await loop.run_in_executor(
-                None, lambda: client.chat.completions.create_with_completion(
-                    model=model_name,
-                    response_model=ReviewReport,
-                    messages=[
-                        {"role": "system", "content": sys_prompt},
-                        {"role": "user", "content": user_content}
-                    ]
-                )
+    @with_api_retry(max_retries=3, agent_name="Reviewer Agent")
+    async def _invoke_llm() -> tuple:
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            None, lambda: client.chat.completions.create_with_completion(
+                model=model_name,
+                response_model=ReviewReport,
+                messages=[
+                    {"role": "system", "content": sys_prompt},
+                    {"role": "user", "content": user_content}
+                ]
             )
-            ctx.review_report = report
-            log_token_usage("Reviewer Agent", raw_response)
+        )
 
-            log.info(f"   [THOUGHT] Multi-angle review processed:")
-            log.info(f"     ├─ [CODE AUDIT] {ctx.review_report.code_quality_analysis}")
-            log.info(f"     ├─ [TEST AUDIT] {ctx.review_report.test_integrity_analysis}")
-            log.info(f"     └─ [LOG INTERPRETATION] {ctx.review_report.log_verification_analysis}")
-            log.info(f"   ├── [GATE][FUNCTIONAL-TESTS] {'PASSED' if qa_success else 'FAILED'}")
-            log.info(f"   ├── [GATE][SAST-SECURITY] {'PASSED' if sec_success else 'FAILED'}")
-            log.info(f"   └── [AUDIT] Code Approved: {ctx.review_report.code_quality_approved} | Tests Approved: {ctx.review_report.test_integrity_approved}\n")
+    report, raw_response = await _invoke_llm()
+    ctx.review_report = report
+    log_token_usage("Reviewer Agent", raw_response)
 
-            log.debug(f"Reviewer Node Output: {ctx.review_report.model_dump_json(indent=2)}")
-            return
-        except ClientError as e:
-            if e.status_code == 429:
-                handle_quota_error(e)
-                sys.exit(1)
-            if api_attempt == max_api_retries:
-                log.error(f"🚨 CRITICAL: Reviewer Agent API call failed after {max_api_retries} attempts.")
-                raise e
-            log.warning(f"Reviewer Agent attempt {api_attempt} failed, retrying...")
-            await asyncio.sleep(2 ** api_attempt)
-        except Exception as e:
-            if api_attempt == max_api_retries:
-                log.error(f"🚨 CRITICAL: Reviewer Agent API call failed after {max_api_retries} attempts.")
-                raise e
-            log.warning(f"Reviewer Agent attempt {api_attempt} failed, retrying...")
-            await asyncio.sleep(2 ** api_attempt)
+    log.info(f"   [THOUGHT] Multi-angle review processed:")
+    log.info(f"     ├─ [CODE AUDIT] {ctx.review_report.code_quality_analysis}")
+    log.info(f"     ├─ [TEST AUDIT] {ctx.review_report.test_integrity_analysis}")
+    log.info(f"     └─ [LOG INTERPRETATION] {ctx.review_report.log_verification_analysis}")
+    log.info(f"   ├── [GATE][FUNCTIONAL-TESTS] {'PASSED' if qa_success else 'FAILED'}")
+    log.info(f"   ├── [GATE][SAST-SECURITY] {'PASSED' if sec_success else 'FAILED'}")
+    log.info(f"   └── [AUDIT] Code Approved: {ctx.review_report.code_quality_approved} | Tests Approved: {ctx.review_report.test_integrity_approved}\n")
+
+    log.debug(f"Reviewer Node Output: {ctx.review_report.model_dump_json(indent=2)}")

@@ -2,11 +2,11 @@ import os
 import sys
 import asyncio
 import instructor
-from google.genai.errors import ClientError
 
 from src.core.observability import log, log_token_usage
-from src.core.config import get_genai_client, handle_quota_error, QA_MODEL
+from src.core.config import get_genai_client, QA_MODEL
 from src.core.models import QATestSuite, GlobalPipelineContext
+from src.utils.api_retry import with_api_retry
 
 async def run_qa_agent_node(ctx: GlobalPipelineContext, error_trace: str = "") -> None:
     model_name = QA_MODEL
@@ -35,43 +35,28 @@ async def run_qa_agent_node(ctx: GlobalPipelineContext, error_trace: str = "") -
     if error_trace:
         prompt += f"\n\nPrevious failure feedback to address:\n{error_trace}"
 
-    max_api_retries = 3
-    for api_attempt in range(1, max_api_retries + 1):
-        try:
-            loop = asyncio.get_running_loop()
-            suite, raw_response = await loop.run_in_executor(
-                None, lambda: client.chat.completions.create_with_completion(
-                    model=model_name,
-                    response_model=QATestSuite,
-                    messages=[
-                        {"role": "system", "content": "You are an automated QA engineer producing pure Python unittest files. No markdown, no commentary."},
-                        {"role": "user", "content": prompt}
-                    ]
-                )
+    @with_api_retry(max_retries=3, agent_name="QA Agent")
+    async def _invoke_llm() -> tuple:
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            None, lambda: client.chat.completions.create_with_completion(
+                model=model_name,
+                response_model=QATestSuite,
+                messages=[
+                    {"role": "system", "content": "You are an automated QA engineer producing pure Python unittest files. No markdown, no commentary."},
+                    {"role": "user", "content": prompt}
+                ]
             )
+        )
 
-            ctx.test_code_snapshot = suite.test_code
-            log_token_usage("QA Agent", raw_response)
+    suite, raw_response = await _invoke_llm()
 
-            with open(ctx.test_file_name, "w") as f:
-                f.write(ctx.test_code_snapshot)
+    ctx.test_code_snapshot = suite.test_code
+    log_token_usage("QA Agent", raw_response)
 
-            log.info("   [THOUGHT] Generated deterministic unittest suite targeting strict type enforcement and contract safety.")
-            log.info(f"   [ARTIFACT] Instantiated test suite at '{ctx.test_file_name}'\n")
-            log.debug(f"QA Agent Output written to {ctx.test_file_name}")
-            return
-        except ClientError as e:
-            if e.status_code == 429:
-                handle_quota_error(e)
-                sys.exit(1)
-            if api_attempt == max_api_retries:
-                log.error(f"🚨 CRITICAL: QA Agent API call failed after {max_api_retries} attempts.")
-                raise e
-            log.warning(f"QA Agent attempt {api_attempt} failed, retrying...")
-            await asyncio.sleep(2 ** api_attempt)
-        except Exception as e:
-            if api_attempt == max_api_retries:
-                log.error(f"🚨 CRITICAL: QA Agent API call failed after {max_api_retries} attempts.")
-                raise e
-            log.warning(f"QA Agent attempt {api_attempt} failed, retrying...")
-            await asyncio.sleep(2 ** api_attempt)
+    with open(ctx.test_file_name, "w") as f:
+        f.write(ctx.test_code_snapshot)
+
+    log.info("   [THOUGHT] Generated deterministic unittest suite targeting strict type enforcement and contract safety.")
+    log.info(f"   [ARTIFACT] Instantiated test suite at '{ctx.test_file_name}'\n")
+    log.debug(f"QA Agent Output written to {ctx.test_file_name}")
