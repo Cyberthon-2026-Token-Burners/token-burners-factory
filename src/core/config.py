@@ -1,6 +1,7 @@
 import os
 import sys
 import shutil
+import instructor
 from google import genai
 from google.genai.errors import ClientError
 
@@ -41,12 +42,24 @@ def check_environment():
     log.info("  ✓ Environment verified.\n")
 
 # ==========================================
-# DYNAMIC GENAI CLIENT INITIALIZER
+# GENAI / INSTRUCTOR CLIENT SINGLETONS
 # ==========================================
 def get_genai_client() -> genai.Client:
-    """Initializes the standard Google AI Studio client."""
+    """Returns the module-level Google AI Studio client singleton."""
+    return _genai_client
+
+
+def _build_genai_client() -> genai.Client:
     log.debug("Initializing Google AI Studio client via GEMINI_API_KEY")
     return genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
+
+
+_genai_client: genai.Client = _build_genai_client()
+
+instructor_client: instructor.Instructor = instructor.from_genai(
+    client=_genai_client,
+    mode=instructor.Mode.GENAI_STRUCTURED_OUTPUTS,
+)
 
 # ==========================================
 # HELPER FOR GRACEFUL QUOTA ERROR HANDLING

@@ -1,8 +1,7 @@
 import asyncio
-import instructor
 
 from src.core.observability import log, log_token_usage
-from src.core.config import get_genai_client, ARCHITECT_MODEL
+from src.core.config import instructor_client, ARCHITECT_MODEL
 from src.core.models import ArchitectureContract, GlobalPipelineContext
 from src.utils.api_retry import with_api_retry
 
@@ -13,18 +12,13 @@ async def run_architect_node(ctx: GlobalPipelineContext) -> None:
     model_name = ARCHITECT_MODEL
     log.info(f"🔷 [ROLE] Architect Agent | [MODEL] {model_name}")
 
-    client = instructor.from_genai(
-        client=get_genai_client(),
-        mode=instructor.Mode.GENAI_STRUCTURED_OUTPUTS,
-    )
-
     sys_prompt = "You are a Principal Architect. Define strict production file mappings, type guards, and function signatures. Be concise. No prose."
 
     @with_api_retry(max_retries=3, agent_name="Architect Agent")
     async def _invoke_llm() -> tuple:
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
-            None, lambda: client.chat.completions.create_with_completion(
+            None, lambda: instructor_client.chat.completions.create_with_completion(
                 model=model_name,
                 response_model=ArchitectureContract,
                 messages=[

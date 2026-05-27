@@ -1,10 +1,9 @@
 import os
 import sys
 import asyncio
-import instructor
 
 from src.core.observability import log, log_token_usage
-from src.core.config import get_genai_client, QA_MODEL
+from src.core.config import instructor_client, QA_MODEL
 from src.core.models import QATestSuite, GlobalPipelineContext
 from src.utils.api_retry import with_api_retry
 
@@ -21,11 +20,6 @@ async def run_qa_agent_node(ctx: GlobalPipelineContext, error_trace: str = "") -
     module_name = prod_file.replace(".py", "")
     ctx.test_file_name = (ctx.workspace_paths.tests_dir / f"test_{prod_file}").as_posix()
 
-    client = instructor.from_genai(
-        client=get_genai_client(),
-        mode=instructor.Mode.GENAI_STRUCTURED_OUTPUTS,
-    )
-
     prompt = (
         f"You are a QA Agent. Write a comprehensive, robust Python unittest suite for: {ctx.contract.function_signatures}\n"
         f"Target module to import: {module_name}\n"
@@ -39,7 +33,7 @@ async def run_qa_agent_node(ctx: GlobalPipelineContext, error_trace: str = "") -
     async def _invoke_llm() -> tuple:
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
-            None, lambda: client.chat.completions.create_with_completion(
+            None, lambda: instructor_client.chat.completions.create_with_completion(
                 model=model_name,
                 response_model=QATestSuite,
                 messages=[

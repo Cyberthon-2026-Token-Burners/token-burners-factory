@@ -1,19 +1,13 @@
 import asyncio
-import instructor
 
 from src.core.observability import log, log_token_usage
-from src.core.config import get_genai_client, REVIEWER_MODEL
+from src.core.config import instructor_client, REVIEWER_MODEL
 from src.core.models import ReviewReport, GlobalPipelineContext
 from src.utils.api_retry import with_api_retry
 
 async def run_reviewer_node(ctx: GlobalPipelineContext, qa_success: bool, qa_log: list[str], sec_success: bool, sec_log: list[str]) -> None:
     model_name = REVIEWER_MODEL
     log.info(f"🔍 [ROLE] Reviewer Agent | [MODEL] {model_name}")
-
-    client = instructor.from_genai(
-        client=get_genai_client(),
-        mode=instructor.Mode.GENAI_STRUCTURED_OUTPUTS,
-    )
 
     qa_report = "\n".join(qa_log) if qa_log else "No logs produced."
     sec_report = "\n".join(sec_log) if sec_log else "No logs produced."
@@ -37,7 +31,7 @@ async def run_reviewer_node(ctx: GlobalPipelineContext, qa_success: bool, qa_log
     async def _invoke_llm() -> tuple:
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
-            None, lambda: client.chat.completions.create_with_completion(
+            None, lambda: instructor_client.chat.completions.create_with_completion(
                 model=model_name,
                 response_model=ReviewReport,
                 messages=[
