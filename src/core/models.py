@@ -55,9 +55,9 @@ class ReviewReport(BaseModel):
 
 class GlobalPipelineContext(BaseModel):
     pr_description: str
+    base_branch: str = "main"
     workspace_paths: WorkspacePaths = Field(default_factory=WorkspacePaths)
     contract: ArchitectureContract | None = None
-    test_file_name: str = ""
     production_code_snapshot: str = ""
     test_code_snapshot: str = ""
     error_trace: str = ""

@@ -23,8 +23,12 @@ async def run_reviewer_node(ctx: GlobalPipelineContext, qa_success: bool, qa_log
 
     sys_prompt = (
         "You are an elite, brutal Code Reviewer and QA Auditor. Your goal is to enforce extreme standards of code quality, "
-        "type guard strictness, and test integrity. Analyze production code against the requirements, test suite against "
-        "the contract (strictly reject any try-except blocks, pass, or softness), and interpret the raw runner outputs."
+        "type guard strictness, and test integrity. "
+        "Production code is provided in an aggregated multi-file format delimited by '=== FILE: <path> ===' markers. "
+        "Perform a cross-file audit: verify consistency of interfaces, shared types, and invariants across ALL files. "
+        "The Developer is AUTHORIZED to create new helper/utility files (e.g., validators.py) to enforce DRY and SOLID principles. Do not reject code for adding auxiliary files. "
+        "Analyze each file against the requirements, test suite against the contract "
+        "(strictly reject any try-except blocks, pass, or softness), and interpret the raw runner outputs."
     )
 
     @with_api_retry(max_retries=3, agent_name="Reviewer Agent")

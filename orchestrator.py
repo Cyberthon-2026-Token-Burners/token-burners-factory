@@ -15,28 +15,31 @@ from src.nodes.gates import run_qa_unit_tests, run_security_scan
 # ==========================================
 # CLI ARGUMENT PARSER
 # ==========================================
-def parse_args() -> str:
+def parse_args() -> tuple[str, str]:
     parser = argparse.ArgumentParser(
         description="Antigravity SDLC Orchestrator — pass a task description inline or from a file."
     )
     group = parser.add_mutually_exclusive_group()
     group.add_argument("description", nargs="?", help="Inline task description string.")
     group.add_argument("-f", "--file", help="Path to a file containing the task description.")
+    parser.add_argument("--base-branch", default="main", help="Base branch of the repository.")
 
     args = parser.parse_args()
 
+    description = ""
     if args.file:
         path = Path(args.file)
         if not path.exists():
             log.error(f"🚨 File not found: {args.file}")
             sys.exit(1)
-        return path.read_text(encoding="utf-8")
+        description = path.read_text(encoding="utf-8")
+    elif args.description:
+        description = args.description
+    else:
+        parser.print_help()
+        sys.exit(0)
 
-    if args.description:
-        return args.description
-
-    parser.print_help()
-    sys.exit(0)
+    return description, args.base_branch
 
 
 # ==========================================
@@ -44,10 +47,10 @@ def parse_args() -> str:
 # ==========================================
 async def main():
     check_environment()
-    pr_description = parse_args()
+    pr_description, base_branch = parse_args()
 
     # Initialize unified context state
-    ctx = GlobalPipelineContext(pr_description=pr_description)
+    ctx = GlobalPipelineContext(pr_description=pr_description, base_branch=base_branch)
     log.debug(f"Initialized global context with PR: {pr_description}")
 
     # 1. Architecture Phase (executed once per session)
@@ -76,10 +79,9 @@ async def main():
         log.debug("Triggering parallel validation gates (QA & Security)")
         qa_result, sec_result = await asyncio.gather(
             run_qa_unit_tests(
-                test_module=Path(ctx.test_file_name).stem,
                 artifacts_base_abs=str(ctx.workspace_paths.code_dir.parent.resolve()),
             ),
-            run_security_scan([str(ctx.workspace_paths.code_dir / f) for f in ctx.contract.files_to_modify]),
+            run_security_scan([str(ctx.workspace_paths.code_dir)]),
         )
         qa_success, qa_lines = qa_result
         sec_success, sec_lines = sec_result

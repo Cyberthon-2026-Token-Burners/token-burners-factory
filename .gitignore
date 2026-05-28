@@ -1,9 +1,30 @@
-# Python
+# ==========================================
+# Runtime Bytecode / Compiled Output
+# ==========================================
 __pycache__/
 *.py[cod]
+*$py.class
 *.pyo
 *.pyd
 *.so
+*.class
+bin/
+obj/
+target/
+
+# ==========================================
+# Testing & Coverage
+# ==========================================
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.mypy_cache/
+.dmypy.json
+
+# ==========================================
+# Package & Dependency Artifacts
+# ==========================================
 *.egg
 *.egg-info/
 dist/
@@ -17,44 +38,51 @@ develop-eggs/
 lib/
 lib64/
 wheels/
+node_modules/
+.pnpm-store/
+.gradle/
+.eslintcache
 
-# Virtual environments
+# ==========================================
+# IDE & Editor
+# ==========================================
+.vscode/
+.idea/
+.vs/
+*.swp
+*.swo
+
+# ==========================================
+# Virtual Environments
+# ==========================================
 .venv/
 .venv*/
 venv/
 venv*/
 env/
 ENV/
-.env
 
-# Environment variables
+# ==========================================
+# Environment Variables & Secrets
+# ==========================================
+.env
 .env.local
 .env.*.local
 *.env
 
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# OS
+# ==========================================
+# OS Artifacts
+# ==========================================
 .DS_Store
 Thumbs.db
 
+# ==========================================
 # Logs
+# ==========================================
 *.log
 logs/
 
-# Agent-generated artifacts (code, tests, logs, reports)
+# ==========================================
+# Pipeline Sandbox Artifacts
+# ==========================================
 artifacts/
-
-# Testing
-.pytest_cache/
-.coverage
-htmlcov/
-.tox/
-
-# mypy
-.mypy_cache/
-.dmypy.json

@@ -1,9 +1,10 @@
-import os
+from pathlib import Path
 
 from src.core.observability import log
 from src.core.config import DEVELOPER_MODEL_LABEL
 from src.core.models import GlobalPipelineContext
 from src.utils.subprocess_helpers import run_claude_cli
+from src.utils.git_helpers import init_sandbox_git, get_pipeline_snapshot_files
 
 async def run_developer_node(ctx: GlobalPipelineContext, error_trace: str = "") -> None:
     model_name = DEVELOPER_MODEL_LABEL
@@ -18,17 +19,24 @@ async def run_developer_node(ctx: GlobalPipelineContext, error_trace: str = "") 
     if error_trace:
         prompt += f"\n\nValidation Failure Context:\n{error_trace}"
 
-    # Deterministically place generated code under the artifacts code dir
+    code_dir = str(ctx.workspace_paths.code_dir)
+    await init_sandbox_git(code_dir, ctx.base_branch)
+
     code_files = [str(ctx.workspace_paths.code_dir / f) for f in ctx.contract.files_to_modify]
-    returncode = await run_claude_cli(prompt, code_files, allowed_root=str(ctx.workspace_paths.code_dir))
+    returncode = await run_claude_cli(prompt, code_files, allowed_root=code_dir)
 
     log.info(f"   [TOKENS] Developer Agent | Tracked out-of-band via ccusage")
 
-    # Save a snapshot of the fresh code into state
-    prod_file = ctx.workspace_paths.code_dir / ctx.contract.files_to_modify[0]
-    if os.path.exists(prod_file):
-        with open(prod_file, "r", encoding="utf-8") as f:
-            ctx.production_code_snapshot = f.read()
+    changed_files = await get_pipeline_snapshot_files(code_dir, ctx.base_branch)
+    parts = []
+    for rel_path in changed_files:
+        abs_path = Path(code_dir) / rel_path
+        if abs_path.exists():
+            parts.append(f"=== FILE: {rel_path} ===\n{abs_path.read_text(encoding='utf-8')}")
+        else:
+            parts.append(f"=== FILE: {rel_path} (DELETED) ===")
+    if parts:
+        ctx.production_code_snapshot = "\n\n".join(parts)
 
-    log.info(f"   [MUTATION] Modified: {code_files} (Exit Code: {returncode})\n")
+    log.info(f"   [MUTATION] Modified: {changed_files} (Exit Code: {returncode})\n")
     log.debug(f"Developer code snapshot:\n{ctx.production_code_snapshot}")

@@ -9,12 +9,13 @@ from src.utils.subprocess_helpers import stream_subprocess_output
 # ==========================================
 # PARALLEL RUNTIME GATES (Subprocess execution)
 # ==========================================
-async def run_qa_unit_tests(test_module: str, artifacts_base_abs: str) -> tuple[bool, list[str]]:
+async def run_qa_unit_tests(artifacts_base_abs: str) -> tuple[bool, list[str]]:
     # Mount framework code read-only and the agent sandbox read-write — never the whole cwd.
     # The artifacts base maps to a FIXED in-container path, so any PIPELINE_ARTIFACTS_BASE works.
+    # Discover ALL per-module test files instead of a single module — QA generates a tree autonomously.
     test_command = (
         "export PYTHONPATH=$PYTHONPATH:/workspace/artifacts/code:/workspace/artifacts/tests; "
-        f"python3 -m unittest {test_module}"
+        "python3 -m unittest discover -s /workspace/artifacts/tests -p 'test_*.py'"
     )
     cmd = [
         "docker", "run", "--rm",
@@ -45,7 +46,7 @@ async def run_security_scan(files: list[str]) -> tuple[bool, list[str]]:
         log.warning("SAST Error: No target execution files specified in contract.")
         return False, ["SAST Error: No target execution files specified in contract."]
 
-    cmd = [sys.executable, "-m", "bandit", "-q"] + files
+    cmd = [sys.executable, "-m", "bandit", "-q", "-r"] + files
     log.debug(f"Executing SAST security gate: {' '.join(cmd)}")
     proc = await asyncio.create_subprocess_exec(*cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     stdout_buffer, stderr_buffer = [], []
