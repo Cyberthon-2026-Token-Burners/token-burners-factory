@@ -3,7 +3,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import mock
 
-from src.core.prompts import get_system_prompt, get_skill
+from src.core.prompts import get_system_prompt, get_system_prompt_sections, get_skill
 
 
 class GetSystemPromptTests(unittest.TestCase):
@@ -28,11 +28,24 @@ class GetSystemPromptTests(unittest.TestCase):
         self.assertIn("/tmp/code", rendered)
 
     def test_qa_prompt_splits_into_system_and_user(self) -> None:
-        raw = get_system_prompt("qa")
-        parts = raw.split("\n---\n", 1)
-        self.assertEqual(len(parts), 2)
-        self.assertIn("automated QA engineer", parts[0])
-        self.assertIn("{module_dot}", parts[1])
+        system, user_template = get_system_prompt_sections("qa")
+        self.assertIn("automated QA engineer", system)
+        self.assertIn("{module_dot}", user_template)
+
+    def test_sections_raises_on_missing_separator(self) -> None:
+        with mock.patch(
+            "src.core.prompts.get_system_prompt", return_value="no separator here"
+        ):
+            with self.assertRaises(ValueError) as ctx:
+                get_system_prompt_sections("qa")
+        self.assertIn("qa", str(ctx.exception))
+
+    def test_sections_raises_on_empty_section(self) -> None:
+        with mock.patch(
+            "src.core.prompts.get_system_prompt", return_value="system rules\n---\n   "
+        ):
+            with self.assertRaises(ValueError):
+                get_system_prompt_sections("qa")
 
     def test_raises_on_missing_agent(self) -> None:
         with self.assertRaises(FileNotFoundError):

@@ -6,7 +6,7 @@ from pathlib import Path
 from src.core.observability import log, log_token_usage
 from src.core.config import QA_MODEL
 from src.core.models import QATestSuite, GlobalPipelineContext
-from src.core.prompts import get_system_prompt, get_skill
+from src.core.prompts import get_system_prompt_sections, get_skill
 from src.utils.llm import run_structured_llm
 from src.utils.git_helpers import init_sandbox_git, get_pipeline_snapshot_files
 
@@ -21,8 +21,7 @@ async def run_qa_agent_node(ctx: GlobalPipelineContext, error_trace: str = "") -
     await init_sandbox_git(str(ctx.workspace_paths.tests_dir), ctx.base_branch)
     tests_dir = ctx.workspace_paths.tests_dir
 
-    qa_raw = get_system_prompt("qa")
-    qa_system_prompt, user_template = qa_raw.split("\n---\n", 1)
+    qa_system_prompt, user_template = get_system_prompt_sections("qa")
     qa_system_prompt += "\n\n" + get_skill("engineering_guide")
 
     shared_rules = get_skill("strict_validation").format(
