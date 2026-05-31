@@ -4,10 +4,10 @@ import asyncio
 from pathlib import Path
 
 from src.core.observability import log, log_token_usage
-from src.core.config import instructor_client, QA_MODEL
+from src.core.config import QA_MODEL
 from src.core.models import QATestSuite, GlobalPipelineContext
 from src.core.prompts import get_system_prompt, get_skill
-from src.utils.api_retry import with_api_retry
+from src.utils.llm import run_structured_llm
 from src.utils.git_helpers import init_sandbox_git, get_pipeline_snapshot_files
 
 async def run_qa_agent_node(ctx: GlobalPipelineContext, error_trace: str = "") -> None:
@@ -38,25 +38,18 @@ async def run_qa_agent_node(ctx: GlobalPipelineContext, error_trace: str = "") -
             feedback=feedback,
         )
 
-    @with_api_retry(max_retries=3, agent_name="QA Agent")
-    async def _invoke_llm(prompt: str) -> tuple:
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(
-            None, lambda: instructor_client.chat.completions.create_with_completion(
-                model=model_name,
-                response_model=QATestSuite,
-                messages=[
-                    {"role": "system", "content": qa_system_prompt},
-                    {"role": "user", "content": prompt}
-                ]
-            )
-        )
-
     async def _generate(module_file: str) -> tuple[str, str, object]:
         slug = module_file.removesuffix(".py").replace("/", "_").replace("\\", "_")
         module_dot = module_file.removesuffix(".py").replace("/", ".").replace("\\", ".")
         test_path = tests_dir / f"test_{slug}.py"
-        suite, raw_response = await _invoke_llm(_build_prompt(module_dot))
+        suite, raw_response = await run_structured_llm(
+            "qa",
+            QATestSuite,
+            [
+                {"role": "system", "content": qa_system_prompt},
+                {"role": "user", "content": _build_prompt(module_dot)},
+            ],
+        )
         return str(test_path), suite.test_code, raw_response
 
     target_modules = [m for m in ctx.contract.files_to_modify if not m.endswith("__init__.py")]

@@ -1,10 +1,8 @@
-import asyncio
-
 from src.core.observability import log, log_token_usage
-from src.core.config import instructor_client, REVIEWER_MODEL
+from src.core.config import REVIEWER_MODEL
 from src.core.models import ReviewReport, GlobalPipelineContext
 from src.core.prompts import get_system_prompt, get_skill
-from src.utils.api_retry import with_api_retry
+from src.utils.llm import run_structured_llm
 
 async def run_reviewer_node(ctx: GlobalPipelineContext, qa_success: bool, qa_log: list[str], sec_success: bool, sec_log: list[str]) -> None:
     model_name = REVIEWER_MODEL
@@ -24,21 +22,14 @@ async def run_reviewer_node(ctx: GlobalPipelineContext, qa_success: bool, qa_log
 
     sys_prompt = get_system_prompt("reviewer") + "\n\n" + get_skill("engineering_guide")
 
-    @with_api_retry(max_retries=3, agent_name="Reviewer Agent")
-    async def _invoke_llm() -> tuple:
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(
-            None, lambda: instructor_client.chat.completions.create_with_completion(
-                model=model_name,
-                response_model=ReviewReport,
-                messages=[
-                    {"role": "system", "content": sys_prompt},
-                    {"role": "user", "content": user_content}
-                ]
-            )
-        )
-
-    report, raw_response = await _invoke_llm()
+    report, raw_response = await run_structured_llm(
+        "reviewer",
+        ReviewReport,
+        [
+            {"role": "system", "content": sys_prompt},
+            {"role": "user", "content": user_content},
+        ],
+    )
     ctx.review_report = report
     log_token_usage("Reviewer Agent", raw_response)
 
