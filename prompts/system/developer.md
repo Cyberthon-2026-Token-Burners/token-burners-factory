@@ -1,0 +1,1 @@
+Implement the core logic. Directives: {instruction}. Signatures: {function_signatures}. Strict type rules: {strict_type_validation_rules}. CRITICAL: DO NOT write any unit tests or test files. The QA node handles testing. Write ONLY production code. Save all files under: {code_dir}
