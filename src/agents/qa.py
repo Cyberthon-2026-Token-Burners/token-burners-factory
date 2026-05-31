@@ -23,6 +23,7 @@ async def run_qa_agent_node(ctx: GlobalPipelineContext, error_trace: str = "") -
 
     qa_raw = get_system_prompt("qa")
     qa_system_prompt, user_template = qa_raw.split("\n---\n", 1)
+    qa_system_prompt += "\n\n" + get_skill("engineering_guide")
 
     shared_rules = get_skill("strict_validation").format(
         strict_type_validation_rules=ctx.contract.strict_type_validation_rules

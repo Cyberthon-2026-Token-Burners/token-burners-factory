@@ -16,8 +16,6 @@ ADR: [0007-prompt-schema-layer-separation](./docs/adr/0007-prompt-schema-layer-s
 - `tests/framework/test_prompts.py` — 9-test suite covering static load, template rendering, QA split format, `FileNotFoundError` on missing agents/skills, cache identity, and directory resolution.
 - `### Output JSON Schema Semantics` sections in `prompts/system/architect.md` and `prompts/system/reviewer.md` binding per-key behavioral rules (bool type guard, DRY/DI enforcement, try-except prohibition, Phantom-file triage) to their JSON output keys.
 - `.ai/skills/` — IDE meta-tool skill files (`adr_generation.md`, `docs_sync.md`, `practicum_update.md`) for project governance automation.
-- `tag_history.sh` — utility script generating annotated Git tags for completed iterations.
-- `src/tickets/` — ticket files co-located with source (moved from archive).
 
 ### Changed
 - All four agent modules (`architect.py`, `developer.py`, `qa.py`, `reviewer.py`) now load system prompts via `get_system_prompt()` instead of inline string literals.

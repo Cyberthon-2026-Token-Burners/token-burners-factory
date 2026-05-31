@@ -16,13 +16,13 @@ Establish a strict boundary between the infrastructure schema layer and the prom
 
 Three FSM pipeline runs validated the behavioral rules relocated in this ADR:
 
-| Task | Cycles | Critical Event |
-| :--- | :---: | :--- |
-| Prime Number Checker | 2 | Reviewer distinguished Developer code correctness from QA test failure — `ValueError` contract honored, tests rejected with exact fix payload. |
-| Fibonacci Calculator | 1 | `bool`-subclass type guard fired correctly; `isinstance(n, bool)` checked before `isinstance(n, int)`. Zero false positives. |
-| Geometry Package | 2 | Reviewer detected DRY violation (`_validate_numeric` duplicated across `shapes.py` / `volume.py`), issued refactor directive; Triage classified `validators.py` as Valid Utility on cycle 2. |
+| Task | Cycles | Tests | SAST | Critical Event |
+| :--- | :---: | :---: | :---: | :--- |
+| Prime Number Checker | 1 | 32 | 0 | Reference run, approved on the first cycle (`checkpoint_1.json`). Architect mandated the `isinstance(n, int) and not isinstance(n, bool)` TypeError guard; QA emitted 32 deterministic `assertRaises` tests with zero Test Softening. |
+| Fibonacci Calculator | 1 | 16 | 0 | Iterative O(n)/O(1) contract enforced (no recursion); negative index → `ValueError`, `bool`/`float` → `TypeError`, with the `bool`-subclass guard checked before `int`. |
+| Geometry Package | 3 | 70 | 0 | DI enforced for `Cylinder`/`Cuboid` (constructor-injected `Circle`/`Rectangle`); self-heal survived cross-file import defects and path-conflict Triage before converging (`current_attempt: 4` in `checkpoint_3.json`). QA Fan-Out produced 70 cross-module tests. |
 
-**Key finding:** The Reviewer's ability to distinguish code correctness from test correctness (Task 1) and to apply the Phantom vs. Utility Triage (Task 3) both depend on prompt-level behavioral directives that were previously embedded in `Field(description=...)`. Relocating them to `### Output JSON Schema Semantics` in `reviewer.md` confirmed these rules are load-bearing and must be co-located with the agent's reasoning context, not the data schema.
+**Key finding:** The relocated directives stayed load-bearing under load. The Geometry run (Task 3) exercised the Phantom-vs-Utility Triage and the DI invariant across three self-heal cycles, while the domain-isolation audit confirmed **zero system-prompt leakage into the sandbox** (`artifacts/code/`) — agent judgment now resolves from `prompts/system/*.md` plus the shared `prompts/skills/engineering_guide.md`, contaminating neither the Pydantic schema nor the generated output. Co-locating these rules with the agent's reasoning context, not the data schema, is what makes them both evolvable and traceable.
 
 ## Consequences
 * **Pros**: Single source of truth for agent behavior (system prompts); prompt tuning requires no Python edits or core redeploy; schema layer carries pure structural intent; semantics are bound explicitly to output keys.

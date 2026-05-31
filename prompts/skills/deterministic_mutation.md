@@ -14,4 +14,5 @@ Apply this skill when fixing code after a validation gate failure (Functional QA
 4. **Verification**: Run code compilation checks locally before returning control.
 
 ## Output Format
+
 Return ONLY the modified diff block or the updated file content. Zero conversational explanations.

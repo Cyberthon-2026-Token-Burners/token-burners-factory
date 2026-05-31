@@ -49,6 +49,10 @@ async-agentic-sdlc/
 │   ├── agents/                 # Architect, Developer, QA, Reviewer logic
 │   ├── nodes/                  # FSM validation gates (functional tests, SAST)
 │   └── utils/                  # Subprocess + workspace-path-safe helpers
+├── prompts/                    # Runtime agent instructions (decoupled from src/ logic)
+│   ├── system/                 # Per-role system prompts (planner, architect, developer, qa, reviewer)
+│   └── skills/                 # Reusable prompt fragments injected into agents (engineering_guide, strict_validation, deterministic_mutation)
+├── tickets/                    # Sample requirement tickets consumed via -f / --file
 ├── artifacts/                  # Volatile runtime state (created dynamically, ignored by git)
 │   ├── code/                   # Generated production source files
 │   ├── tests/                  # Generated unit test files
@@ -69,7 +73,6 @@ async-agentic-sdlc/
 ├── orchestrator.py             # Thin entrypoint: wires src/ components + FSM loop
 ├── CHANGELOG.md                # Release history (Keep a Changelog), linked to ADRs
 ├── PRACTICUM.md                # Project manifest & Key Engineering Takeaways
-├── tag_history.sh              # Annotated Git tags for completed iterations
 ├── requirements.txt            # Explicit dependency manifest
 ├── .gitignore                  # Ignores artifacts/ — runtime state stays out of git
 └── README.md                   # System mission briefing & specifications

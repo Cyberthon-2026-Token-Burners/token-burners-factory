@@ -3,7 +3,7 @@ from pathlib import Path
 from src.core.observability import log
 from src.core.config import DEVELOPER_MODEL_LABEL
 from src.core.models import GlobalPipelineContext
-from src.core.prompts import get_system_prompt
+from src.core.prompts import get_system_prompt, get_skill
 from src.utils.subprocess_helpers import run_claude_cli
 from src.utils.git_helpers import init_sandbox_git, get_pipeline_snapshot_files
 
@@ -16,9 +16,11 @@ async def run_developer_node(ctx: GlobalPipelineContext, error_trace: str = "") 
         function_signatures=ctx.contract.function_signatures,
         strict_type_validation_rules=ctx.contract.strict_type_validation_rules,
         code_dir=ctx.workspace_paths.code_dir,
-    )
+    ) + "\n\n" + get_skill("engineering_guide")
+    
     if error_trace:
         prompt += f"\n\nValidation Failure Context:\n{error_trace}"
+        prompt += "\n\n" + get_skill("deterministic_mutation")
 
     code_dir = str(ctx.workspace_paths.code_dir)
     await init_sandbox_git(code_dir, ctx.base_branch)

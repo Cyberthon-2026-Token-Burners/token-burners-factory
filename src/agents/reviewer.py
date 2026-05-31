@@ -3,7 +3,7 @@ import asyncio
 from src.core.observability import log, log_token_usage
 from src.core.config import instructor_client, REVIEWER_MODEL
 from src.core.models import ReviewReport, GlobalPipelineContext
-from src.core.prompts import get_system_prompt
+from src.core.prompts import get_system_prompt, get_skill
 from src.utils.api_retry import with_api_retry
 
 async def run_reviewer_node(ctx: GlobalPipelineContext, qa_success: bool, qa_log: list[str], sec_success: bool, sec_log: list[str]) -> None:
@@ -22,7 +22,7 @@ async def run_reviewer_node(ctx: GlobalPipelineContext, qa_success: bool, qa_log
         f"=== SAST SECURITY SCAN ({'PASSED' if sec_success else 'FAILED'}) ===\n{sec_report}"
     )
 
-    sys_prompt = get_system_prompt("reviewer")
+    sys_prompt = get_system_prompt("reviewer") + "\n\n" + get_skill("engineering_guide")
 
     @with_api_retry(max_retries=3, agent_name="Reviewer Agent")
     async def _invoke_llm() -> tuple:
