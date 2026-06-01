@@ -16,6 +16,13 @@ QA_MODEL = "gemini-2.5-flash"
 REVIEWER_MODEL = "gemini-2.5-flash"
 DEVELOPER_MODEL_LABEL = "Claude CLI Wrapper"  # real model is managed by the Claude CLI config
 
+# Role -> (model, human-readable agent name) for structured (instructor) LLM calls.
+ROLE_MODELS = {
+    "architect": (ARCHITECT_MODEL, "Architect Agent"),
+    "qa":        (QA_MODEL,        "QA Agent"),
+    "reviewer":  (REVIEWER_MODEL,  "Reviewer Agent"),
+}
+
 # ==========================================
 # ENVIRONMENT CHECKER
 # ==========================================
