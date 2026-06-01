@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from src.core.observability import log, reconfigure_logging
 from src.core.config import check_environment
 from src.core.models import GlobalPipelineContext, WorkspacePaths, RUNS_BASE
+from src.utils.git_helpers import get_git_root
 from src.agents.architect import run_architect_node
 from src.agents.qa import run_qa_agent_node
 from src.agents.developer import run_developer_node
@@ -29,6 +30,7 @@ class RunConfig:
     ticket: str | None = None
     src_dir: str = "src/"
     tests_dir: str = "tests/"
+    push: bool = False
 
 
 def parse_args() -> RunConfig:
@@ -45,6 +47,7 @@ def parse_args() -> RunConfig:
     parser.add_argument("--base-branch", default="main", help="Base branch of the repository.")
     parser.add_argument("--resume", type=Path, help="Path to a checkpoint JSON file.")
     parser.add_argument("--reset-attempts", action="store_true", help="Reset circuit breaker counter on resume.")
+    parser.add_argument("--push", action="store_true", help="Push the feature branch to origin after the atomic success commit.")
 
     args = parser.parse_args()
 
@@ -56,6 +59,7 @@ def parse_args() -> RunConfig:
             reset_attempts=args.reset_attempts,
             src_dir=args.src_dir,
             tests_dir=args.tests_dir,
+            push=args.push,
         )
 
     # Fresh run: a target repo and ticket are mandatory for git-anchored bootstrapping.
@@ -84,6 +88,7 @@ def parse_args() -> RunConfig:
         ticket=args.ticket,
         src_dir=args.src_dir,
         tests_dir=args.tests_dir,
+        push=args.push,
     )
 
 
@@ -148,6 +153,64 @@ async def bootstrap_session(cfg: RunConfig) -> tuple[Path, WorkspacePaths]:
 
 
 # ==========================================
+# ATOMIC SUCCESS TRANSACTION
+# ==========================================
+async def _has_staged_changes(repo_root: str) -> bool:
+    """True when the index holds staged changes vs HEAD — the empty-commit guard.
+
+    ``git diff --cached --quiet`` exits 0 when nothing is staged and 1 when there ARE staged
+    changes, so this can't go through ``_run_checked`` (exit 1 is the normal signal, not an error).
+    """
+    env = os.environ.copy()
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    proc = await asyncio.create_subprocess_exec(
+        "git", "-C", repo_root, "diff", "--cached", "--quiet",
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, env=env,
+    )
+    _stdout, stderr = await proc.communicate()
+    if proc.returncode == 0:
+        return False
+    if proc.returncode == 1:
+        return True
+    log.error(f"🚨 staged-change check failed (exit {proc.returncode}): {stderr.decode(errors='replace').strip()}")
+    sys.exit(1)
+
+
+async def finalize_transaction(ctx: GlobalPipelineContext, push: bool = False) -> None:
+    """Commits the staged delta atomically on full success; optionally pushes the branch.
+
+    Agents only stage into the index across cycles; this is the single transactional commit so the
+    ``feat/ticket-<id>`` branch never accrues intermediate self-healing commits.
+    """
+    repo_root = await get_git_root(str(ctx.workspace_paths.code_dir))
+
+    if not await _has_staged_changes(repo_root):
+        log.warning("🟡 No staged changes in the index — skipping final commit.")
+        return
+
+    desc = (ctx.pr_description or "").strip()
+    summary = next((line.strip() for line in desc.splitlines() if line.strip()), "") if desc else ""
+    summary = (summary or ctx.ticket or "automated change")[:72]
+    subject = f"feat({ctx.ticket or 'ticket'}): {summary}"
+
+    # Pin a committer identity so the commit succeeds even when the clone inherits no global git config.
+    await _run_checked(
+        ["git", "-C", repo_root,
+         "-c", "user.email=pipeline@sdlc.local", "-c", "user.name=Pipeline",
+         "commit", "-m", subject],
+        "git commit",
+    )
+    log.info(f"✅ Atomic commit on feat/ticket-{ctx.ticket}: {subject}")
+
+    if push:
+        await _run_checked(
+            ["git", "-C", repo_root, "push", "-u", "origin", "HEAD"],
+            "git push", timeout=GIT_NETWORK_TIMEOUT,
+        )
+        log.info("⬆️  Pushed feature branch to origin.")
+
+
+# ==========================================
 # MAIN ORCHESTRATOR
 # ==========================================
 async def main():
@@ -170,6 +233,7 @@ async def main():
         ctx = GlobalPipelineContext(
             pr_description=cfg.description or "",
             base_branch=cfg.base_branch,
+            ticket=cfg.ticket or "",
             workspace_paths=paths,
         )
         log.debug(f"Initialized global context for run {run_dir} with PR: {cfg.description}")
@@ -262,6 +326,7 @@ async def main():
 
         if all_gates_passed:
             log.info("🟩 PIPELINE SUCCESS: All validation gates passed.")
+            await finalize_transaction(ctx, push=cfg.push)
             return
 
     # Escalation on Circuit Breaker open

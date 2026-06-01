@@ -85,6 +85,14 @@ class ParseArgsFreshRunTests(unittest.TestCase):
         self.assertEqual(cfg.src_dir, "app/")
         self.assertEqual(cfg.tests_dir, "spec/")
 
+    def test_push_flag_defaults_false_and_opts_in(self) -> None:
+        # Arrange / Act — default off.
+        with mock.patch.object(sys, "argv", ["orchestrator.py", "--repo", "r", "--ticket", "T"]):
+            self.assertFalse(orchestrator.parse_args().push)
+        # Act — explicit opt-in.
+        with mock.patch.object(sys, "argv", ["orchestrator.py", "--repo", "r", "--ticket", "T", "--push"]):
+            self.assertTrue(orchestrator.parse_args().push)
+
 
 class MainResumeSkipFlowTests(unittest.IsolatedAsyncioTestCase):
     """Resume flow must bypass completed FSM nodes and still checkpoint each cycle."""
@@ -133,6 +141,7 @@ class MainResumeSkipFlowTests(unittest.IsolatedAsyncioTestCase):
                 mock.patch.object(orchestrator, "run_reviewer_node", new=AsyncMock(side_effect=_set_approved_review)),
                 mock.patch.object(orchestrator, "run_qa_unit_tests", new=AsyncMock(return_value=(True, []))),
                 mock.patch.object(orchestrator, "run_security_scan", new=AsyncMock(return_value=(True, []))),
+                mock.patch.object(orchestrator, "finalize_transaction", new_callable=AsyncMock),
                 mock.patch.object(GlobalPipelineContext, "save_checkpoint", autospec=True) as save_checkpoint,
             ):
                 # Act
@@ -201,6 +210,7 @@ class MainCheckpointWritePointsTests(unittest.IsolatedAsyncioTestCase):
                 mock.patch.object(orchestrator, "run_reviewer_node", new=AsyncMock(side_effect=_set_approved_review)),
                 mock.patch.object(orchestrator, "run_qa_unit_tests", new=AsyncMock(return_value=(True, []))),
                 mock.patch.object(orchestrator, "run_security_scan", new=AsyncMock(return_value=(True, []))),
+                mock.patch.object(orchestrator, "finalize_transaction", new_callable=AsyncMock),
                 mock.patch.object(orchestrator, "GlobalPipelineContext", wraps=GlobalPipelineContext) as wrapped_ctx_cls,
             ):
                 # Ensure freshly created context uses isolated reports dir for deterministic assertion.
@@ -259,6 +269,7 @@ class MainCheckpointWritePointsTests(unittest.IsolatedAsyncioTestCase):
                 mock.patch.object(orchestrator, "run_reviewer_node", new=AsyncMock(side_effect=_set_approved_review)),
                 mock.patch.object(orchestrator, "run_qa_unit_tests", new=AsyncMock(return_value=(True, []))),
                 mock.patch.object(orchestrator, "run_security_scan", new=AsyncMock(return_value=(True, []))),
+                mock.patch.object(orchestrator, "finalize_transaction", new_callable=AsyncMock),
                 mock.patch.object(GlobalPipelineContext, "save_checkpoint", autospec=True) as save_checkpoint,
             ):
                 # Act
@@ -327,6 +338,7 @@ class MainCheckpointWritePointsTests(unittest.IsolatedAsyncioTestCase):
                 mock.patch.object(orchestrator, "run_reviewer_node", new=AsyncMock(side_effect=_review_reject_then_approve)),
                 mock.patch.object(orchestrator, "run_qa_unit_tests", new=AsyncMock(side_effect=[(False, ["fail"]), (True, [])])),
                 mock.patch.object(orchestrator, "run_security_scan", new=AsyncMock(return_value=(True, []))),
+                mock.patch.object(orchestrator, "finalize_transaction", new_callable=AsyncMock),
                 mock.patch.object(orchestrator, "GlobalPipelineContext", wraps=GlobalPipelineContext) as wrapped_ctx_cls,
             ):
                 # Ensure freshly created context uses isolated reports dir for deterministic assertion.
@@ -405,6 +417,7 @@ class ResumeFsmRecoveryTests(unittest.IsolatedAsyncioTestCase):
                 mock.patch.object(orchestrator, "run_reviewer_node", new=AsyncMock(side_effect=_approve)),
                 mock.patch.object(orchestrator, "run_qa_unit_tests", new=AsyncMock(return_value=(True, []))),
                 mock.patch.object(orchestrator, "run_security_scan", new=AsyncMock(return_value=(True, []))),
+                mock.patch.object(orchestrator, "finalize_transaction", new_callable=AsyncMock),
             ):
                 # Act
                 await orchestrator.main()
@@ -468,6 +481,7 @@ class ResumeFsmRecoveryTests(unittest.IsolatedAsyncioTestCase):
                 mock.patch.object(orchestrator, "run_reviewer_node", new=AsyncMock(side_effect=_approve)),
                 mock.patch.object(orchestrator, "run_qa_unit_tests", new=AsyncMock(return_value=(True, []))),
                 mock.patch.object(orchestrator, "run_security_scan", new=AsyncMock(return_value=(True, []))),
+                mock.patch.object(orchestrator, "finalize_transaction", new_callable=AsyncMock),
             ):
                 # Act
                 await orchestrator.main()
@@ -513,6 +527,7 @@ class ResumeFsmRecoveryTests(unittest.IsolatedAsyncioTestCase):
                 mock.patch.object(orchestrator, "run_reviewer_node", new_callable=AsyncMock) as reviewer,
                 mock.patch.object(orchestrator, "run_qa_unit_tests", new=AsyncMock(return_value=(True, []))),
                 mock.patch.object(orchestrator, "run_security_scan", new=AsyncMock(return_value=(True, []))),
+                mock.patch.object(orchestrator, "finalize_transaction", new_callable=AsyncMock),
             ):
                 with self.assertRaises(SystemExit) as exit_ctx:
                     await orchestrator.main()
@@ -578,6 +593,7 @@ class ResumeFsmRecoveryTests(unittest.IsolatedAsyncioTestCase):
                 mock.patch.object(orchestrator, "run_reviewer_node", new=AsyncMock(side_effect=_approve)),
                 mock.patch.object(orchestrator, "run_qa_unit_tests", new=AsyncMock(return_value=(True, []))),
                 mock.patch.object(orchestrator, "run_security_scan", new=AsyncMock(return_value=(True, []))),
+                mock.patch.object(orchestrator, "finalize_transaction", new_callable=AsyncMock),
             ):
                 # Act
                 await orchestrator.main()
@@ -677,6 +693,93 @@ class BootstrapSessionTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(exit_ctx.exception.code, 1)
             proc.kill.assert_called_once()
             proc.wait.assert_awaited_once()
+
+
+class HasStagedChangesTests(unittest.IsolatedAsyncioTestCase):
+    """The empty-commit guard maps `git diff --cached --quiet` exit codes correctly."""
+
+    async def _run(self, returncode: int, stderr: bytes = b"") -> bool:
+        proc = mock.MagicMock()
+        proc.returncode = returncode
+        proc.communicate = AsyncMock(return_value=(b"", stderr))
+        with mock.patch("asyncio.create_subprocess_exec", new=AsyncMock(return_value=proc)):
+            return await orchestrator._has_staged_changes("/repo")
+
+    async def test_exit_zero_means_index_clean(self) -> None:
+        self.assertFalse(await self._run(0))
+
+    async def test_exit_one_means_staged_changes(self) -> None:
+        self.assertTrue(await self._run(1))
+
+    async def test_unexpected_exit_aborts(self) -> None:
+        with self.assertRaises(SystemExit):
+            await self._run(128, b"fatal: not a git repo")
+
+
+class FinalizeTransactionTests(unittest.IsolatedAsyncioTestCase):
+    """The success transaction commits the staged delta atomically (and optionally pushes)."""
+
+    def _ctx(self, base: Path) -> GlobalPipelineContext:
+        paths = WorkspacePaths(
+            code_dir=base / "code", tests_dir=base / "tests",
+            logs_dir=base / "logs", reports_dir=base / "reports",
+        )
+        return GlobalPipelineContext(
+            pr_description="add two ints", base_branch="main",
+            ticket="DEMO-1", workspace_paths=paths,
+        )
+
+    async def test_commits_when_index_has_staged_changes(self) -> None:
+        # Arrange
+        with TemporaryDirectory() as td:
+            ctx = self._ctx(Path(td))
+            proc = mock.MagicMock()
+            proc.returncode = 0
+            proc.communicate = AsyncMock(return_value=(b"", b""))
+            with (
+                mock.patch.object(orchestrator, "get_git_root", new=AsyncMock(return_value="/repo")),
+                mock.patch.object(orchestrator, "_has_staged_changes", new=AsyncMock(return_value=True)),
+                mock.patch("asyncio.create_subprocess_exec", new=AsyncMock(return_value=proc)) as exec_mock,
+            ):
+                # Act
+                await orchestrator.finalize_transaction(ctx, push=False)
+            # Assert — a single commit carrying the conventional subject; no push.
+            self.assertEqual(exec_mock.call_count, 1)
+            commit_cmd = exec_mock.call_args_list[0].args
+            self.assertIn("commit", commit_cmd)
+            self.assertIn("feat(DEMO-1): add two ints", commit_cmd)
+
+    async def test_skips_commit_when_index_clean(self) -> None:
+        # Arrange — empty-commit guard trips.
+        with TemporaryDirectory() as td:
+            ctx = self._ctx(Path(td))
+            with (
+                mock.patch.object(orchestrator, "get_git_root", new=AsyncMock(return_value="/repo")),
+                mock.patch.object(orchestrator, "_has_staged_changes", new=AsyncMock(return_value=False)),
+                mock.patch("asyncio.create_subprocess_exec", new=AsyncMock()) as exec_mock,
+            ):
+                # Act
+                await orchestrator.finalize_transaction(ctx, push=False)
+            # Assert — no commit subprocess at all.
+            exec_mock.assert_not_called()
+
+    async def test_push_issues_a_second_subprocess(self) -> None:
+        # Arrange
+        with TemporaryDirectory() as td:
+            ctx = self._ctx(Path(td))
+            proc = mock.MagicMock()
+            proc.returncode = 0
+            proc.communicate = AsyncMock(return_value=(b"", b""))
+            with (
+                mock.patch.object(orchestrator, "get_git_root", new=AsyncMock(return_value="/repo")),
+                mock.patch.object(orchestrator, "_has_staged_changes", new=AsyncMock(return_value=True)),
+                mock.patch("asyncio.create_subprocess_exec", new=AsyncMock(return_value=proc)) as exec_mock,
+            ):
+                # Act
+                await orchestrator.finalize_transaction(ctx, push=True)
+            # Assert — commit then push.
+            self.assertEqual(exec_mock.call_count, 2)
+            self.assertIn("push", exec_mock.call_args_list[1].args)
 
 
 if __name__ == "__main__":

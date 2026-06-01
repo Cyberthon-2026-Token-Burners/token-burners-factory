@@ -179,6 +179,19 @@ class PipelineEndToEndTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("def add", data["production_code_snapshot"])
             self.assertIn("CalculatorTests", data["test_code_snapshot"])
 
+            # Assert — the atomic success transaction produced exactly one commit on the feature
+            # branch (seed + atomic) with the conventional subject. No push (hermetic).
+            subject = subprocess.run(
+                ["git", "-C", str(repo_dir), "log", "-1", "--pretty=%s"],
+                capture_output=True, text=True, check=True,
+            ).stdout.strip()
+            self.assertEqual(subject, "feat(DEMO-1): add two ints")
+            count = int(subprocess.run(
+                ["git", "-C", str(repo_dir), "rev-list", "--count", "HEAD"],
+                capture_output=True, text=True, check=True,
+            ).stdout.strip())
+            self.assertGreaterEqual(count, 2)
+
 
 if __name__ == "__main__":
     unittest.main()
