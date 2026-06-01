@@ -1,12 +1,6 @@
-import os
 import asyncio
-from pathlib import Path
 
 from src.core.observability import log
-
-_PROJECT_ROOT = Path(__file__).parents[2]
-_GITIGNORE_TEMPLATE = _PROJECT_ROOT / ".gitignore"
-_GITIGNORE_FALLBACK = "__pycache__/\n"
 
 
 async def _run_git(args: list[str], cwd: str) -> tuple[int, str]:
@@ -20,39 +14,33 @@ async def _run_git(args: list[str], cwd: str) -> tuple[int, str]:
     return proc.returncode, stdout.decode().strip()
 
 
-def _deploy_gitignore(repo_path: str) -> None:
-    dest = Path(repo_path) / ".gitignore"
-    if _GITIGNORE_TEMPLATE.exists():
-        content = _GITIGNORE_TEMPLATE.read_text(encoding="utf-8")
-        dest.write_text(content, encoding="utf-8")
-        log.debug(f"   [GIT] Deployed .gitignore template to {repo_path}")
-    else:
-        log.warning(f"   [GIT] .gitignore template not found at {_GITIGNORE_TEMPLATE} — writing minimal fallback")
-        dest.write_text(_GITIGNORE_FALLBACK, encoding="utf-8")
+async def get_git_root(path: str) -> str:
+    """Resolves the root of the git working tree containing ``path``.
+
+    Built on ``git rev-parse --show-toplevel`` so callers never guess the root via ``.parent`` —
+    this stays correct for nested source layouts (e.g. ``--src-dir backend/app/src``).
+    """
+    returncode, output = await _run_git(["rev-parse", "--show-toplevel"], cwd=path)
+    if returncode != 0:
+        raise RuntimeError(f"Not a git repository: {path}")
+    return output
 
 
-async def init_sandbox_git(repo_path: str, base_branch: str) -> None:
-    if not os.path.isdir(os.path.join(repo_path, ".git")):
-        await _run_git(["init"], cwd=repo_path)
-        await _run_git(["config", "user.email", "pipeline@sdlc.local"], cwd=repo_path)
-        await _run_git(["config", "user.name", "Pipeline"], cwd=repo_path)
-        _deploy_gitignore(repo_path)
-        await _run_git(["add", ".gitignore"], cwd=repo_path)
-        await _run_git(["commit", "-m", "Initial commit with gitignore"], cwd=repo_path)
+async def get_pipeline_snapshot_files(repo_path: str, base_branch: str, subdir: str | None = None) -> list[str]:
+    """Returns the paths changed against ``base_branch``, scoped to ``subdir`` when given.
 
-        # Pin the base branch name as the immutable anchor.
-        await _run_git(["branch", "-m", base_branch], cwd=repo_path)
+    Stages with ``git add -A`` first so brand-new (untracked) files are included, then takes the
+    INDEX diff (``git diff --cached``) — a plain ``git diff`` would silently omit untracked files and
+    starve the Reviewer of context. Paths are repo-root-relative; the ``subdir`` pathspec isolates an
+    agent to its own subtree within the shared index. Agents never commit — changes remain staged.
+    """
+    await _run_git(["add", "-A"], cwd=repo_path)
 
-        # Isolate the agent on a working branch — the base branch never moves.
-        await _run_git(["checkout", "-b", "agent-workspace"], cwd=repo_path)
-        log.info(f"   [GIT] Initialized sandbox at {repo_path} on branch agent-workspace (base: {base_branch})")
+    diff_args = ["diff", "--cached", base_branch, "--name-only"]
+    if subdir:
+        diff_args += ["--", subdir]
 
-
-async def get_pipeline_snapshot_files(repo_path: str, base_branch: str) -> list[str]:
-    await _run_git(["add", "."], cwd=repo_path)
-
-    # Strict cumulative delta against the anchor branch.
-    returncode, output = await _run_git(["diff", base_branch, "--name-only"], cwd=repo_path)
+    returncode, output = await _run_git(diff_args, cwd=repo_path)
 
     if returncode != 0:
         log.error(f"🚨 CRITICAL: Base branch '{base_branch}' not found for diff.")
@@ -62,7 +50,3 @@ async def get_pipeline_snapshot_files(repo_path: str, base_branch: str) -> list[
     if ".gitignore" in files:
         files.remove(".gitignore")
     return files
-
-
-async def commit_sandbox(repo_path: str, message: str) -> None:
-    await _run_git(["commit", "-m", message], cwd=repo_path)

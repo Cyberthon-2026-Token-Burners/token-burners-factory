@@ -213,7 +213,8 @@ async def main():
         log.debug("Triggering parallel validation gates (QA & Security)")
         qa_result, sec_result = await asyncio.gather(
             run_qa_unit_tests(
-                artifacts_base_abs=str(ctx.workspace_paths.code_dir.parent.resolve()),
+                code_dir=str(ctx.workspace_paths.code_dir),
+                tests_dir=str(ctx.workspace_paths.tests_dir),
             ),
             run_security_scan([str(ctx.workspace_paths.code_dir)]),
         )

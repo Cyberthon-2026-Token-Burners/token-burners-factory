@@ -106,6 +106,8 @@ class PipelineEndToEndTests(unittest.IsolatedAsyncioTestCase):
         (source / "README.md").write_text("seed\n", encoding="utf-8")
         _git(["add", "."], source)
         _git(["commit", "-m", "seed commit"], source)
+        # Normalise the default branch to 'main' so ctx.base_branch="main" resolves in the clone.
+        _git(["branch", "-M", "main"], source)
         return source
 
     async def test_full_pipeline_clones_creates_real_files_and_commits(self) -> None:
