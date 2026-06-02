@@ -752,6 +752,9 @@ class FinalizeTransactionTests(unittest.IsolatedAsyncioTestCase):
             commit_cmd = exec_mock.call_args_list[0].args
             self.assertIn("commit", commit_cmd)
             self.assertIn("feat(DEMO-1): add two ints", commit_cmd)
+            # Identity is pinned dynamically from the ticket.
+            self.assertIn("user.name=AI Agent (DEMO-1)", commit_cmd)
+            self.assertIn("user.email=agent-demo-1@sdlc-factory.local", commit_cmd)
 
     async def test_skips_commit_when_index_clean(self) -> None:
         # Arrange — empty-commit guard trips.
@@ -783,6 +786,9 @@ class FinalizeTransactionTests(unittest.IsolatedAsyncioTestCase):
                 await orchestrator.finalize_transaction(ctx, push=True)
             # Assert — commit then push.
             self.assertEqual(exec_mock.call_count, 2)
+            commit_cmd = exec_mock.call_args_list[0].args
+            self.assertIn("user.name=AI Agent (DEMO-1)", commit_cmd)
+            self.assertIn("user.email=agent-demo-1@sdlc-factory.local", commit_cmd)
             self.assertIn("push", exec_mock.call_args_list[1].args)
 
 

@@ -202,13 +202,16 @@ async def finalize_transaction(ctx: GlobalPipelineContext, push: bool = False) -
     summary = (summary or ctx.ticket or "automated change")[:72]
     subject = f"feat({ctx.ticket or 'ticket'}): {summary}"
 
-    # Pin a committer identity so the commit succeeds even when the clone inherits no global git config.
-    await _run_checked(
-        ["git", "-C", repo_root,
-         "-c", "user.email=pipeline@sdlc.local", "-c", "user.name=Pipeline",
-         "commit", "-m", subject],
-        "git commit",
-    )
+    # Pin a per-ticket agent identity so each session's commit is uniquely attributable
+    # (and so the commit succeeds even when the clone inherits no global git config).
+    agent_name = f"AI Agent ({ctx.ticket if ctx.ticket else 'Anonymous'})"
+    agent_email = f"agent-{ctx.ticket.lower() if ctx.ticket else 'session'}@sdlc-factory.local"
+    commit_args = [
+        "git", "-C", repo_root,
+        "-c", f"user.name={agent_name}", "-c", f"user.email={agent_email}",
+        "commit", "-m", subject,
+    ]
+    await _run_checked(commit_args, "git commit")
     log.info(f"✅ Atomic commit on feat/ticket-{ctx.ticket}: {subject}")
 
     if push:

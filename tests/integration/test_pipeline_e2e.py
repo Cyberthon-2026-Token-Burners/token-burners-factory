@@ -186,6 +186,12 @@ class PipelineEndToEndTests(unittest.IsolatedAsyncioTestCase):
                 capture_output=True, text=True, check=True,
             ).stdout.strip()
             self.assertEqual(subject, "feat(DEMO-1): add two ints")
+            # Assert — the commit author identity was dynamically pinned from the ticket.
+            author = subprocess.run(
+                ["git", "-C", str(repo_dir), "log", "-1", "--pretty=%an"],
+                capture_output=True, text=True, check=True,
+            ).stdout.strip()
+            self.assertEqual(author, "AI Agent (DEMO-1)")
             count = int(subprocess.run(
                 ["git", "-C", str(repo_dir), "rev-list", "--count", "HEAD"],
                 capture_output=True, text=True, check=True,
