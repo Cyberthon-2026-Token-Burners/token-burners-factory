@@ -224,6 +224,9 @@ async def finalize_transaction(ctx: GlobalPipelineContext, push: bool = False) -
 # ==========================================
 # PRODUCTION SNAPSHOT BUILDER
 # ==========================================
+MAX_FILE_SIZE_BYTES = 100 * 1024  # 100 KB; larger files are marked, not inlined, to avoid LLM token exhaustion
+
+
 def build_production_snapshot(ctx: GlobalPipelineContext) -> None:
     """Rebuilds ``ctx.production_code_snapshot`` from the ACTUAL git working-tree state.
 
@@ -266,6 +269,11 @@ def build_production_snapshot(ctx: GlobalPipelineContext) -> None:
         if not file_path.exists():
             # `--modified` also reports deletions (e.g. Developer ghost-file GC) — record, don't crash.
             snapshot[rel] = "<FILE DELETED BY DEVELOPER>"
+            continue
+        # Payload guard: never inline a massive file into the Reviewer context — mark and skip.
+        size = file_path.stat().st_size
+        if size > MAX_FILE_SIZE_BYTES:
+            snapshot[rel] = f"<FILE TOO LARGE: {size} bytes exceeds {MAX_FILE_SIZE_BYTES} byte limit. EXCLUDED TO PREVENT TOKEN EXHAUSTION.>"
             continue
         try:
             snapshot[rel] = file_path.read_text(encoding="utf-8")
