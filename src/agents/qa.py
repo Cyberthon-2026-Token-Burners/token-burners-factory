@@ -1,6 +1,5 @@
 import os
 import sys
-import asyncio
 from pathlib import Path
 
 from src.core.observability import log, log_token_usage
@@ -23,6 +22,20 @@ async def run_qa_agent_node(ctx: GlobalPipelineContext, error_trace: str = "") -
 
     qa_system_prompt, user_template = get_system_prompt_sections("qa")
     qa_system_prompt += "\n\n" + get_skill("engineering_guide")
+    qa_system_prompt += "\n\n" + get_skill("qa_integrity")
+    qa_system_prompt += (
+        "\n\nCRITICAL MATH TESTING RULE: NEVER hardcode floating-point expectations "
+        "(e.g., `1.256e+301` or `float('inf')`) for geometric calculations. "
+        "You MUST calculate the expected value dynamically inside the test method "
+        "using standard Python math (e.g., `expected_area = math.pi * radius ** 2`). "
+        "Always use `math.isclose()` for float comparisons."
+    )
+
+    if error_trace and ctx.test_code_snapshot:
+        qa_system_prompt += (
+            f"\n\n=== PREVIOUS TEST SUITE STATE ===\n{ctx.test_code_snapshot}"
+            f"\n\n{get_skill('qa_retry_fix')}"
+        )
 
     shared_rules = get_skill("strict_validation").format(
         strict_type_validation_rules=ctx.contract.strict_type_validation_rules
@@ -53,7 +66,9 @@ async def run_qa_agent_node(ctx: GlobalPipelineContext, error_trace: str = "") -
 
     target_modules = [m for m in ctx.contract.files_to_modify if not m.endswith("__init__.py")]
 
-    results = await asyncio.gather(*[_generate(m) for m in target_modules])
+    results = []
+    for m in target_modules:
+        results.append(await _generate(m))
 
     for test_path, code, raw_response in results:
         log_token_usage("QA Agent", raw_response)

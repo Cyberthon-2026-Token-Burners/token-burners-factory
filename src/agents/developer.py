@@ -15,14 +15,11 @@ async def run_developer_node(ctx: GlobalPipelineContext, error_trace: str = "") 
         code_dir=ctx.workspace_paths.code_dir,
     ) + "\n\n" + get_skill("engineering_guide")
 
-    # Strict pathing guardrail: stop the Developer nesting dirs (e.g. src/src/), which desyncs the snapshot.
-    prompt += (
-        "\n\nCRITICAL PATHING RULE: All file paths in the contract are strictly relative to the "
-        "repository root. Do NOT nest directories (e.g., writing to `src/src/`). Obey exact paths."
-    )
+    prompt += "\n\n" + get_skill("developer_topology")
 
     if error_trace:
         prompt += f"\n\nValidation Failure Context:\n{error_trace}"
+        prompt += "\n\n" + get_skill("developer_role_constraint")
         prompt += "\n\n" + get_skill("deterministic_mutation")
 
     code_dir_path = ctx.workspace_paths.code_dir
