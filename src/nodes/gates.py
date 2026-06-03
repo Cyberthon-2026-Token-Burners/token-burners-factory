@@ -1,27 +1,33 @@
 import os
 import sys
 import asyncio
+from pathlib import Path
 # subprocess: only trusted, fixed-argument tool invocations (docker/bandit), never shell=True.
 import subprocess  # nosec B404
 
 from src.core.observability import log
 from src.utils.subprocess_helpers import stream_subprocess_output
+from src.utils.git_helpers import get_git_root
 
 # ==========================================
 # PARALLEL RUNTIME GATES (Subprocess execution)
 # ==========================================
-async def run_qa_unit_tests(artifacts_base_abs: str) -> tuple[bool, list[str]]:
-    # Mount framework code read-only and the agent sandbox read-write — never the whole cwd.
-    # The artifacts base maps to a FIXED in-container path, so any PIPELINE_ARTIFACTS_BASE works.
-    # Discover ALL per-module test files instead of a single module — QA generates a tree autonomously.
+async def run_qa_unit_tests(code_dir: str, tests_dir: str) -> tuple[bool, list[str]]:
+    # Mount the WHOLE cloned repo read-write at a fixed container path so absolute imports
+    # (e.g. `from src.utils.x import y`) resolve from the repo root, and discover the agent-generated
+    # test tree at its dynamic location. The git root (not a guessed parent) anchors the mount.
+    repo_root = await get_git_root(code_dir)
+    tests_rel = Path(tests_dir).resolve().relative_to(Path(repo_root).resolve()).as_posix()
+    container_root = "/workspace/repo"
+    tests_container = f"{container_root}/{tests_rel}"
     test_command = (
-        "export PYTHONPATH=$PYTHONPATH:/workspace/artifacts/code:/workspace/artifacts/tests; "
-        "python3 -m unittest discover -s /workspace/artifacts/tests -p 'test_*.py'"
+        f"export PYTHONPATH={container_root}; "
+        f"python3 -m unittest discover -s {tests_container} -p 'test_*.py'"
     )
     cmd = [
         "docker", "run", "--rm",
-        "-v", f"{artifacts_base_abs}:/workspace/artifacts:rw",
-        "-w", "/workspace",
+        "-v", f"{repo_root}:{container_root}:rw",
+        "-w", container_root,
         "python:3.11-slim",
         "bash", "-c", test_command
     ]

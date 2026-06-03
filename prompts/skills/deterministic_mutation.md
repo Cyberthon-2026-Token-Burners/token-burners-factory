@@ -12,6 +12,7 @@ Apply this skill when fixing code after a validation gate failure (Functional QA
        raise TypeError(...)
    ```
 4. **Verification**: Run code compilation checks locally before returning control.
+5. **Ghost File Garbage Collection**: You are fixing a failed previous attempt. If your new solution changes the architecture or abandons files you created in the previous attempt, YOU MUST explicitly delete the obsolete files from the filesystem using shell commands to prevent dead code from failing static analysis.
 
 ## Output Format
 

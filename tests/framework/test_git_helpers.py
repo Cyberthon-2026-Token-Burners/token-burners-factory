@@ -5,15 +5,12 @@ is replaced with an ``AsyncMock`` returning fabricated process handles so the
 fan-out and fallback logic can be exercised deterministically.
 """
 import unittest
-from pathlib import Path
 from unittest import mock
 from unittest.mock import AsyncMock, MagicMock
 
-from src.utils import git_helpers
 from src.utils.git_helpers import (
-    _deploy_gitignore,
+    get_git_root,
     get_pipeline_snapshot_files,
-    init_sandbox_git,
 )
 
 
@@ -31,19 +28,11 @@ def _git_subcommands(mock_exec: AsyncMock) -> list[tuple[str, ...]]:
 
 
 class GetPipelineSnapshotFilesTests(unittest.IsolatedAsyncioTestCase):
-    """Cumulative diff against the anchor branch drives the snapshot."""
-
-    def setUp(self) -> None:
-        super().setUp()
-        # The missing-branch path logs a 🚨 ERROR that the Windows console
-        # cannot encode; mute it so the expected fallback stays quiet.
-        patcher = mock.patch.object(git_helpers, "log")
-        self.addCleanup(patcher.stop)
-        patcher.start()
+    """Cumulative INDEX diff against the anchor branch drives the snapshot."""
 
     @mock.patch("src.utils.git_helpers.asyncio.create_subprocess_exec", new_callable=AsyncMock)
     async def test_returns_changed_files_excluding_gitignore(self, mock_exec: AsyncMock) -> None:
-        # Arrange — first call stages, second call yields the diff.
+        # Arrange — first call stages, second call yields the cached diff.
         mock_exec.side_effect = [
             _fake_proc(0),
             _fake_proc(0, b"src/a.py\nsrc/b.py\n.gitignore\n"),
@@ -63,98 +52,63 @@ class GetPipelineSnapshotFilesTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(files, ["src/a.py", "src/c.py"])
 
     @mock.patch("src.utils.git_helpers.asyncio.create_subprocess_exec", new_callable=AsyncMock)
-    async def test_falls_back_to_empty_list_when_base_branch_missing(self, mock_exec: AsyncMock) -> None:
-        # Arrange — non-zero diff returncode signals an unknown anchor branch.
+    async def test_raises_when_diff_fails(self, mock_exec: AsyncMock) -> None:
+        # Arrange — non-zero diff returncode (e.g. unknown anchor branch / index.lock).
         mock_exec.side_effect = [_fake_proc(0), _fake_proc(128, b"")]
-        # Act
-        files = await get_pipeline_snapshot_files("/repo", "ghost-branch")
-        # Assert
-        self.assertEqual(files, [])
+        # Act / Assert — fail fast instead of silently feeding an empty snapshot.
+        with self.assertRaises(RuntimeError):
+            await get_pipeline_snapshot_files("/repo", "ghost-branch")
 
     @mock.patch("src.utils.git_helpers.asyncio.create_subprocess_exec", new_callable=AsyncMock)
-    async def test_diffs_against_the_supplied_base_branch(self, mock_exec: AsyncMock) -> None:
+    async def test_raises_when_git_add_fails(self, mock_exec: AsyncMock) -> None:
+        # Arrange — staging itself fails (e.g. orphaned .git/index.lock).
+        mock_exec.side_effect = [_fake_proc(128, b"")]
+        # Act / Assert
+        with self.assertRaises(RuntimeError):
+            await get_pipeline_snapshot_files("/repo", "main")
+
+    @mock.patch("src.utils.git_helpers.asyncio.create_subprocess_exec", new_callable=AsyncMock)
+    async def test_stages_all_then_diffs_cached_against_base_branch(self, mock_exec: AsyncMock) -> None:
         # Arrange
         mock_exec.side_effect = [_fake_proc(0), _fake_proc(0, b"")]
         # Act
         await get_pipeline_snapshot_files("/repo", "release/v2")
-        # Assert — staging precedes the name-only diff against the anchor.
+        # Assert — staging (incl. untracked) precedes the index diff against the anchor.
         commands = _git_subcommands(mock_exec)
-        self.assertEqual(commands[0], ("add", "."))
-        self.assertEqual(commands[1], ("diff", "release/v2", "--name-only"))
-
-
-class InitSandboxGitTests(unittest.IsolatedAsyncioTestCase):
-    """Sandbox bootstrap must be idempotent and pin the anchor branch."""
+        self.assertEqual(commands[0], ("add", "-A"))
+        self.assertEqual(commands[1], ("diff", "--cached", "release/v2", "--name-only"))
 
     @mock.patch("src.utils.git_helpers.asyncio.create_subprocess_exec", new_callable=AsyncMock)
-    @mock.patch("src.utils.git_helpers.os.path.isdir", return_value=True)
-    async def test_skips_initialisation_when_repo_already_exists(
-        self, _mock_isdir: MagicMock, mock_exec: AsyncMock
-    ) -> None:
-        # Arrange / Act
-        await init_sandbox_git("/repo", "main")
-        # Assert — an existing .git short-circuits every git invocation.
-        mock_exec.assert_not_called()
-
-    @mock.patch("src.utils.git_helpers._deploy_gitignore")
-    @mock.patch("src.utils.git_helpers.asyncio.create_subprocess_exec", new_callable=AsyncMock)
-    @mock.patch("src.utils.git_helpers.os.path.isdir", return_value=False)
-    async def test_bootstraps_repo_and_pins_anchor_branch(
-        self, _mock_isdir: MagicMock, mock_exec: AsyncMock, mock_deploy: MagicMock
-    ) -> None:
+    async def test_scopes_diff_to_subdir_pathspec(self, mock_exec: AsyncMock) -> None:
         # Arrange
-        mock_exec.return_value = _fake_proc(0)
+        mock_exec.side_effect = [_fake_proc(0), _fake_proc(0, b"")]
         # Act
-        await init_sandbox_git("/repo", "main")
-        # Assert
+        await get_pipeline_snapshot_files("/repo", "main", subdir="src")
+        # Assert — the pathspec isolates an agent to its own subtree within the shared index.
         commands = _git_subcommands(mock_exec)
-        self.assertEqual(commands[0], ("init",))
-        self.assertIn(("branch", "-m", "main"), commands)
-        self.assertIn(("checkout", "-b", "agent-workspace"), commands)
-        mock_deploy.assert_called_once_with("/repo")
+        self.assertEqual(commands[1], ("diff", "--cached", "main", "--name-only", "--", "src"))
 
-    @mock.patch("src.utils.git_helpers._deploy_gitignore")
+
+class GetGitRootTests(unittest.IsolatedAsyncioTestCase):
+    """Root resolution must use git, not path guessing."""
+
     @mock.patch("src.utils.git_helpers.asyncio.create_subprocess_exec", new_callable=AsyncMock)
-    @mock.patch("src.utils.git_helpers.os.path.isdir", return_value=False)
-    async def test_configures_identity_before_first_commit(
-        self, _mock_isdir: MagicMock, mock_exec: AsyncMock, _mock_deploy: MagicMock
-    ) -> None:
+    async def test_returns_repository_toplevel(self, mock_exec: AsyncMock) -> None:
         # Arrange
-        mock_exec.return_value = _fake_proc(0)
+        mock_exec.return_value = _fake_proc(0, b"/clone/root\n")
         # Act
-        await init_sandbox_git("/repo", "main")
-        # Assert — identity config must precede the initial commit.
-        commands = _git_subcommands(mock_exec)
-        email_idx = commands.index(("config", "user.email", "pipeline@sdlc.local"))
-        commit_idx = next(i for i, c in enumerate(commands) if c[0] == "commit")
-        self.assertLess(email_idx, commit_idx)
+        root = await get_git_root("/clone/root/backend/app/src")
+        # Assert — the real toplevel, regardless of how deep the requested path is.
+        self.assertEqual(root, "/clone/root")
+        self.assertEqual(_git_subcommands(mock_exec)[0], ("rev-parse", "--show-toplevel"))
 
-
-class DeployGitignoreTests(unittest.TestCase):
-    """Template deployment with a minimal fallback when the template is absent."""
-
-    @mock.patch("src.utils.git_helpers.Path.write_text")
-    def test_copies_template_when_present(self, mock_write: MagicMock) -> None:
+    @mock.patch("src.utils.git_helpers.asyncio.create_subprocess_exec", new_callable=AsyncMock)
+    async def test_raises_when_path_is_not_a_repo(self, mock_exec: AsyncMock) -> None:
         # Arrange
-        template = MagicMock()
-        template.exists.return_value = True
-        template.read_text.return_value = "node_modules/\n"
-        # Act
-        with mock.patch.object(git_helpers, "_GITIGNORE_TEMPLATE", template):
-            _deploy_gitignore("/repo")
-        # Assert
-        mock_write.assert_called_once_with("node_modules/\n", encoding="utf-8")
-
-    @mock.patch("src.utils.git_helpers.Path.write_text")
-    def test_writes_minimal_fallback_when_template_missing(self, mock_write: MagicMock) -> None:
-        # Arrange
-        template = MagicMock()
-        template.exists.return_value = False
-        # Act
-        with mock.patch.object(git_helpers, "_GITIGNORE_TEMPLATE", template):
-            _deploy_gitignore("/repo")
-        # Assert
-        mock_write.assert_called_once_with(git_helpers._GITIGNORE_FALLBACK, encoding="utf-8")
+        mock_exec.return_value = _fake_proc(128, b"")
+        # Act / Assert
+        with self.assertRaises(RuntimeError):
+            await get_git_root("/nowhere")
 
 
 if __name__ == "__main__":

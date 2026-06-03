@@ -12,6 +12,8 @@ async def run_architect_node(ctx: GlobalPipelineContext) -> None:
     log.info(f"🔷 [ROLE] Architect Agent | [MODEL] {model_name}")
 
     sys_prompt = get_system_prompt("architect") + "\n\n" + get_skill("engineering_guide")
+    code_prefix = ctx.workspace_paths.code_dir.relative_to(ctx.workspace_paths.repo_dir).as_posix()
+    sys_prompt += "\n\n" + get_skill("architect_topology").format(code_prefix=code_prefix)
 
     contract, raw_response = await run_structured_llm(
         "architect",

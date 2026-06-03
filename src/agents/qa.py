@@ -1,6 +1,5 @@
 import os
 import sys
-import asyncio
 from pathlib import Path
 
 from src.core.observability import log, log_token_usage
@@ -8,7 +7,7 @@ from src.core.config import QA_MODEL
 from src.core.models import QATestSuite, GlobalPipelineContext
 from src.core.prompts import get_system_prompt_sections, get_skill
 from src.utils.llm import run_structured_llm
-from src.utils.git_helpers import init_sandbox_git, get_pipeline_snapshot_files
+from src.utils.git_helpers import get_git_root, get_pipeline_snapshot_files
 
 async def run_qa_agent_node(ctx: GlobalPipelineContext, error_trace: str = "") -> None:
     model_name = QA_MODEL
@@ -18,11 +17,19 @@ async def run_qa_agent_node(ctx: GlobalPipelineContext, error_trace: str = "") -
         log.error("🚨 CRITICAL: Cannot generate tests without a locked Architecture Contract.")
         sys.exit(1)
 
-    await init_sandbox_git(str(ctx.workspace_paths.tests_dir), ctx.base_branch)
+    # The clone is already a git repo on feat/ticket-<id>; QA only writes test files (no init/commit).
     tests_dir = ctx.workspace_paths.tests_dir
 
     qa_system_prompt, user_template = get_system_prompt_sections("qa")
     qa_system_prompt += "\n\n" + get_skill("engineering_guide")
+    qa_system_prompt += "\n\n" + get_skill("qa_integrity")
+    qa_system_prompt += "\n\n" + get_skill("qa_math_guardrail")
+
+    if error_trace and ctx.test_code_snapshot:
+        qa_system_prompt += (
+            f"\n\n=== PREVIOUS TEST SUITE STATE ===\n{ctx.test_code_snapshot}"
+            f"\n\n{get_skill('qa_retry_fix')}"
+        )
 
     shared_rules = get_skill("strict_validation").format(
         strict_type_validation_rules=ctx.contract.strict_type_validation_rules
@@ -53,19 +60,23 @@ async def run_qa_agent_node(ctx: GlobalPipelineContext, error_trace: str = "") -
 
     target_modules = [m for m in ctx.contract.files_to_modify if not m.endswith("__init__.py")]
 
-    results = await asyncio.gather(*[_generate(m) for m in target_modules])
+    results = []
+    for m in target_modules:
+        results.append(await _generate(m))
 
     for test_path, code, raw_response in results:
         log_token_usage("QA Agent", raw_response)
         with open(test_path, "w", encoding="utf-8") as f:
             f.write(code)
 
-    tests_dir_str = str(tests_dir)
-    changed_files = await get_pipeline_snapshot_files(tests_dir_str, ctx.base_branch)
+    # Snapshot the test delta from the real git root, scoped to the tests subtree.
+    repo_root = Path(await get_git_root(str(tests_dir)))
+    subdir = tests_dir.resolve().relative_to(repo_root.resolve()).as_posix()
+    changed_files = await get_pipeline_snapshot_files(str(repo_root), ctx.base_branch, subdir=subdir)
 
     parts = []
     for rel_path in changed_files:
-        abs_path = Path(tests_dir_str) / rel_path
+        abs_path = repo_root / rel_path
         if abs_path.exists():
             parts.append(f"=== FILE: {rel_path} ===\n{abs_path.read_text(encoding='utf-8')}")
         else:
