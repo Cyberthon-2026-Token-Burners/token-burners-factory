@@ -31,6 +31,13 @@ ADR: [0008-git-anchored-sessions-atomic-commit](./docs/adr/0008-git-anchored-ses
 - All network git invocations run with `GIT_TERMINAL_PROMPT=0` and a wall-clock timeout (child killed and reaped on expiry), so a missing-credential prompt can never hang the pipeline.
 - `get_pipeline_snapshot_files` now raises `RuntimeError` on any git failure (e.g. an orphaned `.git/index.lock`) instead of silently returning an empty snapshot.
 
+### Fixed
+- `--reset-attempts` now performs a targeted FSM state mutation: clears `current_attempt` while preserving the `test_code_snapshot` field from the prior QA cycle, breaking the stateless-retry Catch-22 where the Developer re-entered without context of what had already been tested.
+- `run_dir` is resolved to an absolute path via `.resolve()` before Docker mount construction, preventing broken volume strings when the orchestrator is invoked with a relative `--repo` path (e.g. `--repo .`).
+- QA fan-out `RateLimitError` (HTTP 429) is now caught at the node boundary and retried with exponential backoff instead of crashing the session and losing the QA cycle's output.
+- QA self-heal retries are stateful: the `test_code_snapshot` produced by the previous QA cycle is injected into the Developer node context on re-entry, so each fix attempt sees both the failing test output and a snapshot of what was tested.
+- Inline agent prompt strings decomposed into an atomic, dynamic Skill System (`prompts/skills/`): each skill file encodes one behavioral rule; `get_skill` composes them at call time, eliminating cross-agent context leakage and making guardrails editable without modifying application code.
+
 ## [v0.7.0] - 2026-05-31 — Prompt/Schema Layer Separation
 
 ADR: [0007-prompt-schema-layer-separation](./docs/adr/0007-prompt-schema-layer-separation.md)
