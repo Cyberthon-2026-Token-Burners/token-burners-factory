@@ -300,7 +300,7 @@ async def main():
     # correct run dir from the very first line — fixing the late-binding bug. On resume we reuse
     # the original run dir derived from the checkpoint path; a fresh run mints a new one.
     if cfg.resume:
-        run_dir = cfg.resume.parent.parent  # runs/run_<uuid>/reports/checkpoint.json -> runs/run_<uuid>
+        run_dir = cfg.resume.resolve().parent.parent  # runs/run_<uuid>/reports/checkpoint.json -> runs/run_<uuid>
     else:
         run_id = uuid.uuid4().hex
         run_dir = RUNS_BASE / f"run_{run_id}"
@@ -319,7 +319,7 @@ async def main():
             sys.exit(1)
         if cfg.reset_attempts:
             ctx.current_attempt = 1
-            log.info("🔄 Circuit Breaker budget reset via CLI flag.")
+            log.info("🔄 State mutated: attempt counter reset to 1.")
     else:
         # Bootstrap an isolated git-anchored session into the pre-bound run dir.
         paths = await bootstrap_session(cfg, run_dir)

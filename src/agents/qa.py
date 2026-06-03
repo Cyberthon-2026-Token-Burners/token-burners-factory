@@ -23,13 +23,7 @@ async def run_qa_agent_node(ctx: GlobalPipelineContext, error_trace: str = "") -
     qa_system_prompt, user_template = get_system_prompt_sections("qa")
     qa_system_prompt += "\n\n" + get_skill("engineering_guide")
     qa_system_prompt += "\n\n" + get_skill("qa_integrity")
-    qa_system_prompt += (
-        "\n\nCRITICAL MATH TESTING RULE: NEVER hardcode floating-point expectations "
-        "(e.g., `1.256e+301` or `float('inf')`) for geometric calculations. "
-        "You MUST calculate the expected value dynamically inside the test method "
-        "using standard Python math (e.g., `expected_area = math.pi * radius ** 2`). "
-        "Always use `math.isclose()` for float comparisons."
-    )
+    qa_system_prompt += "\n\n" + get_skill("qa_math_guardrail")
 
     if error_trace and ctx.test_code_snapshot:
         qa_system_prompt += (
