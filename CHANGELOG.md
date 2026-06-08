@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Each release maps to a completed SDLC iteration; the corresponding Architecture
 Decision Record (ADR) is linked from the version heading.
 
+## [v0.9.0] - 2026-06-08 — Hybrid Skill Routing
+
+ADR: [0009-hybrid-skill-routing](./docs/adr/0009-hybrid-skill-routing.md)
+
+### Added
+- Declarative YAML frontmatter routing: every `prompts/skills/*.md` file now carries a `type` / `nodes` / `triggers` header parsed by a stdlib-only `_parse_frontmatter` (no `pyyaml` dependency), so a skill declares which agent nodes it targets and when it applies.
+- `build_agent_context(node, ctx, …)` — a dynamic agent-context builder in `src/core/prompts.py` that composes the skill set per node, gating each skill by `type`: `global` (always), `topology` (always, body `.format()`-ed with path kwargs), `stateful` (retry-only), and `domain` (tag intersection with the contract's `domain_tags`).
+- LLM-based semantic fallback for domain skills (`fallback_semantic_search` + `SkillRelevance`): on a trigger-tag miss, a structured relevance check (reviewer model, threshold `0.7`) decides inclusion, reusing the existing `run_structured_llm` infra with no embeddings SDK.
+
+### Changed
+- All four agent modules (`architect.py`, `developer.py`, `qa.py`, `reviewer.py`) now assemble their skill context via `build_agent_context` instead of hand-listing skills.
+- Template injection hardened: the `{strict_type_validation_rules}` placeholder is filled via a brace-safe `.replace()` so skill bodies may contain literal `{}` (JSON/code blocks) without raising `KeyError`; only `topology` bodies are `.format()`-ed.
+
+### Removed
+- All hardcoded `get_skill(...)` composition calls inside the agent nodes — skill targeting now lives entirely in file frontmatter, restoring Open-Closed compliance.
+
+### Fixed
+- QA math-guardrail Catch-22: `qa_math_guardrail.md` now permits hardcoding `float('inf')` as the expected value for extreme boundary tests that intentionally exceed `sys.float_info.max`, resolving the deadlock where QA could neither compute (overflow) nor hardcode (forbidden) the expectation.
+- Developer "ghost files" double-nesting: `developer.py` now mounts repo-root-relative contract paths at `workspace_paths.repo_dir` instead of `code_dir`, so `src/geometry/x.py` resolves to `repo/src/geometry/x.py` rather than `repo/src/src/geometry/x.py`; the `PATH ROUTING` system-prompt example was corrected to match.
+
 ## [v0.8.0] - 2026-06-01 — Git-Anchored Sessions & Atomic Commit
 
 ADR: [0008-git-anchored-sessions-atomic-commit](./docs/adr/0008-git-anchored-sessions-atomic-commit.md)
@@ -145,6 +165,7 @@ ADR: [0000-cloud-infra-fsm-research](./docs/adr/0000-cloud-infra-fsm-research.md
 ### Added
 - System topology blueprint: custom Python/Pydantic FSM (over LangGraph), localized Docker sandboxing (over Cloud Run), hybrid Gemini/Claude model routing with context + prompt caching, GitHub App RS256 auth, and a 10-cycle FinOps cost model (~$5.83).
 
+[v0.9.0]: ./docs/adr/0009-hybrid-skill-routing.md
 [v0.8.0]: ./docs/adr/0008-git-anchored-sessions-atomic-commit.md
 [v0.7.0]: ./docs/adr/0007-prompt-schema-layer-separation.md
 [v0.6.0]: ./docs/adr/0006-fsm-state-serialization-resume.md
