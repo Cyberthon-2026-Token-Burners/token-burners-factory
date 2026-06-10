@@ -245,6 +245,10 @@ def build_production_snapshot(ctx: GlobalPipelineContext) -> None:
     Tests are excluded (they live in ``test_code_snapshot``); deleted paths and binary/non-UTF-8
     files are recorded with explicit markers instead of crashing the read or flooding the Reviewer.
     Staging up front also leaves the tree staged for ``finalize_transaction``'s atomic success commit.
+
+    Also captures the raw unified diff (``git diff --cached <base_branch>``) into
+    ``ctx.production_code_diff`` so the Reviewer can scope its audit to the actual delta instead of
+    treating untouched legacy lines in modified files as new code.
     """
     repo_dir = ctx.workspace_paths.repo_dir
     # Derive the test-dir prefix dynamically (honours --tests-dir, e.g. spec/) — never hardcode "tests/".
@@ -257,6 +261,14 @@ def build_production_snapshot(ctx: GlobalPipelineContext) -> None:
 
     # 1. Stage every mutation so the index reflects the complete working-tree state across ALL cycles.
     subprocess.run(["git", "add", "-A"], cwd=str(repo_dir), check=True)
+
+    # 1b. Capture the cumulative unified diff vs base — the Reviewer's authoritative scope-of-change,
+    #     so it can separate the Developer's actual edits from pre-existing legacy code in the same file.
+    diff_cmd = subprocess.run(
+        ["git", "diff", "--cached", ctx.base_branch],
+        cwd=str(repo_dir), capture_output=True, text=True, check=True,
+    )
+    ctx.production_code_diff = diff_cmd.stdout
 
     # 2. Read the cumulative index-vs-base delta. -z emits raw NUL-terminated paths (no quoting of
     #    spaces/newlines/unicode) — split on NUL.

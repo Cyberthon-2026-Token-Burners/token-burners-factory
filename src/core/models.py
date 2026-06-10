@@ -95,6 +95,7 @@ class GlobalPipelineContext(BaseModel):
     workspace_paths: WorkspacePaths = Field(default_factory=WorkspacePaths)
     contract: ArchitectureContract | None = None
     production_code_snapshot: dict[str, str] = Field(default_factory=dict)
+    production_code_diff: str = ""
     test_code_snapshot: str = ""
     error_trace: str = ""
     review_report: ReviewReport | None = None
