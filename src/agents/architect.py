@@ -12,12 +12,16 @@ async def run_architect_node(ctx: GlobalPipelineContext) -> None:
     log.info(f"🔷 [ROLE] Architect Agent | [MODEL] {model_name}")
 
     code_prefix = ctx.workspace_paths.code_dir.relative_to(ctx.workspace_paths.repo_dir).as_posix()
-    sys_prompt = get_system_prompt("architect") + "\n\n" + await build_agent_context(
-        "architect", ctx, topology_kwargs={"code_prefix": code_prefix}
-    )
 
     if not ctx.repository_map:
         ctx.repository_map = generate_repo_map(ctx.workspace_paths.repo_dir)
+
+    # Deterministic early language detection: the architect produces domain_tags, so its own
+    # context cannot route on the (not-yet-built) contract. Infer the stack from the repo map.
+    early_tags = ["python"] if ".py" in ctx.repository_map else []
+    sys_prompt = get_system_prompt("architect") + "\n\n" + await build_agent_context(
+        "architect", ctx, topology_kwargs={"code_prefix": code_prefix}, inferred_tags=early_tags
+    )
 
     contract, raw_response = await run_structured_llm(
         "architect",

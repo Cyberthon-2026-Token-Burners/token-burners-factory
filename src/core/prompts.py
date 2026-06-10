@@ -132,6 +132,7 @@ async def build_agent_context(
     ctx: GlobalPipelineContext,
     is_retry: bool = False,
     topology_kwargs: dict | None = None,
+    inferred_tags: list[str] | None = None,
 ) -> str:
     """Declaratively assemble the skill context for an agent node.
 
@@ -140,8 +141,10 @@ async def build_agent_context(
       - ``global``   → always
       - ``topology`` → always (body is ``.format(**topology_kwargs)``-ed)
       - ``stateful`` → only on retry
-      - ``domain``   → tag intersection with the contract's ``domain_tags``; on a
-        miss, an LLM relevance fallback decides inclusion.
+      - ``domain``   → tag intersection with ``inferred_tags`` unioned with the
+        contract's ``domain_tags``; on a miss, an LLM relevance fallback decides
+        inclusion. ``inferred_tags`` lets a caller route deterministically before a
+        contract exists (e.g. the architect, whose contract is produced downstream).
 
     Only ``topology`` bodies are ``.format()``-ed; the strict-type placeholder is
     filled via a brace-safe ``.replace()`` so skill bodies may freely contain
@@ -162,7 +165,7 @@ async def build_agent_context(
         elif skill_type == "stateful":
             include = is_retry
         elif skill_type == "domain":
-            tags = set(ctx.contract.domain_tags) if ctx.contract else set()
+            tags = set(inferred_tags or []) | (set(ctx.contract.domain_tags) if ctx.contract else set())
             include = bool(set(meta.get("triggers", [])) & tags)
             if not include:
                 include = await fallback_semantic_search(ctx.pr_description, body)
