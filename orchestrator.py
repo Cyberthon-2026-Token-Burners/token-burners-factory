@@ -228,20 +228,22 @@ MAX_FILE_SIZE_BYTES = 100 * 1024  # 100 KB; larger files are marked, not inlined
 
 
 def build_production_snapshot(ctx: GlobalPipelineContext) -> None:
-    """Rebuilds ``ctx.production_code_snapshot`` from the ACTUAL git working-tree state.
+    """Rebuilds ``ctx.production_code_snapshot`` from the FULL transaction delta vs ``base_branch``.
 
-    Replaces the Developer agent's self-reported, subtree-scoped output: git reports the exact set
-    of new/modified files (``git ls-files --others --modified --exclude-standard``) and we capture
-    each changed Git-tracked file's FULL content from disk (any text file — .py, json, yaml,
-    Dockerfile, …, not just Python). The snapshot the Reviewer audits is then byte-for-byte what
-    the validation gates ran against — including files the agent mis-placed (the Developer↔Reviewer
-    desync this resolves). Tests are excluded (they live in ``test_code_snapshot``); deleted paths
-    and binary/non-UTF-8 files are recorded with explicit markers instead of crashing the read or
-    flooding the Reviewer with garbage.
+    Replaces the Developer agent's self-reported, subtree-scoped output. We first stage the whole
+    tree (``git add -A``) so every mutation lands in the index, then read the CUMULATIVE set of
+    changed files with ``git diff --cached --name-only <base_branch>`` and capture each one's FULL
+    content from disk (any text file — .py, json, yaml, Dockerfile, …, not just Python).
 
-    ``ls-files`` is read BEFORE ``git add -A`` so untracked/modified files still appear; we then
-    re-stage the whole tree so the atomic success commit in ``finalize_transaction`` still captures
-    every mutation (the removed Developer call used to stage via the same ``git add -A``).
+    Diffing the INDEX against ``base_branch`` — rather than the working tree against the index — is
+    what keeps the snapshot cohesive across retry cycles. Once cycle 1's files are staged, a
+    ``git ls-files --others --modified`` would surface ONLY the single file cycle 2 re-touched
+    (the rest match the index), blinding the Reviewer to every previously-staged file. The cached
+    diff against the merge base always reports the complete production delta regardless of cycle.
+
+    Tests are excluded (they live in ``test_code_snapshot``); deleted paths and binary/non-UTF-8
+    files are recorded with explicit markers instead of crashing the read or flooding the Reviewer.
+    Staging up front also leaves the tree staged for ``finalize_transaction``'s atomic success commit.
     """
     repo_dir = ctx.workspace_paths.repo_dir
     # Derive the test-dir prefix dynamically (honours --tests-dir, e.g. spec/) — never hardcode "tests/".
@@ -251,9 +253,14 @@ def build_production_snapshot(ctx: GlobalPipelineContext) -> None:
         test_prefix = f"{ctx.workspace_paths.tests_dir.relative_to(repo_dir).as_posix()}/"
     except ValueError:
         test_prefix = None  # tests_dir lives outside the repo root → no prefix collision possible
-    # -z emits raw NUL-terminated paths (no quoting/escaping of spaces/newlines/unicode) — split on NUL.
+
+    # 1. Stage every mutation so the index reflects the complete working-tree state across ALL cycles.
+    subprocess.run(["git", "add", "-A"], cwd=str(repo_dir), check=True)
+
+    # 2. Read the cumulative index-vs-base delta. -z emits raw NUL-terminated paths (no quoting of
+    #    spaces/newlines/unicode) — split on NUL.
     listing = subprocess.run(
-        ["git", "ls-files", "--others", "--modified", "--exclude-standard", "-z"],
+        ["git", "diff", "--name-only", "--cached", "-z", ctx.base_branch],
         cwd=str(repo_dir), capture_output=True, text=True, check=True,
     )
 
@@ -267,7 +274,7 @@ def build_production_snapshot(ctx: GlobalPipelineContext) -> None:
             continue
         file_path = repo_dir / rel
         if not file_path.exists():
-            # `--modified` also reports deletions (e.g. Developer ghost-file GC) — record, don't crash.
+            # The diff also reports deletions (e.g. Developer ghost-file GC) — record, don't crash.
             snapshot[rel] = "<FILE DELETED BY DEVELOPER>"
             continue
         # Payload guard: never inline a massive file into the Reviewer context — mark and skip.
@@ -282,9 +289,6 @@ def build_production_snapshot(ctx: GlobalPipelineContext) -> None:
             snapshot[rel] = "<BINARY OR NON-UTF8 FILE EXCLUDED>"
 
     ctx.production_code_snapshot = snapshot
-
-    # Re-stage the working tree so finalize_transaction's atomic commit captures the production delta.
-    subprocess.run(["git", "add", "-A"], cwd=str(repo_dir), check=True)
 
     log.info(f"   [SNAPSHOT] Captured {len(snapshot)} production file(s): {sorted(snapshot)}")
 
