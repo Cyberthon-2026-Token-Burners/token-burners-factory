@@ -5,12 +5,13 @@ import argparse
 import asyncio
 import subprocess
 from pathlib import Path
+from typing import NoReturn
 from dataclasses import dataclass
 
 from src.core.observability import log, reconfigure_logging
 from src.core.config import check_environment
 from src.core.models import GlobalPipelineContext, WorkspacePaths, RUNS_BASE
-from src.utils.git_helpers import get_git_root
+from src.utils.git_helpers import get_git_root, get_pipeline_snapshot_files
 from src.agents.architect import run_architect_node
 from src.agents.qa import run_qa_agent_node
 from src.agents.developer import run_developer_node
@@ -294,6 +295,85 @@ def build_production_snapshot(ctx: GlobalPipelineContext) -> None:
 
 
 # ==========================================
+# FAST-FAIL DOCUMENTATION GUARDRAIL
+# ==========================================
+GUARDRAIL_TOP_LINES = 15        # top-of-file window scanned for a justification
+GUARDRAIL_MAX_REROUTES = 2      # local guardrail_retries cap: free reroutes before a Hard Halt
+# Language-agnostic comment lead-ins. ''' is added beyond the spec list so a Python single-quote module
+# docstring (a valid justification) isn't flagged as undocumented.
+_COMMENT_PREFIXES = ("#", "//", "/*", "*", '"""', "'''")
+_GUARDRAIL_MESSAGE = (
+    "SYSTEM GUARDRAIL: File `{file_name}` was created without an architectural justification. "
+    "You must add a comment block at the top of the file explaining its purpose before the system "
+    "will route your code to the Reviewer."
+)
+
+
+def _top_block_has_comment(file_path: Path) -> bool | None:
+    """True/False if the file's first GUARDRAIL_TOP_LINES carry a comment lead-in; None = ignore safely.
+
+    Returns None for binary/non-UTF-8, empty/whitespace-only, or unreadable (vanished) files so the
+    scanner never raises and never emits a false 'undocumented' violation — mirroring
+    build_production_snapshot's binary handling (UnicodeDecodeError → skip).
+    """
+    try:
+        lines: list[str] = []
+        with file_path.open("r", encoding="utf-8") as fh:
+            for i, line in enumerate(fh):
+                if i >= GUARDRAIL_TOP_LINES:
+                    break
+                lines.append(line)
+    except (UnicodeDecodeError, OSError):
+        return None  # binary / non-UTF-8 / unreadable → ignore safely
+    if not any(line.strip() for line in lines):
+        return None  # empty or whitespace-only → ignore safely
+    return any(line.strip().startswith(_COMMENT_PREFIXES) for line in lines)
+
+
+async def enforce_documentation_guardrail(ctx: GlobalPipelineContext) -> str | None:
+    """Blocks the Developer→Reviewer transition on undocumented NEWLY-CREATED files.
+
+    Reuses the production delta build_production_snapshot() just computed (QA tests already excluded) as
+    the candidate set, intersects it with the git-ADDED set so only genuinely new files count — never
+    edits to pre-existing files — and scans each uncontracted new file's top block for any comment.
+    Returns a Developer-targeted diagnostic naming every offender, or None when all new files are
+    documented (or there are none) so the pipeline may proceed to the Reviewer.
+    """
+    # Fast no-op when there is no production delta (also keeps snapshot-mocked unit tests git-free).
+    if not ctx.production_code_snapshot:
+        return None
+
+    contract_files = {Path(f).as_posix() for f in (ctx.contract.files_to_modify if ctx.contract else [])}
+    uncontracted = [rel for rel in ctx.production_code_snapshot if Path(rel).as_posix() not in contract_files]
+    if not uncontracted:
+        return None
+
+    # Only NEWLY-CREATED files need a justification — intersect the candidates with the git-added set.
+    repo_dir = ctx.workspace_paths.repo_dir
+    added = set(await get_pipeline_snapshot_files(str(repo_dir), ctx.base_branch, diff_filter="A"))
+    violations = [
+        rel for rel in uncontracted
+        if rel in added and _top_block_has_comment(repo_dir / rel) is False
+    ]
+    if not violations:
+        return None
+
+    log.warning(f"   [GUARDRAIL] {len(violations)} undocumented new file(s): {sorted(violations)}")
+    return "\n".join(_GUARDRAIL_MESSAGE.format(file_name=v) for v in violations)
+
+
+def _abort_with_incident(ctx: GlobalPipelineContext, header: str) -> NoReturn:
+    """Logs a terminal header, persists the full context as an incident report, and exits non-zero."""
+    log.error(header)
+    incident_file = str(ctx.workspace_paths.reports_dir / "incident_report.json")
+    with open(incident_file, "w", encoding="utf-8") as f:
+        f.write(ctx.model_dump_json(indent=2))
+    log.error(f"  └── Incident report written to {incident_file}")
+    log.debug(f"Final Incident Context Dump: {ctx.model_dump_json(indent=2)}")
+    sys.exit(1)
+
+
+# ==========================================
 # MAIN ORCHESTRATOR
 # ==========================================
 async def main():
@@ -367,11 +447,35 @@ async def main():
         elif ctx.test_code_snapshot:
             log.info("Skipping QA generation: validated test snapshot present in context.")
 
-        # 3. Development Phase (Developer fixes production code)
-        await run_developer_node(ctx, current_error_trace)
+        # 3. Development Phase — Developer writes code, then the fast-fail documentation guardrail
+        #    runs BEFORE the Reviewer. A miss free-reroutes to the Developer (NO functional-budget
+        #    retry consumed) and bypasses the Reviewer; after GUARDRAIL_MAX_REROUTES fast-fail reroutes
+        #    a still-undocumented file triggers a Hard Halt.
+        dev_feedback = current_error_trace
+        guardrail_halt = False
+        guardrail_msg: str | None = None
+        for guardrail_retries in range(GUARDRAIL_MAX_REROUTES + 1):
+            await run_developer_node(ctx, dev_feedback)
+            # Snapshot the real working-tree production delta (git-tracked, full content) for the Reviewer.
+            build_production_snapshot(ctx)
+            guardrail_msg = await enforce_documentation_guardrail(ctx)
+            if not guardrail_msg:
+                break  # documented (or no new files) → proceed to gates/Reviewer
+            if guardrail_retries == GUARDRAIL_MAX_REROUTES:
+                guardrail_halt = True  # cap reached and still failing → hard halt below
+                break
+            log.warning(
+                f"🔶 Doc guardrail: undocumented new file(s) — fast-fail reroute "
+                f"{guardrail_retries + 1}/{GUARDRAIL_MAX_REROUTES} to Developer (no budget spent), Reviewer bypassed."
+            )
+            dev_feedback = guardrail_msg  # focused reroute: just the comment instruction
 
-        # Snapshot the real working-tree production delta (git-tracked, full content) for the Reviewer.
-        build_production_snapshot(ctx)
+        if guardrail_halt:
+            ctx.error_trace = guardrail_msg
+            _abort_with_incident(
+                ctx,
+                f"\n🚨 HARD HALT: Developer failed the documentation guardrail after {GUARDRAIL_MAX_REROUTES} fast-fail reroutes.",
+            )
 
         # 4. Automated Validation Phase (Runtime gates)
         log.debug("Triggering parallel validation gates (QA & Security)")
@@ -430,16 +534,7 @@ async def main():
             return
 
     # Escalation on Circuit Breaker open
-    log.error("\n🚨 CIRCUIT BREAKER OPEN: Retries exhausted.")
-
-    incident_file = str(ctx.workspace_paths.reports_dir / "incident_report.json")
-    with open(incident_file, "w", encoding="utf-8") as f:
-        f.write(ctx.model_dump_json(indent=2))
-    log.error(f"  └── Incident report written to {incident_file}")
-
-    # Final dump to audit log before exit
-    log.debug(f"Final Incident Context Dump: {ctx.model_dump_json(indent=2)}")
-    sys.exit(1)
+    _abort_with_incident(ctx, "\n🚨 CIRCUIT BREAKER OPEN: Retries exhausted.")
 
 if __name__ == "__main__":
     asyncio.run(main())
