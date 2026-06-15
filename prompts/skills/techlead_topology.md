@@ -1,6 +1,6 @@
 ---
-skill_id: architect_topology
+skill_id: techlead_topology
 type: topology
-nodes: [architect]
+nodes: [techlead]
 ---
-CRITICAL TOPOLOGY RULE: All production code file paths in the ArchitectureContract MUST be prefixed with '{code_prefix}/'. Do NOT place production files at the repository root.
+CRITICAL TOPOLOGY RULE: All production code file paths in the TechLeadContract MUST be prefixed with '{code_prefix}/'. Do NOT place production files at the repository root.

@@ -11,7 +11,7 @@ The core objective of this repository is to fully satisfy the **Mission · OPS_0
 ### Target Pipeline Graph
 
 ```text
-Product ──> Planner ──> Architect ──> Developer ──> Reviewer ──> QA ──> DevOps
+Product ──> Planner ──> Architect ──> TechLead ──> Developer ──> Reviewer ──> QA ──> DevOps
 ```
 
 ### Mandated Success Criteria
@@ -29,12 +29,12 @@ As determined during the initial research phase, this project intentionally reje
 
 1. **Custom FSM Engine**: Driven by a lightweight Python `asyncio` state machine.
 2. **Model Routing Matrix**:
-   * **Gemini 2.5 Flash / Pro**: Architect, QA, and Reviewer nodes (optimized via low latency and high Free Tier quotas).
+   * **Gemini 2.5 Flash / Pro**: TechLead, QA, and Reviewer nodes (optimized via low latency and high Free Tier quotas).
    * **Claude 4.6 Sonnet**: Lead Software Engineer (sandboxed CLI executions via Claude Code).
 3. **Sandboxed Runtimes**: Isolated Docker containers run code execution and verification gates to prevent agent workspace corruption.
 4. **Dual-Channel Observability**: Complete console diagnostics split from a persistent, rotating debug audit log (`sdlc_audit.log`). Real-time input/output token metrics tracked natively.
 5. **Git-Anchored Sessions**: Each run shallow-clones the target repository into an isolated session directory (`runs/run_<uuid>/repo/`), checks out a `feat/ticket-<ticket>` branch, and treats the single clone's `.git` as the transactional Unit-of-Work. Snapshots use the index diff (`git add -A` → `git diff --cached <base_branch> --name-only`), giving a strict causal delta — including untracked files — while protecting context windows from binary pollution and retry bleed. On full success the orchestrator makes one atomic `feat(<ticket>): …` commit (opt-in `--push`).
-6. **Brownfield & Multi-File Support**: The pipeline operates on any external repository via `--repo` and `--ticket`, with `--src-dir` / `--tests-dir` selecting the target paths inside the clone and `--base-branch` as the diff anchor. A generated repository topology map is injected into the Architect and QA contexts so new files land inside existing packages rather than redundant root-level directories, and the Architect's first `domain_tags` entry declares the target language, dynamically routing stack-specific skill files to the execution agents. QA test generation fans out concurrently via `asyncio.gather` — one isolated test file per production module — bypassing LLM output token ceilings, and merges into any existing on-disk test suite instead of overwriting it.
+6. **Brownfield & Multi-File Support**: The pipeline operates on any external repository via `--repo` and `--ticket`, with `--src-dir` / `--tests-dir` selecting the target paths inside the clone and `--base-branch` as the diff anchor. A generated repository topology map is injected into the TechLead and QA contexts so new files land inside existing packages rather than redundant root-level directories, and the TechLead's first `domain_tags` entry declares the target language, dynamically routing stack-specific skill files to the execution agents. QA test generation fans out concurrently via `asyncio.gather` — one isolated test file per production module — bypassing LLM output token ceilings, and merges into any existing on-disk test suite instead of overwriting it.
 7. **Fast-Fail Documentation Guardrail**: A deterministic, zero-LLM-cost middleware runs right after the Developer phase: every newly-created file outside the architecture contract must open with a comment-block justification (language-agnostic lexical check over the first 15 lines). A miss triggers a "free reroute" back to the Developer — bypassing the expensive Reviewer/QA nodes without spending the functional circuit-breaker retry budget. After 2 failed reroutes the engine performs a deterministic Hard Halt, dumping the full FSM state to `runs/run_<uuid>/reports/incident_report.json` and exiting safely.
 
 ---
@@ -47,11 +47,11 @@ This repository is strictly organized to provide 100% traceability for evaluatio
 async-agentic-sdlc/
 ├── src/                        # Source code (the Software Factory itself)
 │   ├── core/                   # Pydantic models, observability, env config, prompt loader
-│   ├── agents/                 # Architect, Developer, QA, Reviewer logic
+│   ├── agents/                 # TechLead, Developer, QA, Reviewer logic
 │   ├── nodes/                  # FSM validation gates (functional tests, SAST)
 │   └── utils/                  # Subprocess + workspace-path-safe helpers
 ├── prompts/                    # Runtime agent instructions (decoupled from src/ logic)
-│   ├── system/                 # Per-role system prompts (planner, architect, developer, qa, reviewer)
+│   ├── system/                 # Per-role system prompts (planner, techlead, developer, qa, reviewer)
 │   └── skills/                 # Reusable prompt fragments injected into agents (engineering_guide, strict_validation, deterministic_mutation)
 ├── tickets/                    # Sample requirement tickets consumed via -f / --file
 ├── runs/                       # Volatile per-run sessions (created dynamically, ignored by git)
@@ -129,7 +129,7 @@ python3 orchestrator.py --resume runs/run_<uuid>/reports/checkpoint.json --reset
 
 Each run is isolated under `runs/run_<uuid>/`: the target repo is shallow-cloned into `repo/` on a
 `feat/ticket-<ticket>` branch, and a single rolling `runs/run_<uuid>/reports/checkpoint.json` is written
-after every critical FSM node (Architect approval, QA approval, end of each self-heal cycle). On `--resume`,
+after every critical FSM node (TechLead approval, QA approval, end of each self-heal cycle). On `--resume`,
 nodes whose outputs are already present in the restored context are bypassed, and the Circuit Breaker
 counter (`current_attempt`) is honoured exactly as it was persisted. When all gates pass, the verified work
 is committed atomically to the feature branch.
@@ -138,7 +138,7 @@ is committed atomically to the feature branch.
 
 ## 📊 Monitoring Token Usage & Costs (FinOps)
 
-The orchestrator natively extracts and logs token usage for Google GenAI models (Architect, QA, Reviewer) directly to the console stream and `sdlc_audit.log` file.
+The orchestrator natively extracts and logs token usage for Google GenAI models (TechLead, QA, Reviewer) directly to the console stream and `sdlc_audit.log` file.
 
 Because the Developer Agent (Claude CLI) runs out-of-band via localized shell processes, its token consumption, prompt caching, and cost analytics must be audited retrospectively. Run the following command in your terminal to output the full daily billing and session usage report:
 

@@ -2,12 +2,12 @@
 
 Unlike the unit suites (which mock ``asyncio.create_subprocess_exec`` and the whole agent
 nodes), this drives the full orchestrator through the real
-architect/qa/developer/reviewer nodes so the genuine ``git`` binary, real file creation, and
+techlead/qa/developer/reviewer nodes so the genuine ``git`` binary, real file creation, and
 OS-specific path/CRLF handling are all exercised — including the new git-anchored bootstrap,
 which performs a **real shallow clone** of a programmatically-created source repo. Only the
 model boundaries are mocked:
 
-* Gemini  -> ``src.utils.llm.instructor_client`` (structured output for architect/qa/reviewer)
+* Gemini  -> ``src.utils.llm.instructor_client`` (structured output for techlead/qa/reviewer)
 * Claude  -> ``src.agents.developer.run_claude_cli`` (file mutation)
 * docker QA gate -> ``orchestrator.run_qa_unit_tests`` (docker cannot be assumed portable)
 
@@ -30,7 +30,7 @@ os.environ.setdefault("GEMINI_API_KEY", "test-key")
 
 import orchestrator
 from src.core.models import (
-    ArchitectureContract,
+    TechLeadContract,
     QATestSuite,
     ReviewReport,
 )
@@ -49,14 +49,14 @@ _TEST_CODE = (
 def _fake_structured_llm(*, model, response_model, messages):
     """Stand-in for instructor's create_with_completion: returns (instance, raw) per role."""
     raw = SimpleNamespace(usage_metadata=None)
-    if response_model is ArchitectureContract:
+    if response_model is TechLeadContract:
         return (
-            ArchitectureContract(
+            TechLeadContract(
                 files_to_modify=["src/calculator.py"],
                 instruction="Implement add(a, b).",
                 function_signatures="def add(a: int, b: int) -> int",
                 strict_type_validation_rules="Operands must be int.",
-                architecture_reasoning="Trivial pure function.",
+                techlead_reasoning="Trivial pure function.",
             ),
             raw,
         )

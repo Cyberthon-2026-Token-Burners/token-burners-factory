@@ -14,7 +14,7 @@ from src.core.models import (
     LOGS_DIR,
     REPORTS_DIR,
     TESTS_DIR,
-    ArchitectureContract,
+    TechLeadContract,
     GlobalPipelineContext,
     QATestSuite,
     ReviewReport,
@@ -158,17 +158,17 @@ class WorkspacePathsForRunTests(unittest.TestCase):
 class ContractModelTests(unittest.TestCase):
     """Pydantic contracts parse expected payloads and defaults."""
 
-    def test_architecture_contract_round_trips_fields(self) -> None:
+    def test_techlead_contract_round_trips_fields(self) -> None:
         # Arrange
         payload = {
             "files_to_modify": ["src/core/calc.py"],
             "instruction": "Implement prime sieve.",
             "function_signatures": "def is_prime(n: int) -> bool",
             "strict_type_validation_rules": "bool must raise TypeError",
-            "architecture_reasoning": "Guard against bool subtype of int.",
+            "techlead_reasoning": "Guard against bool subtype of int.",
         }
         # Act
-        contract = ArchitectureContract(**payload)
+        contract = TechLeadContract(**payload)
         # Assert
         self.assertEqual(contract.files_to_modify, ["src/core/calc.py"])
         self.assertIn("TypeError", contract.strict_type_validation_rules)

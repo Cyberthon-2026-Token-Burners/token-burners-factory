@@ -18,8 +18,8 @@ class GetSystemPromptTests(unittest.TestCase):
         get_skill.cache_clear()
 
     def test_loads_static_prompt(self) -> None:
-        result = get_system_prompt("architect")
-        self.assertIn("Principal Architect", result)
+        result = get_system_prompt("techlead")
+        self.assertIn("Principal TechLead", result)
 
     def test_loads_template_with_placeholders(self) -> None:
         raw = get_system_prompt("developer")

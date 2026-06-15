@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock
 os.environ.setdefault("GEMINI_API_KEY", "test-key")
 
 import orchestrator
-from src.core.models import ArchitectureContract, GlobalPipelineContext, ReviewReport, WorkspacePaths
+from src.core.models import TechLeadContract, GlobalPipelineContext, ReviewReport, WorkspacePaths
 
 
 class ParseArgsResumeTests(unittest.TestCase):
@@ -97,7 +97,7 @@ class ParseArgsFreshRunTests(unittest.TestCase):
 class MainResumeSkipFlowTests(unittest.IsolatedAsyncioTestCase):
     """Resume flow must bypass completed FSM nodes and still checkpoint each cycle."""
 
-    async def test_resume_skips_architect_and_initial_qa_generation(self) -> None:
+    async def test_resume_skips_techlead_and_initial_qa_generation(self) -> None:
         # Arrange
         with TemporaryDirectory() as td:
             base = Path(td)
@@ -117,7 +117,7 @@ class MainResumeSkipFlowTests(unittest.IsolatedAsyncioTestCase):
                 "instruction": "noop",
                 "function_signatures": "noop",
                 "strict_type_validation_rules": "noop",
-                "architecture_reasoning": "noop",
+                "techlead_reasoning": "noop",
             }
 
             async def _set_approved_review(*_args, **_kwargs) -> None:
@@ -137,7 +137,7 @@ class MainResumeSkipFlowTests(unittest.IsolatedAsyncioTestCase):
                 mock.patch.object(orchestrator, "parse_args", return_value=orchestrator.RunConfig(
                     description=None, base_branch="main", resume=Path("cp.json"), reset_attempts=False)),
                 mock.patch.object(GlobalPipelineContext, "load_checkpoint", return_value=ctx),
-                mock.patch.object(orchestrator, "run_architect_node", new_callable=AsyncMock) as architect,
+                mock.patch.object(orchestrator, "run_techlead_node", new_callable=AsyncMock) as techlead,
                 mock.patch.object(orchestrator, "run_qa_agent_node", new_callable=AsyncMock) as qa,
                 mock.patch.object(orchestrator, "run_developer_node", new_callable=AsyncMock) as developer,
                 mock.patch.object(orchestrator, "run_reviewer_node", new=AsyncMock(side_effect=_set_approved_review)),
@@ -150,7 +150,7 @@ class MainResumeSkipFlowTests(unittest.IsolatedAsyncioTestCase):
                 await orchestrator.main()
 
             # Assert
-            architect.assert_not_called()
+            techlead.assert_not_called()
             qa.assert_not_called()
             developer.assert_awaited_once()
             save_checkpoint.assert_called_once_with(ctx, ctx.workspace_paths.reports_dir / "checkpoint.json")
@@ -172,7 +172,7 @@ class MainResumeSkipFlowTests(unittest.IsolatedAsyncioTestCase):
 class MainCheckpointWritePointsTests(unittest.IsolatedAsyncioTestCase):
     """Checkpoint must be persisted at required orchestration milestones."""
 
-    async def test_fresh_run_saves_after_architect_after_qa_and_end_of_cycle(self) -> None:
+    async def test_fresh_run_saves_after_techlead_after_qa_and_end_of_cycle(self) -> None:
         # Arrange
         with TemporaryDirectory() as td:
             base = Path(td)
@@ -202,12 +202,12 @@ class MainCheckpointWritePointsTests(unittest.IsolatedAsyncioTestCase):
                     repo="dummy-repo", ticket="DEMO-1")),
                 mock.patch.object(orchestrator, "bootstrap_session", new=AsyncMock(return_value=paths)),
                 mock.patch.object(GlobalPipelineContext, "save_checkpoint", autospec=True) as save_checkpoint,
-                mock.patch.object(orchestrator, "run_architect_node", new=AsyncMock(side_effect=lambda c: setattr(c, "contract", {
+                mock.patch.object(orchestrator, "run_techlead_node", new=AsyncMock(side_effect=lambda c: setattr(c, "contract", {
                     "files_to_modify": ["src/core/models.py"],
                     "instruction": "noop",
                     "function_signatures": "noop",
                     "strict_type_validation_rules": "noop",
-                    "architecture_reasoning": "noop",
+                    "techlead_reasoning": "noop",
                 }))),
                 mock.patch.object(orchestrator, "run_qa_agent_node", new=AsyncMock(side_effect=lambda c, _e: setattr(c, "test_code_snapshot", "tests"))),
                 mock.patch.object(orchestrator, "run_developer_node", new_callable=AsyncMock),
@@ -249,7 +249,7 @@ class MainCheckpointWritePointsTests(unittest.IsolatedAsyncioTestCase):
                 "instruction": "noop",
                 "function_signatures": "noop",
                 "strict_type_validation_rules": "noop",
-                "architecture_reasoning": "noop",
+                "techlead_reasoning": "noop",
             }
 
             async def _set_approved_review(*_args, **_kwargs) -> None:
@@ -269,7 +269,7 @@ class MainCheckpointWritePointsTests(unittest.IsolatedAsyncioTestCase):
                 mock.patch.object(orchestrator, "parse_args", return_value=orchestrator.RunConfig(
                     description=None, base_branch="main", resume=Path("cp.json"), reset_attempts=False)),
                 mock.patch.object(GlobalPipelineContext, "load_checkpoint", return_value=ctx),
-                mock.patch.object(orchestrator, "run_architect_node", new_callable=AsyncMock) as architect,
+                mock.patch.object(orchestrator, "run_techlead_node", new_callable=AsyncMock) as techlead,
                 mock.patch.object(orchestrator, "run_qa_agent_node", new=AsyncMock(side_effect=lambda c, _e: setattr(c, "test_code_snapshot", "new tests"))) as qa,
                 mock.patch.object(orchestrator, "run_developer_node", new_callable=AsyncMock),
                 mock.patch.object(orchestrator, "run_reviewer_node", new=AsyncMock(side_effect=_set_approved_review)),
@@ -282,7 +282,7 @@ class MainCheckpointWritePointsTests(unittest.IsolatedAsyncioTestCase):
                 await orchestrator.main()
 
             # Assert
-            architect.assert_not_called()
+            techlead.assert_not_called()
             qa.assert_awaited_once()
             checkpoint_path = ctx.workspace_paths.reports_dir / "checkpoint.json"
             self.assertEqual(save_checkpoint.call_count, 2)
@@ -334,12 +334,12 @@ class MainCheckpointWritePointsTests(unittest.IsolatedAsyncioTestCase):
                     repo="dummy-repo", ticket="DEMO-1")),
                 mock.patch.object(orchestrator, "bootstrap_session", new=AsyncMock(return_value=paths)),
                 mock.patch.object(GlobalPipelineContext, "save_checkpoint", autospec=True) as save_checkpoint,
-                mock.patch.object(orchestrator, "run_architect_node", new=AsyncMock(side_effect=lambda c: setattr(c, "contract", {
+                mock.patch.object(orchestrator, "run_techlead_node", new=AsyncMock(side_effect=lambda c: setattr(c, "contract", {
                     "files_to_modify": ["src/core/models.py"],
                     "instruction": "noop",
                     "function_signatures": "noop",
                     "strict_type_validation_rules": "noop",
-                    "architecture_reasoning": "noop",
+                    "techlead_reasoning": "noop",
                 }))),
                 mock.patch.object(orchestrator, "run_qa_agent_node", new=AsyncMock(side_effect=lambda c, _e: setattr(c, "test_code_snapshot", "tests"))) as qa,
                 mock.patch.object(orchestrator, "run_developer_node", new_callable=AsyncMock) as developer,
@@ -393,7 +393,7 @@ class ResumeFsmRecoveryTests(unittest.IsolatedAsyncioTestCase):
                 "instruction": "noop",
                 "function_signatures": "noop",
                 "strict_type_validation_rules": "noop",
-                "architecture_reasoning": "noop",
+                "techlead_reasoning": "noop",
             }
             ctx.review_report = ReviewReport(
                 code_quality_analysis="ok",
@@ -421,7 +421,7 @@ class ResumeFsmRecoveryTests(unittest.IsolatedAsyncioTestCase):
                 mock.patch.object(orchestrator, "parse_args", return_value=orchestrator.RunConfig(
                     description=None, base_branch="main", resume=Path("cp.json"), reset_attempts=False)),
                 mock.patch.object(GlobalPipelineContext, "load_checkpoint", return_value=ctx),
-                mock.patch.object(orchestrator, "run_architect_node", new_callable=AsyncMock) as architect,
+                mock.patch.object(orchestrator, "run_techlead_node", new_callable=AsyncMock) as techlead,
                 mock.patch.object(orchestrator, "run_qa_agent_node", new=AsyncMock(side_effect=lambda c, _e: setattr(c, "test_code_snapshot", "fresh tests"))) as qa,
                 mock.patch.object(orchestrator, "run_developer_node", new_callable=AsyncMock),
                 mock.patch.object(orchestrator, "run_reviewer_node", new=AsyncMock(side_effect=_approve)),
@@ -433,7 +433,7 @@ class ResumeFsmRecoveryTests(unittest.IsolatedAsyncioTestCase):
                 await orchestrator.main()
 
             # Assert
-            architect.assert_not_called()
+            techlead.assert_not_called()
             qa.assert_awaited_once()
             self.assertEqual(ctx.test_code_snapshot, "fresh tests")
 
@@ -459,7 +459,7 @@ class ResumeFsmRecoveryTests(unittest.IsolatedAsyncioTestCase):
                 "instruction": "noop",
                 "function_signatures": "noop",
                 "strict_type_validation_rules": "noop",
-                "architecture_reasoning": "noop",
+                "techlead_reasoning": "noop",
             }
             ctx.review_report = ReviewReport(
                 code_quality_analysis="needs fix",
@@ -487,7 +487,7 @@ class ResumeFsmRecoveryTests(unittest.IsolatedAsyncioTestCase):
                 mock.patch.object(orchestrator, "parse_args", return_value=orchestrator.RunConfig(
                     description=None, base_branch="main", resume=Path("cp.json"), reset_attempts=False)),
                 mock.patch.object(GlobalPipelineContext, "load_checkpoint", return_value=ctx),
-                mock.patch.object(orchestrator, "run_architect_node", new_callable=AsyncMock),
+                mock.patch.object(orchestrator, "run_techlead_node", new_callable=AsyncMock),
                 mock.patch.object(orchestrator, "run_qa_agent_node", new_callable=AsyncMock) as qa,
                 mock.patch.object(orchestrator, "run_developer_node", new_callable=AsyncMock) as developer,
                 mock.patch.object(orchestrator, "run_reviewer_node", new=AsyncMock(side_effect=_approve)),
@@ -525,7 +525,7 @@ class ResumeFsmRecoveryTests(unittest.IsolatedAsyncioTestCase):
                 "instruction": "noop",
                 "function_signatures": "noop",
                 "strict_type_validation_rules": "noop",
-                "architecture_reasoning": "noop",
+                "techlead_reasoning": "noop",
             }
 
             with (
@@ -535,7 +535,7 @@ class ResumeFsmRecoveryTests(unittest.IsolatedAsyncioTestCase):
                 mock.patch.object(orchestrator, "parse_args", return_value=orchestrator.RunConfig(
                     description=None, base_branch="main", resume=Path("cp.json"), reset_attempts=False)),
                 mock.patch.object(GlobalPipelineContext, "load_checkpoint", return_value=ctx),
-                mock.patch.object(orchestrator, "run_architect_node", new_callable=AsyncMock) as architect,
+                mock.patch.object(orchestrator, "run_techlead_node", new_callable=AsyncMock) as techlead,
                 mock.patch.object(orchestrator, "run_qa_agent_node", new_callable=AsyncMock) as qa,
                 mock.patch.object(orchestrator, "run_developer_node", new_callable=AsyncMock) as developer,
                 mock.patch.object(orchestrator, "run_reviewer_node", new_callable=AsyncMock) as reviewer,
@@ -548,7 +548,7 @@ class ResumeFsmRecoveryTests(unittest.IsolatedAsyncioTestCase):
 
             # Assert
             self.assertEqual(exit_ctx.exception.code, 1)
-            architect.assert_not_called()
+            techlead.assert_not_called()
             qa.assert_not_called()
             developer.assert_not_called()
             reviewer.assert_not_called()
@@ -575,7 +575,7 @@ class ResumeFsmRecoveryTests(unittest.IsolatedAsyncioTestCase):
                 "instruction": "noop",
                 "function_signatures": "noop",
                 "strict_type_validation_rules": "noop",
-                "architecture_reasoning": "noop",
+                "techlead_reasoning": "noop",
             }
             ctx.review_report = ReviewReport(
                 code_quality_analysis="ok",
@@ -603,7 +603,7 @@ class ResumeFsmRecoveryTests(unittest.IsolatedAsyncioTestCase):
                 mock.patch.object(orchestrator, "parse_args", return_value=orchestrator.RunConfig(
                     description=None, base_branch="main", resume=Path("cp.json"), reset_attempts=True)),
                 mock.patch.object(GlobalPipelineContext, "load_checkpoint", return_value=ctx),
-                mock.patch.object(orchestrator, "run_architect_node", new_callable=AsyncMock) as architect,
+                mock.patch.object(orchestrator, "run_techlead_node", new_callable=AsyncMock) as techlead,
                 mock.patch.object(orchestrator, "run_qa_agent_node", new=AsyncMock(side_effect=lambda c, _e: setattr(c, "test_code_snapshot", "fresh tests"))) as qa,
                 mock.patch.object(orchestrator, "run_developer_node", new_callable=AsyncMock) as developer,
                 mock.patch.object(orchestrator, "run_reviewer_node", new=AsyncMock(side_effect=_approve)),
@@ -615,7 +615,7 @@ class ResumeFsmRecoveryTests(unittest.IsolatedAsyncioTestCase):
                 await orchestrator.main()
 
             # Assert
-            architect.assert_not_called()
+            techlead.assert_not_called()
             qa.assert_awaited_once()
             self.assertEqual(developer.await_count, 1)
             # After the single successful cycle the persisted counter advances from 1 to 2.
@@ -871,9 +871,9 @@ class EnforceDocumentationGuardrailTests(unittest.IsolatedAsyncioTestCase):
             logs_dir=repo / "logs", reports_dir=repo / "reports", repo_dir=repo,
         )
         ctx = GlobalPipelineContext(pr_description="t", base_branch="main", workspace_paths=paths)
-        ctx.contract = ArchitectureContract(
+        ctx.contract = TechLeadContract(
             files_to_modify=files_to_modify, instruction="i", function_signatures="s",
-            strict_type_validation_rules="r", architecture_reasoning="why",
+            strict_type_validation_rules="r", techlead_reasoning="why",
         )
         ctx.production_code_snapshot = {k: "" for k in snapshot_keys}
         return ctx
@@ -957,9 +957,9 @@ class DocumentationGuardrailLoopTests(unittest.IsolatedAsyncioTestCase):
         ctx = GlobalPipelineContext(
             pr_description="resume run", workspace_paths=paths, test_code_snapshot="existing tests",
         )
-        ctx.contract = ArchitectureContract(
+        ctx.contract = TechLeadContract(
             files_to_modify=["src/core/models.py"], instruction="noop", function_signatures="noop",
-            strict_type_validation_rules="noop", architecture_reasoning="noop",
+            strict_type_validation_rules="noop", techlead_reasoning="noop",
         )
         return ctx
 
@@ -981,7 +981,7 @@ class DocumentationGuardrailLoopTests(unittest.IsolatedAsyncioTestCase):
                 mock.patch.object(orchestrator, "parse_args", return_value=orchestrator.RunConfig(
                     description=None, base_branch="main", resume=Path("cp.json"), reset_attempts=False)),
                 mock.patch.object(GlobalPipelineContext, "load_checkpoint", return_value=ctx),
-                mock.patch.object(orchestrator, "run_architect_node", new_callable=AsyncMock),
+                mock.patch.object(orchestrator, "run_techlead_node", new_callable=AsyncMock),
                 mock.patch.object(orchestrator, "run_qa_agent_node", new_callable=AsyncMock) as qa,
                 mock.patch.object(orchestrator, "run_developer_node", new_callable=AsyncMock) as developer,
                 mock.patch.object(orchestrator, "enforce_documentation_guardrail",
@@ -1016,7 +1016,7 @@ class DocumentationGuardrailLoopTests(unittest.IsolatedAsyncioTestCase):
                 mock.patch.object(orchestrator, "parse_args", return_value=orchestrator.RunConfig(
                     description=None, base_branch="main", resume=Path("cp.json"), reset_attempts=False)),
                 mock.patch.object(GlobalPipelineContext, "load_checkpoint", return_value=ctx),
-                mock.patch.object(orchestrator, "run_architect_node", new_callable=AsyncMock),
+                mock.patch.object(orchestrator, "run_techlead_node", new_callable=AsyncMock),
                 mock.patch.object(orchestrator, "run_qa_agent_node", new_callable=AsyncMock),
                 mock.patch.object(orchestrator, "run_developer_node", new_callable=AsyncMock) as developer,
                 mock.patch.object(orchestrator, "enforce_documentation_guardrail",

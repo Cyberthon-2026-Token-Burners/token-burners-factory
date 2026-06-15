@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Each release maps to a completed SDLC iteration; the corresponding Architecture
 Decision Record (ADR) is linked from the version heading.
 
+## [Unreleased]
+
+### Changed
+- Refactor: Renamed Architect role to TechLead across prompts and orchestration layer for better semantic mapping.
+
 ## [v0.10.0] - 2026-06-11 — Fast-Fail Documentation Guardrail & Repo Topology Routing
 
 ADR: [0010-fast-fail-documentation-guardrail](./docs/adr/0010-fast-fail-documentation-guardrail.md)

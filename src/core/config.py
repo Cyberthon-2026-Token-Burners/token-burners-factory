@@ -11,14 +11,14 @@ from src.core.models import ARTIFACTS_DIR, CODE_DIR, TESTS_DIR, LOGS_DIR, REPORT
 # ==========================================
 # MODEL ROUTING (single source of truth)
 # ==========================================
-ARCHITECT_MODEL = "gemini-2.5-flash"
-QA_MODEL = "gemini-2.5-flash"
-REVIEWER_MODEL = "gemini-2.5-flash"
+TECHLEAD_MODEL = "gemini-3.1-flash-lite"
+QA_MODEL = "gemini-3.1-flash-lite"
+REVIEWER_MODEL = "gemini-3.1-flash-lite"
 DEVELOPER_MODEL_LABEL = "Claude CLI Wrapper"  # real model is managed by the Claude CLI config
 
 # Role -> (model, human-readable agent name) for structured (instructor) LLM calls.
 ROLE_MODELS = {
-    "architect": (ARCHITECT_MODEL, "Architect Agent"),
+    "techlead": (TECHLEAD_MODEL, "TechLead Agent"),
     "qa":        (QA_MODEL,        "QA Agent"),
     "reviewer":  (REVIEWER_MODEL,  "Reviewer Agent"),
 }

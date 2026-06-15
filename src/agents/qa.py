@@ -14,7 +14,7 @@ async def run_qa_agent_node(ctx: GlobalPipelineContext, error_trace: str = "") -
     log.info(f"🔶 [ROLE] QA Agent | [MODEL] {model_name}")
 
     if not ctx.contract or not ctx.contract.files_to_modify:
-        log.error("🚨 CRITICAL: Cannot generate tests without a locked Architecture Contract.")
+        log.error("🚨 CRITICAL: Cannot generate tests without a locked TechLead Contract.")
         sys.exit(1)
 
     # The clone is already a git repo on feat/ticket-<id>; QA only writes test files (no init/commit).

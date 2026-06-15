@@ -12,7 +12,7 @@ from src.core.observability import log, reconfigure_logging
 from src.core.config import check_environment
 from src.core.models import GlobalPipelineContext, WorkspacePaths, RUNS_BASE
 from src.utils.git_helpers import get_git_root, get_pipeline_snapshot_files
-from src.agents.architect import run_architect_node
+from src.agents.techlead import run_techlead_node
 from src.agents.qa import run_qa_agent_node
 from src.agents.developer import run_developer_node
 from src.agents.reviewer import run_reviewer_node
@@ -431,11 +431,11 @@ async def main():
 
     # 1. Architecture Phase (executed once per session)
     if ctx.contract:
-        log.info("Skipping Architect node: contract already present in context.")
+        log.info("Skipping TechLead node: contract already present in context.")
     else:
-        await run_architect_node(ctx)
+        await run_techlead_node(ctx)
         ctx.save_checkpoint(checkpoint_file)
-        log.debug(f"Checkpoint saved after Architect node: {checkpoint_file}")
+        log.debug(f"Checkpoint saved after TechLead node: {checkpoint_file}")
 
     max_retries = 3
 

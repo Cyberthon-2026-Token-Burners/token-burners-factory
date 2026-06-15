@@ -57,12 +57,12 @@ class WorkspacePaths(BaseModel):
 # ==========================================
 # CONTRACTS & PIPELINE STATE
 # ==========================================
-class ArchitectureContract(BaseModel):
+class TechLeadContract(BaseModel):
     files_to_modify: list[str] = Field(description="List of target source file paths.")
     instruction: str = Field(description="Technical directives for the Developer Agent.")
     function_signatures: str = Field(description="Function names, arguments, types, and exceptions.")
     strict_type_validation_rules: str = Field(description="Type validation rules for the implementation.")
-    architecture_reasoning: str = Field(description="Justification for the chosen design.")
+    techlead_reasoning: str = Field(description="Justification for the chosen design.")
     domain_tags: list[str] = Field(description="Up to 5 lowercase tags for the target tech stack/language AND business domain — e.g. 'python', 'dotnet', 'typescript', 'math', 'database'. The language tag acts as the dynamic skill router and MUST be declared first.", default_factory=list)
 
 class SkillRelevance(BaseModel):
@@ -93,7 +93,7 @@ class GlobalPipelineContext(BaseModel):
     base_branch: str = "main"
     ticket: str = ""
     workspace_paths: WorkspacePaths = Field(default_factory=WorkspacePaths)
-    contract: ArchitectureContract | None = None
+    contract: TechLeadContract | None = None
     production_code_snapshot: dict[str, str] = Field(default_factory=dict)
     production_code_diff: str = ""
     test_code_snapshot: str = ""

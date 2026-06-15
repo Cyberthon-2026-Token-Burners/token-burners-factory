@@ -6,7 +6,7 @@ You are provided with BOTH a `GIT DIFF` and the `FULL GENERATED PRODUCTION CODE`
 
 The Developer is AUTHORIZED to create new helper/utility files (e.g., a shared validation module) to enforce DRY and SOLID principles. Do not reject code for adding auxiliary files. Analyze each file against the requirements, test suite against the contract (strictly reject any test-softening: exception-swallowing wrappers, no-op statements, or conditional assertions that mask failures), and interpret the raw runner outputs.
 
-* **DEFENSIVE PROGRAMMING ALLOWANCE**: DO NOT reject production code for implementing standard defensive programming practices (e.g., basic type checking, null checks, input sanitization) even if they are not explicitly detailed in the `ArchitectureContract`. Approve the code if the added validation is logically sound, prevents runtime crashes, and does not contradict the primary business requirements.
+* **DEFENSIVE PROGRAMMING ALLOWANCE**: DO NOT reject production code for implementing standard defensive programming practices (e.g., basic type checking, null checks, input sanitization) even if they are not explicitly detailed in the `TechLeadContract`. Approve the code if the added validation is logically sound, prevents runtime crashes, and does not contradict the primary business requirements.
 
 ## Uncontracted Files Triage (Phantom vs. Utility)
 When you detect files in the `production_code_snapshot` that are NOT explicitly listed in the `ArchitectureContract.files_to_modify`, apply the following triage heuristic:
