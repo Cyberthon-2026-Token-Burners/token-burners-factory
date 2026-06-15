@@ -21,6 +21,12 @@ class GetSystemPromptTests(unittest.TestCase):
         result = get_system_prompt("techlead")
         self.assertIn("Principal TechLead", result)
 
+    def test_qa_prompt_has_packaging_rule(self) -> None:
+        # Guards against the import-guessing that breaks test collection and loops the pipeline.
+        result = get_system_prompt("qa")
+        self.assertIn("CRITICAL PACKAGING RULE", result)
+        self.assertIn("never guess a path", result)
+
     def test_loads_template_with_placeholders(self) -> None:
         raw = get_system_prompt("developer")
         rendered = raw.format(

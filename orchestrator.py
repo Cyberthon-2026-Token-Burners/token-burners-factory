@@ -312,6 +312,45 @@ def build_production_snapshot(ctx: GlobalPipelineContext) -> None:
 # ==========================================
 GUARDRAIL_TOP_LINES = 15        # top-of-file window scanned for a justification
 GUARDRAIL_MAX_REROUTES = 2      # local guardrail_retries cap: free reroutes before a Hard Halt
+
+# ==========================================
+# TEST-COLLECTION-FAILURE TRIAGE (QA loop break)
+# ==========================================
+TEST_TRIAGE_MAX_REROUTES = 2    # free QA regenerations on import/collection failure before a Hard Halt
+FEEDBACK_TAIL_LINES = 50        # only the last N runner lines are fed forward (context pruning)
+FEEDBACK_MAX_CHARS = 8000       # hard cap on any failure text injected into an agent prompt
+# Markers that mean the suite failed to IMPORT (broken QA artifact), not a production-logic failure.
+_COLLECTION_FAILURE_MARKERS = (
+    "ImportError",
+    "ModuleNotFoundError",
+    "cannot import name",
+    "unittest.loader._FailedTest",
+)
+
+
+def _is_test_collection_failure(qa_log: list[str]) -> bool:
+    """True when the test runner failed at collection/import time (a broken test suite)."""
+    joined = "\n".join(qa_log)
+    return any(marker in joined for marker in _COLLECTION_FAILURE_MARKERS)
+
+
+def _truncate_tail(lines: list[str], max_lines: int = FEEDBACK_TAIL_LINES) -> str:
+    """Keep only the last ``max_lines`` runner lines — failures are always at the tail."""
+    return "\n".join(lines[-max_lines:])
+
+
+def _cap_text(text: str, max_chars: int = FEEDBACK_MAX_CHARS) -> str:
+    """Hard-cap any failure text injected into an agent prompt (head + tail kept)."""
+    if len(text) <= max_chars:
+        return text
+    half = max_chars // 2
+    return f"{text[:half]}\n…[truncated]…\n{text[-half:]}"
+
+
+def _clear_test_files(tests_dir) -> None:
+    """Delete stale ``test_*.py`` so QA regenerates from a clean slate (no snapshot bloat)."""
+    for p in Path(tests_dir).glob("test_*.py"):
+        p.unlink()
 # Language-agnostic comment lead-ins. ''' is added beyond the spec list so a Python single-quote module
 # docstring (a valid justification) isn't flagged as undocumented.
 _COMMENT_PREFIXES = ("#", "//", "/*", "*", '"""', "'''")
@@ -558,20 +597,47 @@ async def main():
         # Developer is the dominant token drain — enforce the budget before spending on gates.
         enforce_financial_circuit_breaker(ctx)
 
-        # 4. Automated Validation Phase (Runtime gates)
-        log.debug("Triggering parallel validation gates (QA & Security)")
-        qa_result, sec_result = await asyncio.gather(
-            run_qa_unit_tests(
-                code_dir=str(ctx.workspace_paths.code_dir),
-                tests_dir=str(ctx.workspace_paths.tests_dir),
-            ),
-            run_security_scan([str(ctx.workspace_paths.code_dir)]),
-        )
-        qa_success, qa_lines = qa_result
-        sec_success, sec_lines = sec_result
+        # 4. Automated Validation Phase (Runtime gates) — with deterministic test-collection triage.
+        #    A suite that fails to IMPORT is a broken QA artifact, not a production-code defect, so we
+        #    regenerate the tests against the real production snapshot (Developer & Reviewer bypassed,
+        #    no functional retry consumed) and re-run the gates. Bounded so it can never loop forever.
+        for triage_try in range(TEST_TRIAGE_MAX_REROUTES + 1):
+            log.debug("Triggering parallel validation gates (QA & Security)")
+            qa_result, sec_result = await asyncio.gather(
+                run_qa_unit_tests(
+                    code_dir=str(ctx.workspace_paths.code_dir),
+                    tests_dir=str(ctx.workspace_paths.tests_dir),
+                ),
+                run_security_scan([str(ctx.workspace_paths.code_dir)]),
+            )
+            qa_success, qa_lines = qa_result
+            sec_success, sec_lines = sec_result
 
-        # 5. Comprehensive Audit Phase (Reviewer Agent)
-        await run_reviewer_node(ctx, qa_success, qa_lines, sec_success, sec_lines)
+            if qa_success or not _is_test_collection_failure(qa_lines):
+                break
+            if triage_try == TEST_TRIAGE_MAX_REROUTES:
+                ctx.error_trace = _cap_text(_truncate_tail(qa_lines))
+                _abort_with_incident(
+                    ctx,
+                    f"\n🚨 HARD HALT: test suite still fails to import after "
+                    f"{TEST_TRIAGE_MAX_REROUTES} QA regenerations.",
+                )
+            log.warning(
+                f"🔶 Test-collection failure — free QA regen "
+                f"{triage_try + 1}/{TEST_TRIAGE_MAX_REROUTES} (Developer & Reviewer bypassed, stale tests cleared)."
+            )
+            _clear_test_files(ctx.workspace_paths.tests_dir)
+            ctx.error_trace = _cap_text(
+                "Test suite failed to import (collection error). Regenerate the tests against the real "
+                "production code: import every symbol from the module the contract assigns it to, and "
+                "never invent or cross-import modules. Failure tail:\n" + _truncate_tail(qa_lines)
+            )
+            await run_qa_agent_node(ctx, ctx.error_trace)
+            enforce_financial_circuit_breaker(ctx)
+            ctx.save_checkpoint(checkpoint_file)
+
+        # 5. Comprehensive Audit Phase (Reviewer Agent) — failure log pruned to the tail.
+        await run_reviewer_node(ctx, qa_success, qa_lines[-FEEDBACK_TAIL_LINES:], sec_success, sec_lines)
         enforce_financial_circuit_breaker(ctx)
 
         # Print execution logs of utilities ONLY in case of an actual failure to CLI, but log everything to file
@@ -600,7 +666,7 @@ async def main():
             regenerate_tests = True
 
         if not all_gates_passed:
-            ctx.error_trace = ctx.review_report.diagnostic_payload
+            ctx.error_trace = _cap_text(ctx.review_report.diagnostic_payload)
             log.warning(f"🔶 Cycle {attempt} failed. Routing reviewer diagnostic to target agent.")
 
         # Advance the persisted attempt counter so a resumed run cannot exceed the

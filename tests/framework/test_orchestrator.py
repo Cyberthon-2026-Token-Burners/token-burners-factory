@@ -1076,6 +1076,101 @@ class FinancialCircuitBreakerTests(unittest.TestCase):
             self.assertFalse((base / "reports" / "incident_report.json").exists())
 
 
+class TestCollectionTriageHelperTests(unittest.TestCase):
+    """Deterministic helpers behind the QA-loop break."""
+
+    def test_detects_import_and_collection_failures(self) -> None:
+        for marker in ("ImportError: boom", "ModuleNotFoundError: no mod",
+                       "cannot import name 'X'", "unittest.loader._FailedTest"):
+            self.assertTrue(orchestrator._is_test_collection_failure([marker]))
+
+    def test_plain_assertion_failure_is_not_collection_failure(self) -> None:
+        log = ["FAIL: test_add", "AssertionError: 2 != 3", "Ran 1 test", "FAILED (failures=1)"]
+        self.assertFalse(orchestrator._is_test_collection_failure(log))
+
+    def test_truncate_tail_keeps_last_lines(self) -> None:
+        lines = [f"line {i}" for i in range(200)]
+        out = orchestrator._truncate_tail(lines, max_lines=50)
+        self.assertEqual(out.count("\n"), 49)
+        self.assertTrue(out.endswith("line 199"))
+        self.assertNotIn("line 149", out.splitlines()[0])
+
+    def test_cap_text_bounds_length(self) -> None:
+        capped = orchestrator._cap_text("x" * 20000, max_chars=8000)
+        self.assertLessEqual(len(capped), 8000 + len("\n…[truncated]…\n"))
+        self.assertIn("[truncated]", capped)
+
+    def test_clear_test_files_removes_only_test_modules(self) -> None:
+        with TemporaryDirectory() as td:
+            base = Path(td)
+            (base / "test_a.py").write_text("x", encoding="utf-8")
+            (base / "test_b.py").write_text("x", encoding="utf-8")
+            (base / "conftest.py").write_text("x", encoding="utf-8")  # not a test_*.py
+            orchestrator._clear_test_files(base)
+            self.assertFalse((base / "test_a.py").exists())
+            self.assertFalse((base / "test_b.py").exists())
+            self.assertTrue((base / "conftest.py").exists())
+
+
+class TestCollectionTriageRoutingTests(unittest.IsolatedAsyncioTestCase):
+    """A collection failure reroutes to QA (clearing stale tests) without re-running the Developer."""
+
+    def _ctx(self, base: Path) -> GlobalPipelineContext:
+        paths = WorkspacePaths(
+            code_dir=base / "code", tests_dir=base / "tests",
+            logs_dir=base / "logs", reports_dir=base / "reports",
+        )
+        ctx = GlobalPipelineContext(
+            pr_description="triage run", workspace_paths=paths, test_code_snapshot="existing tests",
+        )
+        ctx.contract = TechLeadContract(
+            files_to_modify=["src/calc.py"], instruction="noop", function_signatures="noop",
+            strict_type_validation_rules="noop", techlead_reasoning="noop",
+        )
+        return ctx
+
+    async def test_import_failure_reroutes_to_qa_and_clears_tests(self) -> None:
+        with TemporaryDirectory() as td:
+            base = Path(td)
+            ctx = self._ctx(base)
+            stale = ctx.workspace_paths.tests_dir / "test_stale.py"
+            stale.write_text("import does.not.exist", encoding="utf-8")
+
+            async def _approve(*_a, **_k) -> None:
+                ctx.review_report = ReviewReport(
+                    code_quality_analysis="ok", test_integrity_analysis="ok",
+                    log_verification_analysis="ok", code_quality_approved=True,
+                    test_integrity_approved=True, diagnostic_payload="",
+                )
+
+            with (
+                mock.patch.object(orchestrator, "check_environment"),
+                mock.patch.object(orchestrator, "reconfigure_logging"),
+                mock.patch.object(orchestrator, "build_production_snapshot"),
+                mock.patch.object(orchestrator, "finalize_transaction", new_callable=AsyncMock),
+                mock.patch.object(orchestrator, "parse_args", return_value=orchestrator.RunConfig(
+                    description=None, base_branch="main", resume=Path("cp.json"), reset_attempts=False)),
+                mock.patch.object(GlobalPipelineContext, "load_checkpoint", return_value=ctx),
+                mock.patch.object(orchestrator, "run_techlead_node", new_callable=AsyncMock),
+                mock.patch.object(orchestrator, "run_developer_node", new_callable=AsyncMock) as developer,
+                mock.patch.object(orchestrator, "enforce_documentation_guardrail", new=AsyncMock(return_value=None)),
+                mock.patch.object(orchestrator, "run_qa_agent_node", new_callable=AsyncMock) as qa,
+                mock.patch.object(orchestrator, "run_reviewer_node", new=AsyncMock(side_effect=_approve)) as reviewer,
+                # First gate run = import failure; second (after QA regen) = clean pass.
+                mock.patch.object(orchestrator, "run_qa_unit_tests", new=AsyncMock(side_effect=[
+                    (False, ["unittest.loader._FailedTest", "ImportError: No module named 'src.base'"]),
+                    (True, []),
+                ])),
+                mock.patch.object(orchestrator, "run_security_scan", new=AsyncMock(return_value=(True, []))),
+            ):
+                await orchestrator.main()
+
+            developer.assert_awaited_once()       # NOT re-run during the test-only triage
+            qa.assert_awaited_once()              # regenerated tests against the real snapshot
+            reviewer.assert_awaited_once()        # reached only after the suite imported cleanly
+            self.assertFalse(stale.exists())      # stale broken test file was cleared
+
+
 class FinOpsReportTests(unittest.TestCase):
     """Per-provider sub-totals string and the persisted finops_report.json."""
 

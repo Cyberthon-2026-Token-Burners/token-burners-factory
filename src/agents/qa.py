@@ -27,6 +27,22 @@ async def run_qa_agent_node(ctx: GlobalPipelineContext, error_trace: str = "") -
         ctx.repository_map = generate_repo_map(ctx.workspace_paths.repo_dir)
     qa_system_prompt += f"\n\n=== EXISTING REPOSITORY TOPOLOGY ===\n{ctx.repository_map}\n"
 
+    # Authoritative module map: every imported symbol must come from one of these contract paths.
+    qa_system_prompt += (
+        "\n\n=== CONTRACT FILES (authoritative module map) ===\n"
+        + "\n".join(ctx.contract.files_to_modify)
+    )
+
+    # When production code already exists (any regeneration after the Developer has run) it is the
+    # source of truth for symbol locations — this is what stops the import guessing that breaks
+    # test collection and triggers the QA↔Developer loop.
+    if ctx.production_code_snapshot:
+        snapshot = "\n\n".join(
+            f"=== FILE: {path} ===\n{content}"
+            for path, content in ctx.production_code_snapshot.items()
+        )
+        qa_system_prompt += f"\n\n=== PRODUCTION CODE SNAPSHOT (source of truth for imports) ===\n{snapshot}"
+
     if error_trace and ctx.test_code_snapshot:
         qa_system_prompt += f"\n\n=== PREVIOUS TEST SUITE STATE ===\n{ctx.test_code_snapshot}"
 
