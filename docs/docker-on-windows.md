@@ -12,11 +12,13 @@ This configuration replaces **Docker Desktop** for several reasons:
 * **Docker CLI (Client):** Runs on **Windows**.
 * **Connection:** Communication via **TCP port 2375, bound to loopback (`127.0.0.1`) only**.
 
-> **Security:** Port 2375 is the **plaintext, unauthenticated** Docker API. Never bind
-> it to `0.0.0.0` — doing so publishes root-equivalent control of the daemon on every
-> network interface, allowing any process on your subnet to take over the host. This
-> guide binds strictly to `127.0.0.1`, so the API is reachable only from the same
-> machine (the Windows CLI reaches the WSL2 engine over loopback).
+> **CRITICAL SECURITY PROTOCOL:** The Docker daemon MUST only listen on loopback
+> (`tcp://127.0.0.1:2375`). Binding to `0.0.0.0` is strictly prohibited as it opens
+> unauthenticated host root access to the entire subnet.
+>
+> Port 2375 is the plaintext, unauthenticated Docker API; this guide binds it strictly to
+> `127.0.0.1`, so it is reachable only from the same machine (the Windows CLI reaches the
+> WSL2 engine over loopback).
 
 
 ---
@@ -66,6 +68,9 @@ sudo usermod -aG docker $USER
       "hosts": ["unix:///var/run/docker.sock", "tcp://127.0.0.1:2375"]
     }
     ```
+    > **CRITICAL SECURITY PROTOCOL:** The Docker daemon MUST only listen on loopback
+    > (`tcp://127.0.0.1:2375`). Binding to `0.0.0.0` is strictly prohibited as it opens
+    > unauthenticated host root access to the entire subnet.
 
 ### Step C: Fix Systemd Conflict
 1.  Create an override folder:
