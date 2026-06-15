@@ -30,7 +30,7 @@ As determined during the initial research phase, this project intentionally reje
 1. **Custom FSM Engine**: Driven by a lightweight Python `asyncio` state machine.
 2. **Model Routing Matrix**:
    * **Gemini 2.5 Flash / Pro**: TechLead, QA, and Reviewer nodes (optimized via low latency and high Free Tier quotas).
-   * **Claude (Developer)**: Lead Software Engineer (sandboxed CLI executions via Claude Code). The model and reasoning effort are set in `src/core/config.py` — `DEVELOPER_MODEL` (default `sonnet`) and `DEVELOPER_EFFORT` (default `medium`; one of `low|medium|high|xhigh|max`), forwarded to the CLI as `--model` / `--effort`.
+   * **Claude (Developer)**: Lead Software Engineer (sandboxed CLI executions via Claude Code). The model and reasoning effort are set in `src/shared/core/config.py` — `DEVELOPER_MODEL` (default `sonnet`) and `DEVELOPER_EFFORT` (default `medium`; one of `low|medium|high|xhigh|max`), forwarded to the CLI as `--model` / `--effort`.
 3. **Sandboxed Runtimes**: Isolated Docker containers run code execution and verification gates to prevent agent workspace corruption.
 4. **Dual-Channel Observability**: Complete console diagnostics split from a persistent, rotating debug audit log (`sdlc_audit.log`). Real-time input/output token metrics tracked natively.
 5. **Git-Anchored Sessions**: Each run shallow-clones the target repository into an isolated session directory (`runs/run_<uuid>/repo/`), checks out a `feat/ticket-<ticket>` branch, and treats the single clone's `.git` as the transactional Unit-of-Work. Snapshots use the index diff (`git add -A` → `git diff --cached <base_branch> --name-only`), giving a strict causal delta — including untracked files — while protecting context windows from binary pollution and retry bleed. On full success the orchestrator makes one atomic `feat(<ticket>): …` commit (opt-in `--push`).
@@ -45,11 +45,15 @@ This repository is strictly organized to provide 100% traceability for evaluatio
 
 ```text
 async-agentic-sdlc/
-├── src/                        # Source code (the Software Factory itself)
-│   ├── core/                   # Pydantic models, observability, env config, prompt loader
-│   ├── agents/                 # TechLead, Developer, QA, Reviewer logic
-│   ├── nodes/                  # FSM validation gates (functional tests, SAST)
-│   └── utils/                  # Subprocess + workspace-path-safe helpers
+├── src/                        # Source code, split into logical planes (Virtual Separation)
+│   ├── nexus/                  # Control Plane — planner.py / deployer.py placeholders (future PoC expansion)
+│   ├── executor/               # Worker Plane — runs one SDLC session
+│   │   ├── runner.py           # FSM driver + testing gates (formerly root orchestrator.py)
+│   │   ├── agents/             # TechLead, Developer, QA, Reviewer logic
+│   │   └── nodes/              # FSM validation gates (functional tests, SAST)
+│   └── shared/                 # Shared Plane — common foundations reused across planes
+│       ├── core/               # Pydantic models, observability, env config, prompt loader
+│       └── utils/              # Subprocess + workspace-path-safe helpers
 ├── prompts/                    # Runtime agent instructions (decoupled from src/ logic)
 │   ├── system/                 # Per-role system prompts (planner, techlead, developer, qa, reviewer)
 │   └── skills/                 # Reusable prompt fragments injected into agents (engineering_guide, strict_validation, deterministic_mutation)
@@ -73,10 +77,12 @@ async-agentic-sdlc/
 │   │   ├── 0007-prompt-schema-layer-separation.md         # Prompt/Schema Layer Separation
 │   │   ├── 0008-git-anchored-sessions-atomic-commit.md    # Git-Anchored Sessions & Atomic Commit
 │   │   ├── 0009-hybrid-skill-routing.md                   # Hybrid Skill Routing (declarative frontmatter)
-│   │   └── 0010-fast-fail-documentation-guardrail.md      # Fast-Fail Documentation Guardrail & Smart Triage
+│   │   ├── 0010-fast-fail-documentation-guardrail.md      # Fast-Fail Documentation Guardrail & Smart Triage
+│   │   ├── 0011-secure-sandbox-and-finops-telemetry.md    # Secure WSL Sandbox & Real-Time FinOps Circuit Breaker
+│   │   └── 0012-virtual-separation-monorepo-planes.md     # Virtual Separation: Control/Worker/Shared Planes
 │   ├── docker-on-windows.md    # Active host runtime configuration
 │   └── setup.md                # Active environment configuration
-├── orchestrator.py             # Thin entrypoint: wires src/ components + FSM loop
+├── main.py                     # Root CLI entrypoint: runs src/executor/runner.py:main()
 ├── CHANGELOG.md                # Release history (Keep a Changelog), linked to ADRs
 ├── PRACTICUM.md                # Project manifest & Key Engineering Takeaways
 ├── requirements.txt            # Explicit dependency manifest
@@ -109,21 +115,21 @@ Run the main orchestrator loop to initiate the autonomous code-generation and te
 
 ```bash
 # Target repo + ticket are required; inline description is the task body (falls back to the ticket).
-python3 orchestrator.py --repo https://github.com/acme/widgets.git --ticket WID-42 \
+python3 main.py --repo https://github.com/acme/widgets.git --ticket WID-42 \
     "Implement is_prime(num: int) -> bool"
 
 # Task body from a file, with custom source/tests paths inside the repo and a base-branch anchor.
-python3 orchestrator.py --repo /path/to/local/repo --ticket WID-43 \
+python3 main.py --repo /path/to/local/repo --ticket WID-43 \
     -f tickets/003_multi_file_geometry.md --src-dir src/ --tests-dir tests/ --base-branch main
 
 # Push the feature branch (feat/ticket-<ticket>) to origin after the atomic success commit.
-python3 orchestrator.py --repo git@github.com:acme/widgets.git --ticket WID-44 "..." --push
+python3 main.py --repo git@github.com:acme/widgets.git --ticket WID-44 "..." --push
 
 # Resume from a persisted checkpoint after a crash or process restart (path is run-scoped).
-python3 orchestrator.py --resume runs/run_<uuid>/reports/checkpoint.json
+python3 main.py --resume runs/run_<uuid>/reports/checkpoint.json
 
 # Resume but reset the Circuit Breaker retry budget (e.g. after fixing an agent prompt).
-python3 orchestrator.py --resume runs/run_<uuid>/reports/checkpoint.json --reset-attempts
+python3 main.py --resume runs/run_<uuid>/reports/checkpoint.json --reset-attempts
 ```
 
 Each run is isolated under `runs/run_<uuid>/`: the target repo is shallow-cloned into `repo/` on a
@@ -137,7 +143,7 @@ is committed atomically to the feature branch.
 
 ## 📊 Monitoring Token Usage & Costs (FinOps)
 
-The orchestrator natively extracts and logs token usage for Google GenAI models (TechLead, QA, Reviewer) directly to the console stream and `sdlc_audit.log` file. Their USD cost is **estimated** from the `MODEL_PRICING_MATRIX` in `src/core/config.py` using exact-precision `decimal.Decimal` arithmetic (rates initialised from strings — no float drift). The matrix is **cache-aware** (cached tokens priced at the cheaper `cached_read` rate) and **context-tiered** (a `short`/`long` tier split at `LONG_CONTEXT_THRESHOLD` = 200k prompt tokens). These rates are estimates: tune them to your billing tier. (Claude's cost, by contrast, is authoritative — reported by the CLI. Multimodal image/audio inputs are currently priced at the text rate.)
+The orchestrator natively extracts and logs token usage for Google GenAI models (TechLead, QA, Reviewer) directly to the console stream and `sdlc_audit.log` file. Their USD cost is **estimated** from the `MODEL_PRICING_MATRIX` in `src/shared/core/config.py` using exact-precision `decimal.Decimal` arithmetic (rates initialised from strings — no float drift). The matrix is **cache-aware** (cached tokens priced at the cheaper `cached_read` rate) and **context-tiered** (a `short`/`long` tier split at `LONG_CONTEXT_THRESHOLD` = 200k prompt tokens). These rates are estimates: tune them to your billing tier. (Claude's cost, by contrast, is authoritative — reported by the CLI. Multimodal image/audio inputs are currently priced at the text rate.)
 
 The Developer Agent (Claude CLI) runs out-of-band via localized shell processes, but its token usage is now tracked **in real time** inside `GlobalPipelineContext` — the orchestrator parses the Claude CLI `--output-format json` result envelope (token counts, including cache, plus `total_cost_usd`) and accumulates a per-agent telemetry breakdown that is persisted into `checkpoint.json` (so the budget survives `--resume`).
 

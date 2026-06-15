@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Each release maps to a completed SDLC iteration; the corresponding Architecture
 Decision Record (ADR) is linked from the version heading.
 
+## [v0.12.0] - 2026-06-15 — Virtual Separation: Control / Worker / Shared Plane Topology (Monorepo PoC)
+
+ADR: [0012-virtual-separation-monorepo-planes](./docs/adr/0012-virtual-separation-monorepo-planes.md)
+
+### Added
+- Root `main.py` entrypoint: a thin CLI shell that imports `main` from `src.executor.runner` and runs it under `asyncio`, replicating the former `if __name__ == "__main__"` tail of `orchestrator.py`. Program start is now decoupled from FSM execution. The documented run command becomes `python3 main.py …`.
+- Control Plane scaffold: new `src/nexus/` package with empty `planner.py` and `deployer.py` placeholders, marking the seam where future run-scheduling and deployment orchestration will live. Inert for now (no runtime behaviour).
+
+### Changed
+- **Virtual Separation refactor** — the flat `src/` tree was reorganized into three logical planes, a pure lift-and-shift with **no** change to FSM transitions, agent behaviour, gates, or LLM system prompts: **Worker Plane** `src/executor/` (`agents/`, `nodes/`, and `runner.py` — the former root `orchestrator.py`), **Shared Plane** `src/shared/` (`core/`, `utils/`), and **Control Plane** `src/nexus/`. All 18 modules were relocated with history-preserving `git mv`.
+- Repo-wide import rewrite to the new plane paths (`src.core → src.shared.core`, `src.utils → src.shared.utils`, `src.agents → src.executor.agents`, `src.nodes → src.executor.nodes`), including test `mock.patch("…")` target strings; the orchestrator unit/integration tests now bind `from src.executor import runner as orchestrator`, leaving every `orchestrator.*` reference unchanged.
+
+### Fixed
+- `src/shared/core/prompts.py` `_REPO_ROOT` gained one `.parent` so it still resolves the repository-root `prompts/` tree after the module moved one directory deeper — the only non-import change required by the move. Behaviour is otherwise identical (142 tests green).
+
 ## [v0.11.0] - 2026-06-15 — Secure Sandbox, Language-Neutral Topology & Real-Time FinOps Circuit Breaker
 
 ADR: [0011-secure-sandbox-and-finops-telemetry](./docs/adr/0011-secure-sandbox-and-finops-telemetry.md)
