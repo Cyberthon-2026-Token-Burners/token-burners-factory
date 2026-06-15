@@ -4,7 +4,8 @@ import json
 import uuid
 import argparse
 import asyncio
-import subprocess
+# subprocess: only fixed-argument `git` exec with no shell=True, never untrusted input as a command.
+import subprocess  # nosec B404
 from pathlib import Path
 from typing import NoReturn
 from dataclasses import dataclass
@@ -261,11 +262,11 @@ def build_production_snapshot(ctx: GlobalPipelineContext) -> None:
         test_prefix = None  # tests_dir lives outside the repo root → no prefix collision possible
 
     # 1. Stage every mutation so the index reflects the complete working-tree state across ALL cycles.
-    subprocess.run(["git", "add", "-A"], cwd=str(repo_dir), check=True)
+    subprocess.run(["git", "add", "-A"], cwd=str(repo_dir), check=True)  # nosec B603 B607 — fixed git argv, no shell
 
     # 1b. Capture the cumulative unified diff vs base — the Reviewer's authoritative scope-of-change,
     #     so it can separate the Developer's actual edits from pre-existing legacy code in the same file.
-    diff_cmd = subprocess.run(
+    diff_cmd = subprocess.run(  # nosec B603 B607 — fixed git argv, no shell
         ["git", "diff", "--cached", ctx.base_branch],
         cwd=str(repo_dir), capture_output=True, text=True, check=True,
     )
@@ -273,7 +274,7 @@ def build_production_snapshot(ctx: GlobalPipelineContext) -> None:
 
     # 2. Read the cumulative index-vs-base delta. -z emits raw NUL-terminated paths (no quoting of
     #    spaces/newlines/unicode) — split on NUL.
-    listing = subprocess.run(
+    listing = subprocess.run(  # nosec B603 B607 — fixed git argv, no shell
         ["git", "diff", "--name-only", "--cached", "-z", ctx.base_branch],
         cwd=str(repo_dir), capture_output=True, text=True, check=True,
     )

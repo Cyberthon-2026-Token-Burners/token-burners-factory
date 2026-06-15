@@ -127,10 +127,11 @@ MODEL_PRICING_MATRIX: dict[str, dict[str, tuple[Decimal, Decimal, Decimal]]] = {
 }
 
 # Catalog and pricing matrix must stay in lockstep — fail fast on drift.
-assert set(AVAILABLE_GEMINI_MODELS) == set(MODEL_PRICING_MATRIX), (
-    "AVAILABLE_GEMINI_MODELS and MODEL_PRICING_MATRIX are out of sync: "
-    f"{set(AVAILABLE_GEMINI_MODELS) ^ set(MODEL_PRICING_MATRIX)}"
-)
+if set(AVAILABLE_GEMINI_MODELS) != set(MODEL_PRICING_MATRIX):
+    raise RuntimeError(
+        "AVAILABLE_GEMINI_MODELS and MODEL_PRICING_MATRIX are out of sync: "
+        f"{set(AVAILABLE_GEMINI_MODELS) ^ set(MODEL_PRICING_MATRIX)}"
+    )
 
 _PER_MILLION = Decimal(1_000_000)
 

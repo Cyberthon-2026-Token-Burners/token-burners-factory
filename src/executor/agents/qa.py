@@ -1,4 +1,5 @@
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -8,6 +9,52 @@ from src.shared.core.models import QATestSuite, GlobalPipelineContext
 from src.shared.core.prompts import get_system_prompt_sections, build_agent_context, generate_repo_map
 from src.shared.utils.llm import run_structured_llm
 from src.shared.utils.git_helpers import get_git_root, get_pipeline_snapshot_files
+
+# Names of the test cases an existing suite already contributes — a `class Foo` or a `def test_*`.
+# Used as a deterministic backstop against destructive LLM merges (see _safe_write_target).
+_TEST_IDENT_RE = re.compile(r"^\s*(?:class\s+(\w+)|(?:async\s+)?def\s+(test\w*))", re.MULTILINE)
+
+
+def _test_identifiers(source: str) -> set[str]:
+    """Return the set of test-case identifiers (class names + ``test_*`` methods) declared in *source*."""
+    return {m.group(1) or m.group(2) for m in _TEST_IDENT_RE.finditer(source)}
+
+
+def _collision_free_path(path: Path) -> Path:
+    """Return *path* if free, else ``test_<slug>_v2.py``, ``_v3.py``, … — never an existing file."""
+    if not path.exists():
+        return path
+    i = 2
+    while True:
+        candidate = path.with_name(f"{path.stem}_v{i}{path.suffix}")
+        if not candidate.exists():
+            return candidate
+        i += 1
+
+
+def _safe_write_target(test_path: Path, new_code: str) -> Path:
+    """Pick a non-destructive destination for *new_code*.
+
+    The model is asked to merge the existing suite in; this is the deterministic guarantee that it
+    cannot silently drop cases. If the regenerated code preserves every test identifier already on
+    disk (editing a body keeps its name, so that still overwrites in place), write in place. If any
+    existing case would vanish, preserve the original untouched and redirect to a unique filename —
+    the redirected file is the model's COMPLETE ``test_code`` (its own imports included), so it runs
+    standalone.
+    """
+    if not test_path.exists():
+        return test_path
+    dropped = _test_identifiers(test_path.read_text(encoding="utf-8")) - _test_identifiers(new_code)
+    if not dropped:
+        return test_path
+    target = _collision_free_path(test_path)
+    log.warning(
+        f"🛡️ NON-DESTRUCTIVE GUARD: regenerated suite for {test_path.name} dropped existing "
+        f"test case(s) {sorted(dropped)}; preserving the original and writing new tests to "
+        f"{target.name} instead."
+    )
+    return target
+
 
 async def run_qa_agent_node(ctx: GlobalPipelineContext, error_trace: str = "") -> None:
     model_name = QA_MODEL
@@ -90,10 +137,14 @@ async def run_qa_agent_node(ctx: GlobalPipelineContext, error_trace: str = "") -
     for m in target_modules:
         results.append(await _generate(m))
 
+    written_paths = []
     for test_path, code, raw_response in results:
         log_token_usage(ctx, "QA Agent", raw_response, QA_MODEL)
-        with open(test_path, "w", encoding="utf-8") as f:
+        # Deterministic backstop: never silently overwrite a file whose test cases the merge dropped.
+        target = _safe_write_target(Path(test_path), code)
+        with open(target, "w", encoding="utf-8") as f:
             f.write(code)
+        written_paths.append(str(target))
 
     # Snapshot the test delta from the real git root, scoped to the tests subtree.
     repo_root = Path(await get_git_root(str(tests_dir)))
@@ -111,7 +162,7 @@ async def run_qa_agent_node(ctx: GlobalPipelineContext, error_trace: str = "") -
     fallback = "\n\n".join(code for _, code, _ in results)
     ctx.test_code_snapshot = "\n\n".join(parts) if parts else fallback
 
-    generated = [path for path, _, _ in results]
+    generated = written_paths
     log.info("   [THOUGHT] Generated deterministic per-module unittest suites targeting strict type enforcement and contract safety.")
     log.info(f"   [ARTIFACT] Instantiated {len(generated)} test file(s): {generated}\n")
     log.debug(f"QA Agent generated test files: {generated}")
