@@ -1,5 +1,6 @@
 import os
 import sys
+import json
 import uuid
 import argparse
 import asyncio
@@ -9,7 +10,7 @@ from typing import NoReturn
 from dataclasses import dataclass
 
 from src.core.observability import log, reconfigure_logging
-from src.core.config import check_environment
+from src.core.config import check_environment, PIPELINE_BUDGET_TOKENS
 from src.core.models import GlobalPipelineContext, WorkspacePaths, RUNS_BASE
 from src.utils.git_helpers import get_git_root, get_pipeline_snapshot_files
 from src.agents.techlead import run_techlead_node
@@ -374,6 +375,62 @@ async def enforce_documentation_guardrail(ctx: GlobalPipelineContext) -> str | N
     return "\n".join(_GUARDRAIL_MESSAGE.format(file_name=v) for v in violations)
 
 
+def enforce_financial_circuit_breaker(ctx: GlobalPipelineContext) -> None:
+    """Financial Circuit Breaker: hard-halt the FSM once cumulative token spend breaches budget.
+
+    Checked after every cost-accruing node so a pathological retry loop cannot drain the API
+    budget. Reuses the incident machinery — ``incident_report.json`` now carries the full
+    per-agent telemetry breakdown for audit. Token totals are persisted in the checkpoint, so
+    the budget is enforced consistently across ``--resume``.
+    """
+    if ctx.telemetry.total_tokens >= PIPELINE_BUDGET_TOKENS:
+        _abort_with_incident(
+            ctx,
+            f"\n🚨 FINANCIAL CIRCUIT BREAKER OPEN: cumulative {ctx.telemetry.total_tokens} tokens "
+            f"≥ budget {PIPELINE_BUDGET_TOKENS}. Halting before further spend.",
+        )
+
+
+def _finops_subtotals(ctx: GlobalPipelineContext) -> str:
+    """Per-provider cost split, e.g. 'Gemini est. $0.0010 | Claude $0.1328 | Σ $0.1338'.
+
+    Gemini cost is estimated from the price table (flagged ``est.``); Claude cost is authoritative.
+    """
+    bp = ctx.telemetry.by_provider()
+    parts: list[str] = []
+    for prov in ("gemini", "claude"):
+        if prov in bp:
+            label = "Gemini est." if prov == "gemini" else "Claude"
+            parts.append(f"{label} ${bp[prov]['cost_usd']:.4f}")
+    parts.append(f"Σ ${ctx.telemetry.total_cost_usd:.4f}")
+    return " | ".join(parts)
+
+
+def write_finops_report(ctx: GlobalPipelineContext) -> None:
+    """Persist the cumulative FinOps breakdown to ``reports/finops_report.json``."""
+    report_file = ctx.workspace_paths.reports_dir / "finops_report.json"
+    report_file.parent.mkdir(parents=True, exist_ok=True)
+    with open(report_file, "w", encoding="utf-8") as f:
+        json.dump(ctx.telemetry.finops_report(PIPELINE_BUDGET_TOKENS), f, indent=2)
+    log.debug(f"FinOps report written to {report_file}")
+
+
+def log_finops_summary(ctx: GlobalPipelineContext) -> None:
+    """Print the end-of-run GRAND TOTAL block: per-agent, per-provider, and budget utilisation."""
+    tel = ctx.telemetry
+    log.info("📊 [FINOPS] GRAND TOTAL")
+    for name, u in tel.by_agent.items():
+        log.info(f"   ├─ {name} ({u.provider}) | {u.total_tokens}t | ${u.cost_usd:.4f} | calls: {u.calls}")
+    for prov, agg in tel.by_provider().items():
+        label = "Gemini (est.)" if prov == "gemini" else "Claude (actual)"
+        log.info(f"   ├─ Σ {label} | {int(agg['tokens'])}t | ${agg['cost_usd']:.4f}")
+    used_pct = (100.0 * tel.total_tokens / PIPELINE_BUDGET_TOKENS) if PIPELINE_BUDGET_TOKENS else 0.0
+    log.info(
+        f"   └─ TOTAL | {tel.total_tokens}t | ${tel.total_cost_usd:.4f} "
+        f"| {used_pct:.1f}% of {PIPELINE_BUDGET_TOKENS}t budget"
+    )
+
+
 def _abort_with_incident(ctx: GlobalPipelineContext, header: str) -> NoReturn:
     """Logs a terminal header, persists the full context as an incident report, and exits non-zero."""
     log.error(header)
@@ -382,6 +439,9 @@ def _abort_with_incident(ctx: GlobalPipelineContext, header: str) -> NoReturn:
         f.write(ctx.model_dump_json(indent=2))
     log.error(f"  └── Incident report written to {incident_file}")
     log.debug(f"Final Incident Context Dump: {ctx.model_dump_json(indent=2)}")
+    # Always persist + surface the FinOps breakdown, even on a halt, so spend is auditable.
+    write_finops_report(ctx)
+    log_finops_summary(ctx)
     sys.exit(1)
 
 
@@ -434,6 +494,7 @@ async def main():
         log.info("Skipping TechLead node: contract already present in context.")
     else:
         await run_techlead_node(ctx)
+        enforce_financial_circuit_breaker(ctx)
         ctx.save_checkpoint(checkpoint_file)
         log.debug(f"Checkpoint saved after TechLead node: {checkpoint_file}")
 
@@ -445,6 +506,10 @@ async def main():
         ctx.current_attempt = attempt
         log.info(f"🔷 Orchestration cycle {attempt}/{max_retries}")
         log.debug(f"Starting orchestration cycle {attempt}")
+
+        # Financial Circuit Breaker: halt immediately if a prior cycle (or a resumed run) is
+        # already over budget, before spending any more tokens this cycle.
+        enforce_financial_circuit_breaker(ctx)
 
         # Reset accumulated errors before starting a new cycle. Developer/QA will see only clean feedback.
         current_error_trace = ctx.error_trace
@@ -489,6 +554,9 @@ async def main():
                 f"\n🚨 HARD HALT: Developer failed the documentation guardrail after {GUARDRAIL_MAX_REROUTES} fast-fail reroutes.",
             )
 
+        # Developer is the dominant token drain — enforce the budget before spending on gates.
+        enforce_financial_circuit_breaker(ctx)
+
         # 4. Automated Validation Phase (Runtime gates)
         log.debug("Triggering parallel validation gates (QA & Security)")
         qa_result, sec_result = await asyncio.gather(
@@ -503,6 +571,7 @@ async def main():
 
         # 5. Comprehensive Audit Phase (Reviewer Agent)
         await run_reviewer_node(ctx, qa_success, qa_lines, sec_success, sec_lines)
+        enforce_financial_circuit_breaker(ctx)
 
         # Print execution logs of utilities ONLY in case of an actual failure to CLI, but log everything to file
         if not qa_success:
@@ -539,10 +608,16 @@ async def main():
         ctx.current_attempt = attempt + 1
         ctx.save_checkpoint(checkpoint_file)
         log.debug(f"Checkpoint saved at end of cycle {attempt}: {checkpoint_file}")
+        log.info(
+            f"   [FINOPS] {_finops_subtotals(ctx)} "
+            f"| {ctx.telemetry.total_tokens}t / budget {PIPELINE_BUDGET_TOKENS}t"
+        )
 
         if all_gates_passed:
             log.info("🟩 PIPELINE SUCCESS: All validation gates passed.")
             await finalize_transaction(ctx, push=cfg.push)
+            write_finops_report(ctx)
+            log_finops_summary(ctx)
             return
 
     # Escalation on Circuit Breaker open

@@ -14,6 +14,7 @@ from src.core.models import (
     LOGS_DIR,
     REPORTS_DIR,
     TESTS_DIR,
+    PipelineTelemetry,
     TechLeadContract,
     GlobalPipelineContext,
     QATestSuite,
@@ -198,6 +199,74 @@ class ContractModelTests(unittest.TestCase):
         self.assertEqual(ctx.production_code_snapshot, {})
         self.assertEqual(ctx.current_attempt, 1)
         self.assertIsInstance(ctx.workspace_paths, WorkspacePaths)
+        self.assertIsInstance(ctx.telemetry, PipelineTelemetry)
+        self.assertEqual(ctx.telemetry.total_tokens, 0)
+
+
+class PipelineTelemetryTests(unittest.TestCase):
+    """Cumulative token/cost accounting feeding the Financial Circuit Breaker."""
+
+    def test_record_accumulates_per_agent_and_global_totals(self) -> None:
+        # Arrange
+        tel = PipelineTelemetry()
+        # Act — two TechLead calls and one Developer call.
+        tel.record("TechLead", 100, 20, 0.0)
+        tel.record("TechLead", 50, 10, 0.0)
+        tel.record("Developer Agent", 1000, 200, 0.05)
+        # Assert — global totals.
+        self.assertEqual(tel.total_tokens, 100 + 20 + 50 + 10 + 1000 + 200)
+        self.assertAlmostEqual(tel.total_cost_usd, 0.05)
+        # Assert — per-agent breakdown.
+        tl = tel.by_agent["TechLead"]
+        self.assertEqual((tl.input_tokens, tl.output_tokens, tl.total_tokens, tl.calls), (150, 30, 180, 2))
+        dev = tel.by_agent["Developer Agent"]
+        self.assertEqual((dev.total_tokens, dev.calls), (1200, 1))
+        self.assertAlmostEqual(dev.cost_usd, 0.05)
+
+    def test_by_provider_and_finops_report(self) -> None:
+        # Arrange — two providers with distinct token/cost footprints.
+        tel = PipelineTelemetry()
+        tel.record("TechLead", 100, 20, 0.0003, provider="gemini")
+        tel.record("QA Agent", 50, 10, 0.0002, provider="gemini")
+        tel.record("Developer Agent", 1000, 200, 0.1328, provider="claude")
+        # Act
+        bp = tel.by_provider()
+        report = tel.finops_report(budget_tokens=10_000)
+        # Assert — per-provider aggregation.
+        self.assertEqual(bp["gemini"]["tokens"], 180)
+        self.assertAlmostEqual(bp["gemini"]["cost_usd"], 0.0005)
+        self.assertEqual(bp["claude"]["tokens"], 1200)
+        self.assertAlmostEqual(bp["claude"]["cost_usd"], 0.1328)
+        # Assert — report shape + budget math (1380 / 10000 = 13.8%).
+        self.assertEqual(report["total_tokens"], 1380)
+        self.assertEqual(report["budget_tokens"], 10_000)
+        self.assertAlmostEqual(report["budget_used_pct"], 13.8)
+        self.assertIn("gemini", report["by_provider"])
+        self.assertEqual(report["by_agent"]["Developer Agent"]["provider"], "claude")
+
+    def test_telemetry_survives_checkpoint_round_trip(self) -> None:
+        # Arrange
+        with mock.patch.object(Path, "mkdir"):
+            ctx = GlobalPipelineContext(pr_description="x")
+        ctx.telemetry.record("Developer Agent", 1000, 200, 0.05)
+        # Act — serialize and reload (the resume path uses model_validate_json).
+        restored = GlobalPipelineContext.model_validate_json(ctx.model_dump_json())
+        # Assert — the budget signal is preserved across persistence.
+        self.assertEqual(restored.telemetry.total_tokens, 1200)
+        self.assertAlmostEqual(restored.telemetry.total_cost_usd, 0.05)
+        self.assertEqual(restored.telemetry.by_agent["Developer Agent"].calls, 1)
+
+    def test_old_checkpoint_without_telemetry_loads_with_default(self) -> None:
+        # Arrange — a checkpoint payload predating the telemetry field.
+        with mock.patch.object(Path, "mkdir"):
+            ctx = GlobalPipelineContext(pr_description="x")
+        payload = ctx.model_dump()
+        payload.pop("telemetry", None)
+        # Act — load it back (backward-compatibility: default_factory fills the gap).
+        restored = GlobalPipelineContext.model_validate(payload)
+        # Assert
+        self.assertIsInstance(restored.telemetry, PipelineTelemetry)
+        self.assertEqual(restored.telemetry.total_tokens, 0)
 
 
 class NeedsTestRegenerationTests(unittest.TestCase):

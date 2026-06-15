@@ -36,7 +36,7 @@ async def run_techlead_node(ctx: GlobalPipelineContext) -> None:
         ],
     )
     ctx.contract = contract
-    log_token_usage("TechLead", raw_response)
+    log_token_usage(ctx, "TechLead", raw_response, TECHLEAD_MODEL)
 
     log.info(f"   [THOUGHT] {ctx.contract.techlead_reasoning}")
     log.info(f"   [ARTIFACT] Contract locked for: {ctx.contract.files_to_modify}\n")

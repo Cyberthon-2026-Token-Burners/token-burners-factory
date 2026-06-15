@@ -77,11 +77,15 @@ def _fake_structured_llm(*, model, response_model, messages):
     raise AssertionError(f"Unexpected response_model: {response_model!r}")
 
 
-async def _fake_claude_cli(prompt, files, allowed_root):
-    """Stand-in for the Claude CLI developer: writes real production code to each target."""
+async def _fake_claude_cli(prompt, files, allowed_root, model=None, effort=None):
+    """Stand-in for the Claude CLI developer: writes real production code to each target.
+
+    Returns the ``(returncode, usage)`` tuple shape of the real ``run_claude_cli``; the usage
+    dict mirrors a parsed ``--output-format json`` envelope so telemetry recording is exercised.
+    """
     for f in files:
         Path(f).write_text(_PROD_CODE, encoding="utf-8")
-    return 0
+    return 0, {"input_tokens": 100, "output_tokens": 20, "cost_usd": 0.001}
 
 
 def _git(args: list[str], cwd: Path) -> None:

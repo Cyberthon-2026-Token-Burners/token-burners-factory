@@ -30,7 +30,7 @@ As determined during the initial research phase, this project intentionally reje
 1. **Custom FSM Engine**: Driven by a lightweight Python `asyncio` state machine.
 2. **Model Routing Matrix**:
    * **Gemini 2.5 Flash / Pro**: TechLead, QA, and Reviewer nodes (optimized via low latency and high Free Tier quotas).
-   * **Claude 4.6 Sonnet**: Lead Software Engineer (sandboxed CLI executions via Claude Code).
+   * **Claude (Developer)**: Lead Software Engineer (sandboxed CLI executions via Claude Code). The model and reasoning effort are set in `src/core/config.py` — `DEVELOPER_MODEL` (default `sonnet`) and `DEVELOPER_EFFORT` (default `medium`; one of `low|medium|high|xhigh|max`), forwarded to the CLI as `--model` / `--effort`.
 3. **Sandboxed Runtimes**: Isolated Docker containers run code execution and verification gates to prevent agent workspace corruption.
 4. **Dual-Channel Observability**: Complete console diagnostics split from a persistent, rotating debug audit log (`sdlc_audit.log`). Real-time input/output token metrics tracked natively.
 5. **Git-Anchored Sessions**: Each run shallow-clones the target repository into an isolated session directory (`runs/run_<uuid>/repo/`), checks out a `feat/ticket-<ticket>` branch, and treats the single clone's `.git` as the transactional Unit-of-Work. Snapshots use the index diff (`git add -A` → `git diff --cached <base_branch> --name-only`), giving a strict causal delta — including untracked files — while protecting context windows from binary pollution and retry bleed. On full success the orchestrator makes one atomic `feat(<ticket>): …` commit (opt-in `--push`).
@@ -138,9 +138,15 @@ is committed atomically to the feature branch.
 
 ## 📊 Monitoring Token Usage & Costs (FinOps)
 
-The orchestrator natively extracts and logs token usage for Google GenAI models (TechLead, QA, Reviewer) directly to the console stream and `sdlc_audit.log` file.
+The orchestrator natively extracts and logs token usage for Google GenAI models (TechLead, QA, Reviewer) directly to the console stream and `sdlc_audit.log` file. Their USD cost is **estimated** from the `MODEL_PRICING` table in `src/core/config.py` — which is **cache-aware** (cached context tokens, `cached_content_token_count`, priced at the cheaper cached rate) and applies a **long-context surcharge** for tiered models above their threshold. These rates are estimates: tune them to your billing tier. (Claude's cost, by contrast, is authoritative — reported by the CLI. Multimodal image/audio inputs are currently priced at the text rate.)
 
-Because the Developer Agent (Claude CLI) runs out-of-band via localized shell processes, its token consumption, prompt caching, and cost analytics must be audited retrospectively. Run the following command in your terminal to output the full daily billing and session usage report:
+The Developer Agent (Claude CLI) runs out-of-band via localized shell processes, but its token usage is now tracked **in real time** inside `GlobalPipelineContext` — the orchestrator parses the Claude CLI `--output-format json` result envelope (token counts, including cache, plus `total_cost_usd`) and accumulates a per-agent telemetry breakdown that is persisted into `checkpoint.json` (so the budget survives `--resume`).
+
+This live signal feeds a **Financial Circuit Breaker**: when the cumulative token total across all agents reaches the budget (`PIPELINE_BUDGET_TOKENS`, default `1_000_000`, env-overridable), the FSM performs a deterministic hard-halt after the offending node, dumping the full telemetry breakdown to `incident_report.json` instead of draining the API budget to exhaustion during a Developer/Reviewer/QA retry loop.
+
+Cost is reported **per provider** so estimate and fact are never conflated: each cycle logs a sub-total line `[FINOPS] Gemini est. $X | Claude $Y | Σ $Z` (Gemini estimated from `MODEL_PRICING`, Claude authoritative from the CLI), and the run ends with a **GRAND TOTAL** block (per-agent + per-provider + % of budget). The full breakdown is persisted to `runs/run_<uuid>/reports/finops_report.json` on both success and hard-halt.
+
+For historical billing reconciliation across days and sessions, the full report is still available out-of-band:
 
 ```bash
 npx ccusage

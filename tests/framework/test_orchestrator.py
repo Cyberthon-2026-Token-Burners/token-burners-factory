@@ -1,6 +1,7 @@
 ﻿"""Unit tests for checkpoint/resume orchestration flow."""
 import os
 import sys
+import json
 import asyncio
 import unittest
 from pathlib import Path
@@ -1035,6 +1036,77 @@ class DocumentationGuardrailLoopTests(unittest.IsolatedAsyncioTestCase):
             reviewer.assert_not_called()                 # Reviewer never reached
             self.assertEqual(ctx.current_attempt, 1)     # no functional-budget retry consumed
             self.assertTrue((ctx.workspace_paths.reports_dir / "incident_report.json").exists())
+
+
+class FinancialCircuitBreakerTests(unittest.TestCase):
+    """The token-budget breaker hard-halts via the incident machinery when spend is exceeded."""
+
+    def _ctx(self, base: Path) -> GlobalPipelineContext:
+        paths = WorkspacePaths(
+            code_dir=base / "code", tests_dir=base / "tests",
+            logs_dir=base / "logs", reports_dir=base / "reports",
+        )
+        return GlobalPipelineContext(pr_description="finops run", workspace_paths=paths)
+
+    def test_trips_and_writes_incident_when_over_budget(self) -> None:
+        # Arrange — 1100 cumulative tokens against a 1000 budget.
+        with TemporaryDirectory() as td:
+            base = Path(td)
+            ctx = self._ctx(base)
+            ctx.telemetry.record("Developer Agent", 900, 200, 0.5)
+            # Act / Assert — breaker fires a non-zero hard-halt.
+            with mock.patch.object(orchestrator, "PIPELINE_BUDGET_TOKENS", 1000):
+                with self.assertRaises(SystemExit) as exit_ctx:
+                    orchestrator.enforce_financial_circuit_breaker(ctx)
+            self.assertEqual(exit_ctx.exception.code, 1)
+            # Incident report carries the telemetry breakdown for audit.
+            report = (base / "reports" / "incident_report.json").read_text(encoding="utf-8")
+            self.assertIn("Developer Agent", report)
+            self.assertIn("total_tokens", report)
+
+    def test_noop_when_under_budget(self) -> None:
+        # Arrange
+        with TemporaryDirectory() as td:
+            base = Path(td)
+            ctx = self._ctx(base)
+            ctx.telemetry.record("TechLead", 10, 5)
+            # Act — well under budget: must not raise, must not write an incident.
+            with mock.patch.object(orchestrator, "PIPELINE_BUDGET_TOKENS", 1000):
+                orchestrator.enforce_financial_circuit_breaker(ctx)
+            self.assertFalse((base / "reports" / "incident_report.json").exists())
+
+
+class FinOpsReportTests(unittest.TestCase):
+    """Per-provider sub-totals string and the persisted finops_report.json."""
+
+    def _ctx(self, base: Path) -> GlobalPipelineContext:
+        paths = WorkspacePaths(
+            code_dir=base / "code", tests_dir=base / "tests",
+            logs_dir=base / "logs", reports_dir=base / "reports",
+        )
+        ctx = GlobalPipelineContext(pr_description="finops", workspace_paths=paths)
+        ctx.telemetry.record("TechLead", 100, 20, 0.0003, provider="gemini")
+        ctx.telemetry.record("Developer Agent", 1000, 200, 0.1328, provider="claude")
+        return ctx
+
+    def test_subtotals_string_names_both_providers(self) -> None:
+        with TemporaryDirectory() as td:
+            line = orchestrator._finops_subtotals(self._ctx(Path(td)))
+        self.assertIn("Gemini est.", line)
+        self.assertIn("Claude", line)
+        self.assertIn("Σ", line)
+
+    def test_write_finops_report_persists_breakdown(self) -> None:
+        with TemporaryDirectory() as td:
+            base = Path(td)
+            ctx = self._ctx(base)
+            with mock.patch.object(orchestrator, "PIPELINE_BUDGET_TOKENS", 10_000):
+                orchestrator.write_finops_report(ctx)
+            report = json.loads((base / "reports" / "finops_report.json").read_text(encoding="utf-8"))
+        self.assertEqual(report["total_tokens"], 1320)
+        self.assertEqual(report["budget_tokens"], 10_000)
+        self.assertIn("gemini", report["by_provider"])
+        self.assertIn("claude", report["by_provider"])
 
 
 if __name__ == "__main__":

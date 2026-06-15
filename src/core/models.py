@@ -65,6 +65,59 @@ class TechLeadContract(BaseModel):
     techlead_reasoning: str = Field(description="Justification for the chosen design.")
     domain_tags: list[str] = Field(description="Up to 5 lowercase tags for the target tech stack/language AND business domain — e.g. 'python', 'dotnet', 'typescript', 'math', 'database'. The language tag acts as the dynamic skill router and MUST be declared first.", default_factory=list)
 
+class AgentUsage(BaseModel):
+    provider: str = "gemini"   # "gemini" (cost estimated) | "claude" (cost authoritative from CLI)
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_tokens: int = 0
+    cost_usd: float = 0.0
+    calls: int = 0
+
+class PipelineTelemetry(BaseModel):
+    """Cumulative, checkpoint-persisted token/cost telemetry across all agent calls.
+
+    The token total feeds the Financial Circuit Breaker; ``cost_usd`` mixes Gemini (estimated from
+    a price table) and Claude (authoritative, reported by the CLI). Persisted in the context so the
+    budget survives ``--resume`` exactly like the functional Circuit Breaker's ``current_attempt``.
+    """
+    total_tokens: int = 0
+    total_cost_usd: float = 0.0
+    by_agent: dict[str, AgentUsage] = Field(default_factory=dict)
+
+    def record(self, agent: str, input_tokens: int, output_tokens: int,
+               cost_usd: float = 0.0, provider: str = "gemini") -> None:
+        slot = self.by_agent.setdefault(agent, AgentUsage(provider=provider))
+        slot.provider = provider
+        added = input_tokens + output_tokens
+        slot.input_tokens += input_tokens
+        slot.output_tokens += output_tokens
+        slot.total_tokens += added
+        slot.cost_usd += cost_usd
+        slot.calls += 1
+        self.total_tokens += added
+        self.total_cost_usd += cost_usd
+
+    def by_provider(self) -> dict[str, dict[str, float]]:
+        """Aggregate tokens + cost per provider (e.g. ``{"gemini": {...}, "claude": {...}}``)."""
+        agg: dict[str, dict[str, float]] = {}
+        for usage in self.by_agent.values():
+            slot = agg.setdefault(usage.provider, {"tokens": 0, "cost_usd": 0.0})
+            slot["tokens"] += usage.total_tokens
+            slot["cost_usd"] += usage.cost_usd
+        return agg
+
+    def finops_report(self, budget_tokens: int) -> dict:
+        """Serializable FinOps summary: totals, budget utilisation, and per-provider/-agent breakdown."""
+        used_pct = round(100.0 * self.total_tokens / budget_tokens, 2) if budget_tokens else 0.0
+        return {
+            "total_tokens": self.total_tokens,
+            "total_cost_usd": round(self.total_cost_usd, 6),
+            "budget_tokens": budget_tokens,
+            "budget_used_pct": used_pct,
+            "by_provider": self.by_provider(),
+            "by_agent": {name: usage.model_dump() for name, usage in self.by_agent.items()},
+        }
+
 class SkillRelevance(BaseModel):
     score: float = Field(description="Semantic relevance score between 0.0 and 1.0")
 
@@ -101,6 +154,7 @@ class GlobalPipelineContext(BaseModel):
     review_report: ReviewReport | None = None
     current_attempt: int = 1
     repository_map: str = ""
+    telemetry: PipelineTelemetry = Field(default_factory=PipelineTelemetry)
 
     def needs_test_regeneration(self) -> bool:
         """Whether QA must (re)generate tests before the next cycle.

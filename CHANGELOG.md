@@ -12,6 +12,20 @@ Decision Record (ADR) is linked from the version heading.
 ### Changed
 - Refactor: Renamed Architect role to TechLead across prompts and orchestration layer for better semantic mapping.
 
+## [v0.11.0] - 2026-06-15 — Secure Sandbox Binding & Real-Time FinOps Circuit Breaker
+
+ADR: [0011-secure-sandbox-and-finops-telemetry](./docs/adr/0011-secure-sandbox-and-finops-telemetry.md)
+
+### Security
+- Docker API socket restricted from `tcp://0.0.0.0:2375` (no TLS) to `tcp://127.0.0.1:2375`, closing an unauthenticated remote-root exposure: the plaintext daemon port was published on every interface, allowing any process on the local subnet to drive the Docker engine and obtain root on the WSL/Windows host via a privileged bind mount. The API is now reachable only over loopback.
+
+### Added
+- Real-time Claude CLI token telemetry in `GlobalPipelineContext`: the out-of-band Developer agent's token usage is now tracked per invocation instead of being reconciled retrospectively via `npx ccusage`.
+- Financial Circuit Breaker: a deterministic hard-halt that terminates the FSM when a configured token budget is breached during cyclic Developer/Reviewer/QA retries, dumping state for audit instead of draining the API budget to exhaustion. This is the cost analogue of the existing functional retry Circuit Breaker.
+
+### Changed
+- WSL2/Docker setup and troubleshooting guides (`docs/docker-on-windows.md`, `docs/setup.md`) rewritten into a single coherent, reproducible chain: all Docker Desktop dependencies purged (including the troubleshooting table that contradicted the Desktop-independent setup), the explicit `docker-ce` engine installation step added before daemon configuration, and the secure loopback binding documented as the default. `DOCKER_HOST` and the lazy-loader probe aligned to `127.0.0.1`.
+
 ## [v0.10.0] - 2026-06-11 — Fast-Fail Documentation Guardrail & Repo Topology Routing
 
 ADR: [0010-fast-fail-documentation-guardrail](./docs/adr/0010-fast-fail-documentation-guardrail.md)

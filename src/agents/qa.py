@@ -67,7 +67,7 @@ async def run_qa_agent_node(ctx: GlobalPipelineContext, error_trace: str = "") -
         results.append(await _generate(m))
 
     for test_path, code, raw_response in results:
-        log_token_usage("QA Agent", raw_response)
+        log_token_usage(ctx, "QA Agent", raw_response, QA_MODEL)
         with open(test_path, "w", encoding="utf-8") as f:
             f.write(code)
 
