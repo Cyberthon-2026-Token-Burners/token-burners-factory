@@ -9,9 +9,11 @@ import shutil
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory, mkdtemp
+from types import SimpleNamespace
 from logging.handlers import RotatingFileHandler
 
-from src.core.observability import reconfigure_logging
+from src.core.models import GlobalPipelineContext
+from src.core.observability import reconfigure_logging, log_token_usage
 
 
 class ReconfigureLoggingTests(unittest.TestCase):
@@ -58,6 +60,28 @@ class ReconfigureLoggingTests(unittest.TestCase):
             # Close the temp-dir handler and restore a global audit handler before cleanup.
             reconfigure_logging(self._restore_dir)
             td.cleanup()
+
+
+class LogTokenUsageTests(unittest.TestCase):
+    """Gemini telemetry must exclude cached tokens from the budget, mirroring the Claude path."""
+
+    def test_gemini_cached_tokens_excluded_from_budget_and_tracked_separately(self) -> None:
+        # Arrange — prompt_token_count INCLUDES cached (2000 = 500 fresh + 1500 cached).
+        ctx = GlobalPipelineContext(pr_description="x")
+        raw = SimpleNamespace(usage_metadata=SimpleNamespace(
+            prompt_token_count=2000,
+            candidates_token_count=400,
+            cached_content_token_count=1500,
+            total_token_count=2400,
+            prompt_tokens_details=None,
+        ))
+        # Act — model_name=None keeps cost at 0 and avoids the genai dependency.
+        log_token_usage(ctx, "QA Agent", raw, model_name=None)
+        # Assert — budgeted total = fresh(500) + output(400); cache tracked but NOT budgeted.
+        self.assertEqual(ctx.telemetry.total_tokens, 900)
+        self.assertEqual(ctx.telemetry.total_cache_read_tokens, 1500)
+        qa = ctx.telemetry.by_agent["QA Agent"]
+        self.assertEqual((qa.input_tokens, qa.output_tokens, qa.cache_read_tokens), (500, 400, 1500))
 
 
 if __name__ == "__main__":

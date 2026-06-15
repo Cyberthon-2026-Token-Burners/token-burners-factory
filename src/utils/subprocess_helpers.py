@@ -40,22 +40,29 @@ def _assert_within_root(files: list[str], allowed_root: str) -> None:
 def parse_claude_usage(stdout: str) -> dict | None:
     """Extract token usage + cost from the Claude CLI ``--output-format json`` result envelope.
 
-    Returns ``{"input_tokens", "output_tokens", "cost_usd"}`` or ``None`` on any parse/shape
-    failure (never raises). Cache-creation and cache-read tokens are folded into the input side
-    so the budget reflects the agent's real token footprint, not just the uncached prompt.
+    Returns ``{"input_tokens", "cache_write_tokens", "cache_read_tokens", "output_tokens",
+    "cost_usd"}`` or ``None`` on any parse/shape failure (never raises). The cache components are
+    kept SEPARATE from fresh ``input_tokens`` on purpose: the agentic CLI re-sends its prompt every
+    internal turn, so ``cache_read_input_tokens`` dominates the raw count while costing ~10% of fresh
+    input. Folding them together would inflate the token budget with cheap cache reads; the caller
+    excludes cache from the budget total and counts ``cost_usd`` as the authoritative spend signal.
     """
     try:
         envelope = json.loads(stdout.strip())
         usage = envelope.get("usage") or {}
-        input_tokens = (
-            int(usage.get("input_tokens", 0))
-            + int(usage.get("cache_creation_input_tokens", 0))
-            + int(usage.get("cache_read_input_tokens", 0))
-        )
+        input_tokens = int(usage.get("input_tokens", 0))          # fresh, uncached prompt tokens only
+        cache_write_tokens = int(usage.get("cache_creation_input_tokens", 0))
+        cache_read_tokens = int(usage.get("cache_read_input_tokens", 0))
         output_tokens = int(usage.get("output_tokens", 0))
         # Authoritative cost from the CLI; via str() so the exact reported value enters Decimal.
         cost_usd = Decimal(str(envelope.get("total_cost_usd", envelope.get("cost_usd", 0)) or 0))
-        return {"input_tokens": input_tokens, "output_tokens": output_tokens, "cost_usd": cost_usd}
+        return {
+            "input_tokens": input_tokens,
+            "cache_write_tokens": cache_write_tokens,
+            "cache_read_tokens": cache_read_tokens,
+            "output_tokens": output_tokens,
+            "cost_usd": cost_usd,
+        }
     except (ValueError, TypeError, AttributeError) as e:
         log.debug(f"Failed to parse Claude usage envelope: {e}")
         return None

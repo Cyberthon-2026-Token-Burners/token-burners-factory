@@ -10,7 +10,7 @@ from typing import NoReturn
 from dataclasses import dataclass
 
 from src.core.observability import log, reconfigure_logging
-from src.core.config import check_environment, PIPELINE_BUDGET_TOKENS
+from src.core.config import check_environment, PIPELINE_BUDGET_TOKENS, PIPELINE_BUDGET_USD
 from src.core.models import GlobalPipelineContext, WorkspacePaths, RUNS_BASE
 from src.utils.git_helpers import get_git_root, get_pipeline_snapshot_files
 from src.agents.techlead import run_techlead_node
@@ -415,18 +415,27 @@ async def enforce_documentation_guardrail(ctx: GlobalPipelineContext) -> str | N
 
 
 def enforce_financial_circuit_breaker(ctx: GlobalPipelineContext) -> None:
-    """Financial Circuit Breaker: hard-halt the FSM once cumulative token spend breaches budget.
+    """Financial Circuit Breaker: hard-halt the FSM once spend breaches budget.
 
-    Checked after every cost-accruing node so a pathological retry loop cannot drain the API
-    budget. Reuses the incident machinery — ``incident_report.json`` now carries the full
-    per-agent telemetry breakdown for audit. Token totals are persisted in the checkpoint, so
-    the budget is enforced consistently across ``--resume``.
+    Primary gate is USD spend (authoritative for Claude, estimated for Gemini); the token total is a
+    secondary ceiling and counts only the real new footprint (cache read/write are excluded, so the
+    agentic CLI's cheap cache reads can't drain the token budget). Checked after every cost-accruing
+    node so a pathological retry loop cannot drain the API budget. Reuses the incident machinery —
+    ``incident_report.json`` carries the full per-agent telemetry breakdown for audit. Totals are
+    persisted in the checkpoint, so both budgets are enforced consistently across ``--resume``.
     """
-    if ctx.telemetry.total_tokens >= PIPELINE_BUDGET_TOKENS:
+    tel = ctx.telemetry
+    if tel.total_cost_usd >= PIPELINE_BUDGET_USD:
         _abort_with_incident(
             ctx,
-            f"\n🚨 FINANCIAL CIRCUIT BREAKER OPEN: cumulative {ctx.telemetry.total_tokens} tokens "
-            f"≥ budget {PIPELINE_BUDGET_TOKENS}. Halting before further spend.",
+            f"\n🚨 FINANCIAL CIRCUIT BREAKER OPEN: cumulative spend ${tel.total_cost_usd:.4f} "
+            f"≥ budget ${PIPELINE_BUDGET_USD:.4f}. Halting before further spend.",
+        )
+    if tel.total_tokens >= PIPELINE_BUDGET_TOKENS:
+        _abort_with_incident(
+            ctx,
+            f"\n🚨 FINANCIAL CIRCUIT BREAKER OPEN: cumulative {tel.total_tokens} tokens "
+            f"(cache-excluded) ≥ budget {PIPELINE_BUDGET_TOKENS}. Halting before further spend.",
         )
 
 
@@ -451,7 +460,10 @@ def write_finops_report(ctx: GlobalPipelineContext) -> None:
     report_file.parent.mkdir(parents=True, exist_ok=True)
     with open(report_file, "w", encoding="utf-8") as f:
         # default=str serialises Decimal money as exact strings (json can't encode Decimal natively).
-        json.dump(ctx.telemetry.finops_report(PIPELINE_BUDGET_TOKENS), f, indent=2, default=str)
+        json.dump(
+            ctx.telemetry.finops_report(PIPELINE_BUDGET_TOKENS, PIPELINE_BUDGET_USD),
+            f, indent=2, default=str,
+        )
     log.debug(f"FinOps report written to {report_file}")
 
 
@@ -464,10 +476,16 @@ def log_finops_summary(ctx: GlobalPipelineContext) -> None:
     for prov, agg in tel.by_provider().items():
         label = "Gemini (est.)" if prov == "gemini" else "Claude (actual)"
         log.info(f"   ├─ Σ {label} | {int(agg['tokens'])}t | ${agg['cost_usd']:.4f}")
+    if tel.total_cache_read_tokens or tel.total_cache_write_tokens:
+        log.info(
+            f"   ├─ cache (not budgeted) | read {tel.total_cache_read_tokens}t "
+            f"| write {tel.total_cache_write_tokens}t"
+        )
+    used_pct_usd = (100.0 * float(tel.total_cost_usd) / float(PIPELINE_BUDGET_USD)) if PIPELINE_BUDGET_USD else 0.0
     used_pct = (100.0 * tel.total_tokens / PIPELINE_BUDGET_TOKENS) if PIPELINE_BUDGET_TOKENS else 0.0
     log.info(
-        f"   └─ TOTAL | {tel.total_tokens}t | ${tel.total_cost_usd:.4f} "
-        f"| {used_pct:.1f}% of {PIPELINE_BUDGET_TOKENS}t budget"
+        f"   └─ TOTAL | ${tel.total_cost_usd:.4f} / ${PIPELINE_BUDGET_USD:.2f} budget ({used_pct_usd:.1f}%) "
+        f"| {tel.total_tokens}t / {PIPELINE_BUDGET_TOKENS}t ({used_pct:.1f}%, cache-excluded)"
     )
 
 
@@ -676,8 +694,8 @@ async def main():
         ctx.save_checkpoint(checkpoint_file)
         log.debug(f"Checkpoint saved at end of cycle {attempt}: {checkpoint_file}")
         log.info(
-            f"   [FINOPS] {_finops_subtotals(ctx)} "
-            f"| {ctx.telemetry.total_tokens}t / budget {PIPELINE_BUDGET_TOKENS}t"
+            f"   [FINOPS] {_finops_subtotals(ctx)} / ${PIPELINE_BUDGET_USD:.2f} budget "
+            f"| {ctx.telemetry.total_tokens}t / {PIPELINE_BUDGET_TOKENS}t (cache-excluded)"
         )
 
         if all_gates_passed:

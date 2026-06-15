@@ -79,19 +79,26 @@ def log_token_usage(ctx: Any, agent_name: str, raw_response: Any, model_name: st
     try:
         if hasattr(raw_response, 'usage_metadata') and raw_response.usage_metadata:
             usage = raw_response.usage_metadata
-            in_tokens = getattr(usage, 'prompt_token_count', 0) or 0
+            prompt_tokens = getattr(usage, 'prompt_token_count', 0) or 0
             out_tokens = getattr(usage, 'candidates_token_count', 0) or 0
             cached = getattr(usage, 'cached_content_token_count', 0) or 0
-            total = getattr(usage, 'total_token_count', in_tokens + out_tokens)
+            # Gemini's prompt_token_count INCLUDES cached tokens; split them out so the budget counts
+            # only fresh input + output (parity with Claude). Cache is tracked separately, not budgeted.
+            fresh_in = max(prompt_tokens - cached, 0)
             cost_usd = 0.0
             if model_name:
                 from src.core.config import estimate_gemini_cost_usd  # lazy: avoid config↔observability cycle
                 cost_usd = estimate_gemini_cost_usd(model_name, usage)
-            ctx.telemetry.record(agent_name, in_tokens, out_tokens, cost_usd, provider="gemini")
-            cached_hint = f" (cached: {cached})" if cached else ""
+            ctx.telemetry.record(
+                agent_name, fresh_in, out_tokens, cost_usd, provider="gemini",
+                cache_read_tokens=cached,  # Gemini implicit caching reports no separate write count
+            )
+            cache_part = f"Cache-read: {cached} | " if cached else ""
             log.info(
-                f"   [TOKENS] {agent_name} | Input: {in_tokens}{cached_hint} | Output: {out_tokens} "
-                f"| Total: {total} | Cost: ${cost_usd:.4f} | Cumulative: {ctx.telemetry.total_tokens}"
+                f"   [TOKENS] {agent_name} | Input(fresh): {fresh_in} | {cache_part}"
+                f"Output: {out_tokens} | Budgeted: {fresh_in + out_tokens} | "
+                f"Cost: ${cost_usd:.4f} | Cumulative: {ctx.telemetry.total_tokens}t / "
+                f"${ctx.telemetry.total_cost_usd:.4f}"
             )
     except Exception as e:
         log.debug(f"Failed to parse token usage for {agent_name}: {e}")

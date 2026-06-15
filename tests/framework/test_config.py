@@ -25,27 +25,28 @@ def _usage(prompt: int, output: int, cached: int = 0, details=None) -> SimpleNam
 
 
 class EstimateGeminiCostTests(unittest.TestCase):
-    FLASH = "gemini-3.1-flash-lite"      # short/long flat: (0.125, 0.75, 0.0125) /1M
+    FLASH = "gemini-3.1-flash-lite"      # short/long flat: (0.25, 1.50, 0.025) /1M
     PRO = "gemini-3.1-pro-preview"       # tiered: short (2,12,0.2) -> long (4,18,0.4) at 200k
+    PRO_25 = "gemini-2.5-pro"            # tiered: short (1.25,10,0.125) -> long (2.5,15,0.25) at 200k
 
     def test_returns_decimal_type(self) -> None:
         self.assertIsInstance(estimate_gemini_cost_usd(self.FLASH, _usage(1000, 100)), Decimal)
 
     def test_uncached_input_and_output_exact(self) -> None:
-        # 1M uncached input @0.125 + 1M output @0.75 = exactly 0.875.
+        # 1M uncached input @0.25 + 1M output @1.50 = exactly 1.75.
         cost = estimate_gemini_cost_usd(self.FLASH, _usage(prompt=1_000_000, output=1_000_000))
-        self.assertEqual(cost, Decimal("0.875"))
+        self.assertEqual(cost, Decimal("1.75"))
 
     def test_cached_tokens_are_cheaper_than_flat(self) -> None:
         # 100k prompt of which 60k cached, 10k output.
         usage = _usage(prompt=100_000, output=10_000, cached=60_000)
         cost = estimate_gemini_cost_usd(self.FLASH, usage)
-        # 40k*0.125 + 60k*0.0125 + 10k*0.75, all /1e6 — computed in Decimal.
-        expected = (Decimal(40_000) * Decimal("0.125") + Decimal(60_000) * Decimal("0.0125")
-                    + Decimal(10_000) * Decimal("0.75")) / Decimal(1_000_000)
+        # 40k*0.25 + 60k*0.025 + 10k*1.50, all /1e6 — computed in Decimal.
+        expected = (Decimal(40_000) * Decimal("0.25") + Decimal(60_000) * Decimal("0.025")
+                    + Decimal(10_000) * Decimal("1.50")) / Decimal(1_000_000)
         self.assertEqual(cost, expected)
         # Strictly cheaper than pricing all input at the uncached rate.
-        flat = (Decimal(100_000) * Decimal("0.125") + Decimal(10_000) * Decimal("0.75")) / Decimal(1_000_000)
+        flat = (Decimal(100_000) * Decimal("0.25") + Decimal(10_000) * Decimal("1.50")) / Decimal(1_000_000)
         self.assertLess(cost, flat)
 
     def test_long_tier_applies_over_threshold(self) -> None:
@@ -59,6 +60,17 @@ class EstimateGeminiCostTests(unittest.TestCase):
         cost = estimate_gemini_cost_usd(self.PRO, _usage(prompt=100_000, output=1_000))
         expected = (Decimal(100_000) * Decimal("2.00") + Decimal(1_000) * Decimal("12.00")) / Decimal(1_000_000)
         self.assertEqual(cost, expected)
+
+    def test_gemini_2_5_pro_long_tier_doubles_over_threshold(self) -> None:
+        # 300k prompt (> 200k) → corrected long tier input 2.50 / output 15.00 (was wrongly == short).
+        cost = estimate_gemini_cost_usd(self.PRO_25, _usage(prompt=300_000, output=1_000))
+        expected = (Decimal(300_000) * Decimal("2.50") + Decimal(1_000) * Decimal("15.00")) / Decimal(1_000_000)
+        self.assertEqual(cost, expected)
+
+    def test_gemini_2_5_flash_cached_read_rate(self) -> None:
+        # Corrected cached_read rate 0.03/1M: 100k cached-only prompt = 100k * 0.03 / 1e6.
+        cost = estimate_gemini_cost_usd("gemini-2.5-flash", _usage(prompt=100_000, output=0, cached=100_000))
+        self.assertEqual(cost, Decimal(100_000) * Decimal("0.03") / Decimal(1_000_000))
 
     def test_unknown_model_uses_default_rates(self) -> None:
         # Falls back to gemini-2.5-flash-lite (short input 0.10).

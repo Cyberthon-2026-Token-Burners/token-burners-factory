@@ -4,3 +4,4 @@
 - [Iteration Release Prompt](iteration_release_prompt.md) — Reusable template for documenting an iteration release (ADR/CHANGELOG/PRACTICUM/README sync).
 - [QA Sandbox Hardening](qa_sandbox_hardening.md) — QA Docker gate runs LLM tests under-isolated (whole-repo :rw, root, host net, no limits); enforce least-privilege in gates.py.
 - [Config Constant Convention](config_constant_convention.md) — Tunable caps are env-overridable module constants; outlier is max_retries=3 local in orchestrator.main().
+- [Token Budget Excludes Cache](token_budget_excludes_cache.md) — Token budget = fresh input + output only; Claude CLI cache tracked separately; breaker gates primarily on USD.

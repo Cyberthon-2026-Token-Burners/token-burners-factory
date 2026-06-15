@@ -33,12 +33,16 @@ async def run_developer_node(ctx: GlobalPipelineContext, error_trace: str = "") 
         ctx.telemetry.record(
             "Developer Agent", usage["input_tokens"], usage["output_tokens"], usage["cost_usd"],
             provider="claude",
+            cache_read_tokens=usage["cache_read_tokens"],
+            cache_write_tokens=usage["cache_write_tokens"],
         )
         log.info(
-            f"   [TOKENS] Developer Agent | Input: {usage['input_tokens']} | "
+            f"   [TOKENS] Developer Agent | Input(fresh): {usage['input_tokens']} | "
+            f"Cache-write: {usage['cache_write_tokens']} | Cache-read: {usage['cache_read_tokens']} | "
             f"Output: {usage['output_tokens']} | "
-            f"Total: {usage['input_tokens'] + usage['output_tokens']} | "
-            f"Cost: ${usage['cost_usd']:.4f} | Cumulative: {ctx.telemetry.total_tokens}"
+            f"Budgeted: {usage['input_tokens'] + usage['output_tokens']} | "
+            f"Cost: ${usage['cost_usd']:.4f} | Cumulative: {ctx.telemetry.total_tokens}t / "
+            f"${ctx.telemetry.total_cost_usd:.4f}"
         )
     else:
         log.info("   [TOKENS] Developer Agent | usage unavailable — reconcile out-of-band via ccusage")

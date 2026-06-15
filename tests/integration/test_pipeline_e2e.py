@@ -88,7 +88,13 @@ async def _fake_claude_cli(prompt, files, allowed_root, model=None, effort=None)
     """
     for f in files:
         Path(f).write_text(_PROD_CODE, encoding="utf-8")
-    return 0, {"input_tokens": 100, "output_tokens": 20, "cost_usd": 0.001}
+    return 0, {
+        "input_tokens": 100,
+        "cache_write_tokens": 5000,
+        "cache_read_tokens": 80000,
+        "output_tokens": 20,
+        "cost_usd": 0.001,
+    }
 
 
 def _git(args: list[str], cwd: Path) -> None:

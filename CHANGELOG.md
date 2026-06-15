@@ -7,18 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Each release maps to a completed SDLC iteration; the corresponding Architecture
 Decision Record (ADR) is linked from the version heading.
 
-## [Unreleased]
-
-ADR: [0011-secure-sandbox-and-finops-telemetry](./docs/adr/0011-secure-sandbox-and-finops-telemetry.md)
-
-### Added
-- Language-neutral topology contract: `TechLeadContract` gains `topology_contract: list[TopologyNode]` (`src/core/models.py`), where each node declares `file_path`, `exports`, and language-neutral `depends_on` links (`path/to/file.ext:symbol`) — not import statements. The TechLead is the Single Source of Truth for structure (`prompts/system/techlead.md` TOPOLOGY RULE); the Developer and QA agents translate the neutral links into the target language's import syntax, with QA consuming the graph for test import resolution (`prompts/system/qa.md`, `src/agents/qa.py`). This decouples the dependency graph from any one language, making new-language support Open-Closed.
-
-### Changed
-- Refactor: Renamed Architect role to TechLead across prompts and orchestration layer for better semantic mapping — the node authors a binding `TechLeadContract` (signatures + topology graph) consumed deterministically downstream.
-- Pricing model migrated to `Decimal` for exact, rounding-controlled cost math feeding the Financial Circuit Breaker threshold and FinOps reporting; binary floats accumulated representation error on fractional-cent rates, which could trip the budget gate early or late by a drifting margin.
-
-## [v0.11.0] - 2026-06-15 — Secure Sandbox Binding & Real-Time FinOps Circuit Breaker
+## [v0.11.0] - 2026-06-15 — Secure Sandbox, Language-Neutral Topology & Real-Time FinOps Circuit Breaker
 
 ADR: [0011-secure-sandbox-and-finops-telemetry](./docs/adr/0011-secure-sandbox-and-finops-telemetry.md)
 
@@ -26,11 +15,20 @@ ADR: [0011-secure-sandbox-and-finops-telemetry](./docs/adr/0011-secure-sandbox-a
 - Docker API socket restricted from `tcp://0.0.0.0:2375` (no TLS) to `tcp://127.0.0.1:2375`, closing an unauthenticated remote-root exposure: the plaintext daemon port was published on every interface, allowing any process on the local subnet to drive the Docker engine and obtain root on the WSL/Windows host via a privileged bind mount. The API is now reachable only over loopback.
 
 ### Added
+- Language-neutral topology contract: `TechLeadContract` gains `topology_contract: list[TopologyNode]` (`src/core/models.py`), where each node declares `file_path`, `exports`, and language-neutral `depends_on` links (`path/to/file.ext:symbol`) — not import statements. The TechLead is the Single Source of Truth for structure (`prompts/system/techlead.md` TOPOLOGY RULE); the Developer and QA agents translate the neutral links into the target language's import syntax, with QA consuming the graph for test import resolution (`prompts/system/qa.md`, `src/agents/qa.py`). This decouples the dependency graph from any one language, making new-language support Open-Closed.
 - Real-time Claude CLI token telemetry in `GlobalPipelineContext`: the out-of-band Developer agent's token usage is now tracked per invocation instead of being reconciled retrospectively via `npx ccusage`.
-- Financial Circuit Breaker: a deterministic hard-halt that terminates the FSM when a configured token budget is breached during cyclic Developer/Reviewer/QA retries, dumping state for audit instead of draining the API budget to exhaustion. This is the cost analogue of the existing functional retry Circuit Breaker.
+- Financial Circuit Breaker: a deterministic hard-halt that terminates the FSM when a configured budget is breached during cyclic Developer/Reviewer/QA retries, dumping state for audit instead of draining the API budget to exhaustion. This is the cost analogue of the existing functional retry Circuit Breaker.
+- USD spend budget (`PIPELINE_BUDGET_USD`, env-overridable, default `$10.00`) as the **primary** Financial Circuit Breaker signal — cost is authoritative for Claude (CLI `total_cost_usd`) and estimated for Gemini. The token budget (`PIPELINE_BUDGET_TOKENS`) is retained as a secondary ceiling.
+- Separate cache-token telemetry: `PipelineTelemetry.total_cache_read_tokens` / `total_cache_write_tokens` and per-agent `cache_read_tokens` / `cache_write_tokens`, surfaced in the FinOps report (`budget_usd`, `budget_used_pct_usd`, cache totals) and the Developer log line (`Input(fresh) | Cache-write | Cache-read | Output | Budgeted`).
 
 ### Changed
+- Refactor: Renamed Architect role to TechLead across prompts and orchestration layer for better semantic mapping — the node authors a binding `TechLeadContract` (signatures + topology graph) consumed deterministically downstream.
 - WSL2/Docker setup and troubleshooting guides (`docs/docker-on-windows.md`, `docs/setup.md`) rewritten into a single coherent, reproducible chain: all Docker Desktop dependencies purged (including the troubleshooting table that contradicted the Desktop-independent setup), the explicit `docker-ce` engine installation step added before daemon configuration, and the secure loopback binding documented as the default. `DOCKER_HOST` and the lazy-loader probe aligned to `127.0.0.1`.
+- Pricing model migrated to `Decimal` for exact, rounding-controlled cost math feeding the Financial Circuit Breaker threshold and FinOps reporting; binary floats accumulated representation error on fractional-cent rates, which could trip the budget gate early or late by a drifting margin.
+- Token budget now counts **fresh input + output only** — cache read/write tokens are EXCLUDED. `parse_claude_usage` (`src/utils/subprocess_helpers.py`) no longer folds `cache_creation`/`cache_read` into `input_tokens`; the agentic Claude CLI re-sends its prompt each internal turn, so cache reads (~10% the price of fresh input) were inflating the token budget — one ~$0.14 Developer call had been consuming ~22% of a 1M-token budget.
+
+### Fixed
+- FinOps misattribution: the Developer agent appeared to consume ~219k "input" tokens for a trivial task because cheap `cache_read_input_tokens` were folded into the budgeted input count. Cache is now tracked separately and excluded from the budget, and the breaker gates on real USD spend.
 
 ## [v0.10.0] - 2026-06-11 — Fast-Fail Documentation Guardrail & Repo Topology Routing
 
@@ -218,7 +216,6 @@ ADR: [0000-cloud-infra-fsm-research](./docs/adr/0000-cloud-infra-fsm-research.md
 ### Added
 - System topology blueprint: custom Python/Pydantic FSM (over LangGraph), localized Docker sandboxing (over Cloud Run), hybrid Gemini/Claude model routing with context + prompt caching, GitHub App RS256 auth, and a 10-cycle FinOps cost model (~$5.83).
 
-[Unreleased]: ./docs/adr/0011-secure-sandbox-and-finops-telemetry.md
 [v0.11.0]: ./docs/adr/0011-secure-sandbox-and-finops-telemetry.md
 [v0.10.0]: ./docs/adr/0010-fast-fail-documentation-guardrail.md
 [v0.9.0]: ./docs/adr/0009-hybrid-skill-routing.md

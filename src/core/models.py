@@ -75,36 +75,49 @@ class TechLeadContract(BaseModel):
 
 class AgentUsage(BaseModel):
     provider: str = "gemini"   # "gemini" (cost estimated) | "claude" (cost authoritative from CLI)
-    input_tokens: int = 0
+    input_tokens: int = 0      # fresh, uncached prompt tokens
     output_tokens: int = 0
-    total_tokens: int = 0
+    cache_read_tokens: int = 0   # cheap re-reads of a cached prompt (agentic CLI re-sends) — NOT budgeted
+    cache_write_tokens: int = 0  # one-time cache population — NOT budgeted
+    total_tokens: int = 0        # budgeted footprint: fresh input + output ONLY (cache excluded)
     cost_usd: Decimal = Decimal("0")
     calls: int = 0
 
 class PipelineTelemetry(BaseModel):
     """Cumulative, checkpoint-persisted token/cost telemetry across all agent calls.
 
-    The token total feeds the Financial Circuit Breaker; ``cost_usd`` mixes Gemini (estimated from
-    a price table) and Claude (authoritative, reported by the CLI). Persisted in the context so the
-    budget survives ``--resume`` exactly like the functional Circuit Breaker's ``current_attempt``.
+    ``total_tokens`` (the value the token Circuit Breaker reads) counts only the real new footprint —
+    fresh input + output — and DELIBERATELY EXCLUDES cache read/write tokens: the agentic Claude CLI
+    re-sends its prompt every internal turn, so cache reads would otherwise dominate the budget while
+    costing ~10% of fresh input. Cache tokens are tracked separately for transparency. ``cost_usd``
+    mixes Gemini (estimated from a price table) and Claude (authoritative, reported by the CLI) and is
+    the money-accurate spend signal. Persisted in the context so both budgets survive ``--resume``.
     """
     total_tokens: int = 0
+    total_cache_read_tokens: int = 0
+    total_cache_write_tokens: int = 0
     total_cost_usd: Decimal = Decimal("0")
     by_agent: dict[str, AgentUsage] = Field(default_factory=dict)
 
     def record(self, agent: str, input_tokens: int, output_tokens: int,
-               cost_usd: Decimal | float = Decimal("0"), provider: str = "gemini") -> None:
+               cost_usd: Decimal | float = Decimal("0"), provider: str = "gemini",
+               cache_read_tokens: int = 0, cache_write_tokens: int = 0) -> None:
         # Coerce at the boundary so float callers stay safe while precision is preserved exactly.
         cost = cost_usd if isinstance(cost_usd, Decimal) else Decimal(str(cost_usd))
         slot = self.by_agent.setdefault(agent, AgentUsage(provider=provider))
         slot.provider = provider
-        added = input_tokens + output_tokens
+        # Budgeted total excludes cache — cache reads are cheap re-sends, not new spend footprint.
+        budgeted = input_tokens + output_tokens
         slot.input_tokens += input_tokens
         slot.output_tokens += output_tokens
-        slot.total_tokens += added
+        slot.cache_read_tokens += cache_read_tokens
+        slot.cache_write_tokens += cache_write_tokens
+        slot.total_tokens += budgeted
         slot.cost_usd += cost
         slot.calls += 1
-        self.total_tokens += added
+        self.total_tokens += budgeted
+        self.total_cache_read_tokens += cache_read_tokens
+        self.total_cache_write_tokens += cache_write_tokens
         self.total_cost_usd += cost
 
     def by_provider(self) -> dict[str, dict]:
@@ -116,14 +129,25 @@ class PipelineTelemetry(BaseModel):
             slot["cost_usd"] += usage.cost_usd
         return agg
 
-    def finops_report(self, budget_tokens: int) -> dict:
-        """Serializable FinOps summary: totals, budget utilisation, and per-provider/-agent breakdown."""
+    def finops_report(self, budget_tokens: int, budget_usd: Decimal | float = Decimal("0")) -> dict:
+        """Serializable FinOps summary: totals, budget utilisation, and per-provider/-agent breakdown.
+
+        Reports the USD budget as the primary spend signal and the (cache-excluded) token budget as the
+        secondary ceiling. Cache read/write totals are surfaced separately — the full footprint stays
+        auditable even though it is not counted against the token budget.
+        """
+        budget_usd_dec = budget_usd if isinstance(budget_usd, Decimal) else Decimal(str(budget_usd))
         used_pct = round(100.0 * self.total_tokens / budget_tokens, 2) if budget_tokens else 0.0
+        used_pct_usd = round(100.0 * float(self.total_cost_usd) / float(budget_usd_dec), 2) if budget_usd_dec else 0.0
         return {
-            "total_tokens": self.total_tokens,
             "total_cost_usd": round(self.total_cost_usd, 6),
+            "budget_usd": round(budget_usd_dec, 6),
+            "budget_used_pct_usd": used_pct_usd,
+            "total_tokens": self.total_tokens,
             "budget_tokens": budget_tokens,
             "budget_used_pct": used_pct,
+            "total_cache_read_tokens": self.total_cache_read_tokens,
+            "total_cache_write_tokens": self.total_cache_write_tokens,
             "by_provider": self.by_provider(),
             "by_agent": {name: usage.model_dump() for name, usage in self.by_agent.items()},
         }

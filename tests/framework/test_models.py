@@ -253,24 +253,44 @@ class PipelineTelemetryTests(unittest.TestCase):
         self.assertEqual((dev.total_tokens, dev.calls), (1200, 1))
         self.assertEqual(dev.cost_usd, Decimal("0.05"))
 
+    def test_cache_tokens_are_excluded_from_budget_total(self) -> None:
+        # Arrange — a Claude call dominated by cheap cache reads, like the agentic CLI produces.
+        tel = PipelineTelemetry()
+        # Act
+        tel.record(
+            "Developer Agent", 100, 20, Decimal("0.14"), provider="claude",
+            cache_read_tokens=200_000, cache_write_tokens=8_000,
+        )
+        # Assert — the budget total counts only fresh input + output; cache is tracked but NOT budgeted.
+        self.assertEqual(tel.total_tokens, 120)                 # 100 + 20, cache excluded
+        self.assertEqual(tel.total_cache_read_tokens, 200_000)
+        self.assertEqual(tel.total_cache_write_tokens, 8_000)
+        dev = tel.by_agent["Developer Agent"]
+        self.assertEqual((dev.total_tokens, dev.cache_read_tokens, dev.cache_write_tokens), (120, 200_000, 8_000))
+        self.assertEqual(tel.total_cost_usd, Decimal("0.14"))   # money is the real spend signal
+
     def test_by_provider_and_finops_report(self) -> None:
         # Arrange — two providers with distinct token/cost footprints.
         tel = PipelineTelemetry()
         tel.record("TechLead", 100, 20, 0.0003, provider="gemini")
         tel.record("QA Agent", 50, 10, 0.0002, provider="gemini")
-        tel.record("Developer Agent", 1000, 200, 0.1328, provider="claude")
+        tel.record("Developer Agent", 1000, 200, 0.1328, provider="claude", cache_read_tokens=50_000)
         # Act
         bp = tel.by_provider()
-        report = tel.finops_report(budget_tokens=10_000)
-        # Assert — per-provider aggregation.
+        report = tel.finops_report(budget_tokens=10_000, budget_usd=Decimal("1.00"))
+        # Assert — per-provider aggregation (cache excluded from token totals).
         self.assertEqual(bp["gemini"]["tokens"], 180)
         self.assertEqual(bp["gemini"]["cost_usd"], Decimal("0.0005"))
         self.assertEqual(bp["claude"]["tokens"], 1200)
         self.assertEqual(bp["claude"]["cost_usd"], Decimal("0.1328"))
-        # Assert — report shape + budget math (1380 / 10000 = 13.8%).
+        # Assert — token budget math (1380 / 10000 = 13.8%), cache surfaced separately.
         self.assertEqual(report["total_tokens"], 1380)
         self.assertEqual(report["budget_tokens"], 10_000)
         self.assertAlmostEqual(report["budget_used_pct"], 13.8)
+        self.assertEqual(report["total_cache_read_tokens"], 50_000)
+        # Assert — USD budget is the primary signal: $0.1333 / $1.00 = 13.33%.
+        self.assertEqual(report["budget_usd"], Decimal("1.000000"))
+        self.assertAlmostEqual(report["budget_used_pct_usd"], 13.33)
         self.assertIn("gemini", report["by_provider"])
         self.assertEqual(report["by_agent"]["Developer Agent"]["provider"], "claude")
 

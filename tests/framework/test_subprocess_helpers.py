@@ -136,7 +136,7 @@ class RunClaudeCliTests(_MutedLogMixin, unittest.IsolatedAsyncioTestCase):
 class ParseClaudeUsageTests(_MutedLogMixin, unittest.TestCase):
     """The usage parser is total and defensive: valid envelope → dict, anything else → None."""
 
-    def test_parses_valid_envelope_and_folds_cache_into_input(self) -> None:
+    def test_parses_valid_envelope_keeping_cache_separate(self) -> None:
         # Arrange — mirrors the real `claude --output-format json` result shape.
         envelope = (
             '{"type":"result","total_cost_usd":0.1234,'
@@ -145,8 +145,14 @@ class ParseClaudeUsageTests(_MutedLogMixin, unittest.TestCase):
         )
         # Act
         usage = parse_claude_usage(envelope)
-        # Assert — input side = 6 + 30000 + 100; cost is exact Decimal from total_cost_usd.
-        self.assertEqual(usage, {"input_tokens": 30106, "output_tokens": 12, "cost_usd": Decimal("0.1234")})
+        # Assert — cache is NOT folded into input_tokens (fresh=6); cost is exact Decimal.
+        self.assertEqual(usage, {
+            "input_tokens": 6,
+            "cache_write_tokens": 30000,
+            "cache_read_tokens": 100,
+            "output_tokens": 12,
+            "cost_usd": Decimal("0.1234"),
+        })
 
     def test_legacy_cost_key_is_honoured(self) -> None:
         usage = parse_claude_usage('{"cost_usd":0.5,"usage":{"input_tokens":1,"output_tokens":2}}')
@@ -157,7 +163,13 @@ class ParseClaudeUsageTests(_MutedLogMixin, unittest.TestCase):
 
     def test_missing_usage_block_defaults_to_zero(self) -> None:
         usage = parse_claude_usage('{"type":"result","total_cost_usd":0.0}')
-        self.assertEqual(usage, {"input_tokens": 0, "output_tokens": 0, "cost_usd": Decimal("0.0")})
+        self.assertEqual(usage, {
+            "input_tokens": 0,
+            "cache_write_tokens": 0,
+            "cache_read_tokens": 0,
+            "output_tokens": 0,
+            "cost_usd": Decimal("0.0"),
+        })
 
 
 class StreamSubprocessOutputTests(unittest.IsolatedAsyncioTestCase):

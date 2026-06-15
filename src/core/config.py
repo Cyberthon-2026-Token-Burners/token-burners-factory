@@ -59,9 +59,16 @@ DEVELOPER_EFFORT = EFFORT_MEDIUM          # any of AVAILABLE_EFFORT_LEVELS
 # ==========================================
 # FINOPS — Financial Circuit Breaker budget
 # ==========================================
-# Cumulative token budget (input+output across every agent) for a single pipeline run.
-# Env-overridable; persisted telemetry is checked against this after each cost-accruing node,
-# and a breach triggers a deterministic Hard Halt. Generous default so normal runs never trip.
+# USD spend budget — the PRIMARY Financial Circuit Breaker signal. Cost is authoritative for Claude
+# (reported by the CLI) and estimated for Gemini; gating on money keeps the breaker honest even when
+# the agentic Claude CLI's cheap cache reads inflate the raw token count. Env-overridable; generous
+# default so normal runs never trip.
+PIPELINE_BUDGET_USD = Decimal(os.environ.get("PIPELINE_BUDGET_USD", "10.00"))
+
+# Cumulative token budget — SECONDARY ceiling. Counts only the real new footprint (fresh input +
+# output; cache read/write are EXCLUDED, see PipelineTelemetry). Env-overridable; persisted telemetry
+# is checked against this after each cost-accruing node, and a breach triggers a deterministic Hard
+# Halt. Generous default so normal runs never trip.
 PIPELINE_BUDGET_TOKENS = int(os.environ.get("PIPELINE_BUDGET_TOKENS", "1000000"))
 
 # Role -> (model, human-readable agent name) for structured (instructor) LLM calls.
@@ -84,6 +91,11 @@ ROLE_MODELS = {
 # Exact-precision pricing matrix. Monetary values are Decimal initialised from STRINGS to avoid
 # IEEE-754 binary approximation. Each tier is (input, output, cached_read) USD per 1M tokens:
 #   "short" → context <= 200k tokens, "long" → context > 200k tokens.
+# Source: Google AI paid-tier pricing, verified 2026-06. Rates are the text/image/video tier
+# (audio bills higher; treated as a text-rate approximation here). The per-hour context-cache
+# STORAGE price ($1/1M tokens/hr) is NOT modelled: it applies only to EXPLICIT CachedContent you
+# create with a TTL — this engine uses implicit caching (reads usage_metadata.cached_content_token_count
+# at the per-token cached_read rate), so there is no storage charge to account for.
 LONG_CONTEXT_THRESHOLD = 200_000
 DEFAULT_PRICING_MODEL = "gemini-2.5-flash-lite"   # fallback rates for an unknown model
 
@@ -94,23 +106,23 @@ MODEL_PRICING_MATRIX: dict[str, dict[str, tuple[Decimal, Decimal, Decimal]]] = {
     },
     "gemini-2.5-pro": {
         "short": (Decimal("1.25"), Decimal("10.00"), Decimal("0.125")),
-        "long":  (Decimal("1.25"), Decimal("10.00"), Decimal("0.125")),
+        "long":  (Decimal("2.50"), Decimal("15.00"), Decimal("0.25")),
     },
     "gemini-3.5-flash": {
         "short": (Decimal("1.50"), Decimal("9.00"), Decimal("0.15")),
         "long":  (Decimal("1.50"), Decimal("9.00"), Decimal("0.15")),
     },
     "gemini-2.5-flash": {
-        "short": (Decimal("0.30"), Decimal("2.50"), Decimal("0.075")),
-        "long":  (Decimal("0.30"), Decimal("2.50"), Decimal("0.075")),
+        "short": (Decimal("0.30"), Decimal("2.50"), Decimal("0.03")),
+        "long":  (Decimal("0.30"), Decimal("2.50"), Decimal("0.03")),
     },
     "gemini-3.1-flash-lite": {
-        "short": (Decimal("0.125"), Decimal("0.75"), Decimal("0.0125")),
-        "long":  (Decimal("0.125"), Decimal("0.75"), Decimal("0.0125")),
+        "short": (Decimal("0.25"), Decimal("1.50"), Decimal("0.025")),
+        "long":  (Decimal("0.25"), Decimal("1.50"), Decimal("0.025")),
     },
     "gemini-2.5-flash-lite": {
-        "short": (Decimal("0.10"), Decimal("0.40"), Decimal("0.025")),
-        "long":  (Decimal("0.10"), Decimal("0.40"), Decimal("0.025")),
+        "short": (Decimal("0.10"), Decimal("0.40"), Decimal("0.01")),
+        "long":  (Decimal("0.10"), Decimal("0.40"), Decimal("0.01")),
     },
 }
 
