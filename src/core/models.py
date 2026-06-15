@@ -58,8 +58,20 @@ class WorkspacePaths(BaseModel):
 # ==========================================
 # CONTRACTS & PIPELINE STATE
 # ==========================================
+class TopologyNode(BaseModel):
+    file_path: str = Field(description="Repo-root-relative path of the source file.")
+    exports: list[str] = Field(description="Symbols (functions/classes) this file publicly exports.")
+    depends_on: list[str] = Field(
+        default_factory=list,
+        description="Language-neutral dependency links as 'path/to/file.ext:symbol'.",
+    )
+
 class TechLeadContract(BaseModel):
     files_to_modify: list[str] = Field(description="List of target source file paths.")
+    topology_contract: list[TopologyNode] = Field(
+        description="Language-neutral dependency graph: each contracted file, its exported symbols, "
+        "and its dependency links. SSOT for downstream import resolution. No language syntax.",
+    )
     instruction: str = Field(description="Technical directives for the Developer Agent.")
     function_signatures: str = Field(description="Function names, arguments, types, and exceptions.")
     strict_type_validation_rules: str = Field(description="Type validation rules for the implementation.")

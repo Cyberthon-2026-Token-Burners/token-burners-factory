@@ -53,6 +53,9 @@ def _fake_structured_llm(*, model, response_model, messages):
         return (
             TechLeadContract(
                 files_to_modify=["src/calculator.py"],
+                topology_contract=[
+                    {"file_path": "src/calculator.py", "exports": ["add"], "depends_on": []}
+                ],
                 instruction="Implement add(a, b).",
                 function_signatures="def add(a: int, b: int) -> int",
                 strict_type_validation_rules="Operands must be int.",

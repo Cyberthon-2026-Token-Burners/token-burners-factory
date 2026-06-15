@@ -17,6 +17,7 @@ from src.core.models import (
     TESTS_DIR,
     PipelineTelemetry,
     TechLeadContract,
+    TopologyNode,
     GlobalPipelineContext,
     QATestSuite,
     ReviewReport,
@@ -164,6 +165,9 @@ class ContractModelTests(unittest.TestCase):
         # Arrange
         payload = {
             "files_to_modify": ["src/core/calc.py"],
+            "topology_contract": [
+                {"file_path": "src/core/calc.py", "exports": ["is_prime"], "depends_on": []}
+            ],
             "instruction": "Implement prime sieve.",
             "function_signatures": "def is_prime(n: int) -> bool",
             "strict_type_validation_rules": "bool must raise TypeError",
@@ -174,6 +178,28 @@ class ContractModelTests(unittest.TestCase):
         # Assert
         self.assertEqual(contract.files_to_modify, ["src/core/calc.py"])
         self.assertIn("TypeError", contract.strict_type_validation_rules)
+
+    def test_topology_contract_is_required(self) -> None:
+        # Omitting the language-neutral dependency graph must fail validation (strict SSOT).
+        payload = {
+            "files_to_modify": ["src/core/calc.py"],
+            "instruction": "noop",
+            "function_signatures": "def is_prime(n: int) -> bool",
+            "strict_type_validation_rules": "noop",
+            "techlead_reasoning": "noop",
+        }
+        with self.assertRaises(ValidationError):
+            TechLeadContract(**payload)
+
+    def test_topology_node_round_trips_fields(self) -> None:
+        node = TopologyNode(
+            file_path="src/geometry/shapes.py",
+            exports=["Circle"],
+            depends_on=["src/math_utils/validation.py:validate_positive"],
+        )
+        self.assertEqual(node.file_path, "src/geometry/shapes.py")
+        self.assertEqual(node.exports, ["Circle"])
+        self.assertEqual(node.depends_on, ["src/math_utils/validation.py:validate_positive"])
 
     def test_review_report_requires_explicit_approval_flags(self) -> None:
         # Arrange / Act

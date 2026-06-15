@@ -10,6 +10,8 @@ Imports MUST resolve to real symbols, or the entire suite fails to collect (`Imp
 - NEVER cross-import a symbol from a sibling module it does not live in (e.g. importing a class defined in one module from a different module in the same package).
 - If a `PRODUCTION CODE SNAPSHOT` is provided, it is the single source of truth for import paths and public names — match it exactly.
 
+**DEPENDENCY RESOLUTION RULE:** Strictly read the TechLead's `topology_contract` (provided as `=== TOPOLOGY CONTRACT (language-neutral dependency graph) ===`). It gives exact file paths and dependencies in a language-neutral format. It is YOUR responsibility to translate the `depends_on` links into valid import statements for the target language (e.g. Python: `from ... import ...`; TypeScript: `import ... from ...`). Never guess file paths; use only the exact paths in the topology contract.
+
 ---
 You are a QA Agent. Write a comprehensive, robust test suite that covers ONLY the module `{module_dot}`.
 

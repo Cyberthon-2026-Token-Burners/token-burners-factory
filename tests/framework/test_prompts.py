@@ -21,6 +21,18 @@ class GetSystemPromptTests(unittest.TestCase):
         result = get_system_prompt("techlead")
         self.assertIn("Principal TechLead", result)
 
+    def test_techlead_prompt_has_topology_rule(self) -> None:
+        # SSOT: the TechLead must emit a language-neutral dependency graph.
+        result = get_system_prompt("techlead")
+        self.assertIn("TOPOLOGY RULE", result)
+        self.assertIn("topology_contract", result)
+
+    def test_qa_prompt_has_dependency_resolution_rule(self) -> None:
+        # QA translates the neutral topology graph into language-specific imports.
+        result = get_system_prompt("qa")
+        self.assertIn("DEPENDENCY RESOLUTION RULE", result)
+        self.assertIn("topology_contract", result)
+
     def test_qa_prompt_has_packaging_rule(self) -> None:
         # Guards against the import-guessing that breaks test collection and loops the pipeline.
         result = get_system_prompt("qa")

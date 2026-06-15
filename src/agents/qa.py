@@ -33,6 +33,14 @@ async def run_qa_agent_node(ctx: GlobalPipelineContext, error_trace: str = "") -
         + "\n".join(ctx.contract.files_to_modify)
     )
 
+    # Language-neutral dependency graph (SSOT). QA translates depends_on links into real imports.
+    if ctx.contract.topology_contract:
+        topo = "\n".join(
+            f"{n.file_path} | exports: {', '.join(n.exports)} | depends_on: {', '.join(n.depends_on)}"
+            for n in ctx.contract.topology_contract
+        )
+        qa_system_prompt += "\n\n=== TOPOLOGY CONTRACT (language-neutral dependency graph) ===\n" + topo
+
     # When production code already exists (any regeneration after the Developer has run) it is the
     # source of truth for symbol locations — this is what stops the import guessing that breaks
     # test collection and triggers the QA↔Developer loop.

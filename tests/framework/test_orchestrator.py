@@ -875,6 +875,7 @@ class EnforceDocumentationGuardrailTests(unittest.IsolatedAsyncioTestCase):
         ctx.contract = TechLeadContract(
             files_to_modify=files_to_modify, instruction="i", function_signatures="s",
             strict_type_validation_rules="r", techlead_reasoning="why",
+            topology_contract=[{"file_path": f, "exports": [], "depends_on": []} for f in files_to_modify],
         )
         ctx.production_code_snapshot = {k: "" for k in snapshot_keys}
         return ctx
@@ -961,6 +962,7 @@ class DocumentationGuardrailLoopTests(unittest.IsolatedAsyncioTestCase):
         ctx.contract = TechLeadContract(
             files_to_modify=["src/core/models.py"], instruction="noop", function_signatures="noop",
             strict_type_validation_rules="noop", techlead_reasoning="noop",
+            topology_contract=[{"file_path": "src/core/models.py", "exports": [], "depends_on": []}],
         )
         return ctx
 
@@ -1126,6 +1128,7 @@ class TestCollectionTriageRoutingTests(unittest.IsolatedAsyncioTestCase):
         ctx.contract = TechLeadContract(
             files_to_modify=["src/calc.py"], instruction="noop", function_signatures="noop",
             strict_type_validation_rules="noop", techlead_reasoning="noop",
+            topology_contract=[{"file_path": "src/calc.py", "exports": [], "depends_on": []}],
         )
         return ctx
 
