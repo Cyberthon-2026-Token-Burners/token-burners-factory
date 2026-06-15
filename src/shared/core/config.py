@@ -33,6 +33,12 @@ AVAILABLE_GEMINI_MODELS = (
 TECHLEAD_MODEL = GEMINI_3_1_FLASH_LITE
 QA_MODEL = GEMINI_3_1_FLASH_LITE
 REVIEWER_MODEL = GEMINI_3_1_FLASH_LITE
+# Nexus Control Plane roles (Product Owner / Solution Architect / TPM). Defaulted to the
+# cheap flash-lite tier to match the worker roles and keep the PoC inexpensive; SA/TPM can be
+# bumped to GEMINI_2_5_PRO for deeper architectural reasoning.
+PO_MODEL = GEMINI_3_1_FLASH_LITE
+SA_MODEL = GEMINI_3_1_FLASH_LITE
+TPM_MODEL = GEMINI_3_1_FLASH_LITE
 # Available Claude models for the Developer agent (Claude CLI). The CLI --model accepts a tier
 # ALIAS (always resolves to the latest of that tier) or a pinned full id for reproducibility.
 # Ordered most → least capable / expensive:
@@ -73,9 +79,13 @@ PIPELINE_BUDGET_TOKENS = int(os.environ.get("PIPELINE_BUDGET_TOKENS", "1000000")
 
 # Role -> (model, human-readable agent name) for structured (instructor) LLM calls.
 ROLE_MODELS = {
-    "techlead": (TECHLEAD_MODEL, "TechLead Agent"),
+    "techlead": (TECHLEAD_MODEL, "Technical Lead Agent"),
     "qa":        (QA_MODEL,        "QA Agent"),
     "reviewer":  (REVIEWER_MODEL,  "Reviewer Agent"),
+    # Nexus Control Plane roles.
+    "po":      (PO_MODEL,      "Product Owner Agent"),
+    "sa":      (SA_MODEL,      "Solution Architect Agent"),
+    "tpm":     (TPM_MODEL,      "Technical Project Manager Agent"),
 }
 
 # ==========================================

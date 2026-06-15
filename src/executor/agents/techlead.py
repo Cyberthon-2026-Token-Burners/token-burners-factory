@@ -9,7 +9,7 @@ from src.shared.utils.llm import run_structured_llm
 # ==========================================
 async def run_techlead_node(ctx: GlobalPipelineContext) -> None:
     model_name = TECHLEAD_MODEL
-    log.info(f"🔷 [ROLE] TechLead Agent | [MODEL] {model_name}")
+    log.info(f"🔷 [ROLE] Technical Lead Agent | [MODEL] {model_name}")
 
     code_prefix = ctx.workspace_paths.code_dir.relative_to(ctx.workspace_paths.repo_dir).as_posix()
 

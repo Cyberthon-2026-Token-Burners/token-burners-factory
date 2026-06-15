@@ -35,6 +35,7 @@ class RunConfig:
     src_dir: str = "src/"
     tests_dir: str = "tests/"
     push: bool = False
+    idea: str | None = None  # Nexus Control Plane PoC: raw idea string (bypasses the executor entirely).
 
 
 def parse_args() -> RunConfig:
@@ -52,8 +53,20 @@ def parse_args() -> RunConfig:
     parser.add_argument("--resume", type=Path, help="Path to a checkpoint JSON file.")
     parser.add_argument("--reset-attempts", action="store_true", help="Reset circuit breaker counter on resume.")
     parser.add_argument("--push", action="store_true", help="Push the feature branch to origin after the atomic success commit.")
+    parser.add_argument("--idea", help="Raw idea to feed the Nexus pipeline (Control Plane PoC; does not run the executor).")
 
     args = parser.parse_args()
+
+    # Nexus Control Plane PoC: when an idea is given, short-circuit before the executor's
+    # repo/ticket requirements — the control plane neither clones a repo nor runs the worker plane.
+    if args.idea:
+        return RunConfig(
+            description=None,
+            base_branch=args.base_branch,
+            resume=None,
+            reset_attempts=False,
+            idea=args.idea,
+        )
 
     if args.resume:
         return RunConfig(
@@ -508,8 +521,18 @@ def _abort_with_incident(ctx: GlobalPipelineContext, header: str) -> NoReturn:
 # MAIN ORCHESTRATOR
 # ==========================================
 async def main():
-    check_environment()
     cfg = parse_args()
+
+    # Nexus Control Plane PoC: an --idea run never touches the worker plane (no clone, no git
+    # bootstrap, no executor nodes). Branch BEFORE check_environment so the lightweight control
+    # plane isn't blocked by the executor's docker/claude/bandit requirements.
+    if cfg.idea:
+        from src.nexus.nexus_runner import run_nexus
+        out = await run_nexus(cfg.idea)
+        log.info(f"✅ Nexus PoC complete. Tickets generated at: {out.resolve()}")
+        return
+
+    check_environment()
 
     # Bind the run id ONCE, up front (before any logging), so the audit trail is anchored to the
     # correct run dir from the very first line — fixing the late-binding bug. On resume we reuse
