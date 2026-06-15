@@ -79,7 +79,8 @@ async-agentic-sdlc/
 │   │   ├── 0009-hybrid-skill-routing.md                   # Hybrid Skill Routing (declarative frontmatter)
 │   │   ├── 0010-fast-fail-documentation-guardrail.md      # Fast-Fail Documentation Guardrail & Smart Triage
 │   │   ├── 0011-secure-sandbox-and-finops-telemetry.md    # Secure WSL Sandbox & Real-Time FinOps Circuit Breaker
-│   │   └── 0012-virtual-separation-monorepo-planes.md     # Virtual Separation: Control/Worker/Shared Planes
+│   │   ├── 0012-virtual-separation-monorepo-planes.md     # Virtual Separation: Control/Worker/Shared Planes
+│   │   └── 0013-structured-test-maintenance-ast-pruning.md # Structured Test Maintenance (AST-aware QA pruning)
 │   ├── docker-on-windows.md    # Active host runtime configuration
 │   └── setup.md                # Active environment configuration
 ├── main.py                     # Root CLI entrypoint: runs src/executor/runner.py:main()

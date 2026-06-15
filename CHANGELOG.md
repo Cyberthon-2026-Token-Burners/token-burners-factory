@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Each release maps to a completed SDLC iteration; the corresponding Architecture
 Decision Record (ADR) is linked from the version heading.
 
+## [v0.13.0] - 2026-06-16 — Structured Test Maintenance (AST-Aware Pruning) & CI Security-Gate Fix
+
+ADR: [0013-structured-test-maintenance-ast-pruning](./docs/adr/0013-structured-test-maintenance-ast-pruning.md)
+
+### Changed
+- QA agent moved from LLM whole-file test merging to **Structured Test Maintenance**. The `QATestSuite` schema (`src/shared/core/models.py`) now returns deltas — `new_imports`, `new_test_code`, and `obsolete_test_names` — instead of a single `test_code` blob; the QA system prompt (`prompts/system/qa.md`) gains a `STRUCTURED TEST MAINTENANCE` rule (never re-emit the whole file).
+- Test files are now maintained by a deterministic `ast`-based engine (`_assemble_suite` in `src/executor/agents/qa.py`): it parses the existing file, prunes top-level test classes/functions named in `obsolete_test_names`, dedupes imports, relocates any `if __name__ == "__main__"` guard to the end, and appends the new cases — always rewriting the **original** test path with explicit `utf-8` I/O.
+
+### Fixed
+- QA "State Cascade Destruction": regenerating tests for an existing module no longer blindly overwrites and destroys prior test cases. Preservation is now guaranteed by the engine rather than the model. This also removes the interim `_v2.py`/`_v3.py` "zombie file" fallback (no more accumulating duplicate test files).
+
+### Security
+- CI security gate (`bandit -r src/`) restored to green. The catalog/pricing-matrix lockstep `assert` in `src/shared/core/config.py` (B101 — stripped under `python -O`) was converted to an explicit `if … raise RuntimeError`, keeping the invariant unconditional. The pre-existing fixed-argv `git` subprocess calls in `src/executor/runner.py` — exposed to the scan only after the v0.12.0 refactor moved `orchestrator.py` into `src/` — were annotated `# nosec B404/B603/B607` consistent with the existing convention.
+
 ## [v0.12.0] - 2026-06-15 — Virtual Separation: Control / Worker / Shared Plane Topology (Monorepo PoC)
 
 ADR: [0012-virtual-separation-monorepo-planes](./docs/adr/0012-virtual-separation-monorepo-planes.md)
