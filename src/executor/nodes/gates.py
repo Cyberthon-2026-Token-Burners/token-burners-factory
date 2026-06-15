@@ -5,16 +5,16 @@ from pathlib import Path
 # subprocess: only trusted, fixed-argument tool invocations (docker/bandit), never shell=True.
 import subprocess  # nosec B404
 
-from src.core.observability import log
-from src.utils.subprocess_helpers import stream_subprocess_output
-from src.utils.git_helpers import get_git_root
+from src.shared.core.observability import log
+from src.shared.utils.subprocess_helpers import stream_subprocess_output
+from src.shared.utils.git_helpers import get_git_root
 
 # ==========================================
 # PARALLEL RUNTIME GATES (Subprocess execution)
 # ==========================================
 async def run_qa_unit_tests(code_dir: str, tests_dir: str) -> tuple[bool, list[str]]:
     # Mount the WHOLE cloned repo read-write at a fixed container path so absolute imports
-    # (e.g. `from src.utils.x import y`) resolve from the repo root, and discover the agent-generated
+    # (e.g. `from src.shared.utils.x import y`) resolve from the repo root, and discover the agent-generated
     # test tree at its dynamic location. The git root (not a guessed parent) anchors the mount.
     repo_root = await get_git_root(code_dir)
     tests_rel = Path(tests_dir).resolve().relative_to(Path(repo_root).resolve()).as_posix()

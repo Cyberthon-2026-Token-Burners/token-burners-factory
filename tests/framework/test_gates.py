@@ -9,15 +9,15 @@ from tempfile import TemporaryDirectory
 from unittest import mock
 from unittest.mock import AsyncMock, MagicMock
 
-from src.nodes.gates import run_qa_unit_tests
+from src.executor.nodes.gates import run_qa_unit_tests
 
 
 class RunQaUnitTestsDockerCommandTests(unittest.IsolatedAsyncioTestCase):
     """The QA gate must mount the whole clone and target dynamic paths — no artifacts hardcode."""
 
-    @mock.patch("src.nodes.gates.stream_subprocess_output", new_callable=AsyncMock)
-    @mock.patch("src.nodes.gates.asyncio.create_subprocess_exec", new_callable=AsyncMock)
-    @mock.patch("src.nodes.gates.get_git_root", new_callable=AsyncMock)
+    @mock.patch("src.executor.nodes.gates.stream_subprocess_output", new_callable=AsyncMock)
+    @mock.patch("src.executor.nodes.gates.asyncio.create_subprocess_exec", new_callable=AsyncMock)
+    @mock.patch("src.executor.nodes.gates.get_git_root", new_callable=AsyncMock)
     async def test_mounts_repo_root_and_targets_dynamic_tests_dir(
         self, mock_root: AsyncMock, mock_exec: AsyncMock, _mock_stream: AsyncMock
     ) -> None:
@@ -52,9 +52,9 @@ class RunQaUnitTestsDockerCommandTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("PYTHONPATH=/workspace/repo", bash_cmd)
             self.assertIn("discover -s /workspace/repo/tests", bash_cmd)
 
-    @mock.patch("src.nodes.gates.stream_subprocess_output", new_callable=AsyncMock)
-    @mock.patch("src.nodes.gates.asyncio.create_subprocess_exec", new_callable=AsyncMock)
-    @mock.patch("src.nodes.gates.get_git_root", new_callable=AsyncMock)
+    @mock.patch("src.executor.nodes.gates.stream_subprocess_output", new_callable=AsyncMock)
+    @mock.patch("src.executor.nodes.gates.asyncio.create_subprocess_exec", new_callable=AsyncMock)
+    @mock.patch("src.executor.nodes.gates.get_git_root", new_callable=AsyncMock)
     async def test_nonzero_exit_reports_failure(
         self, mock_root: AsyncMock, mock_exec: AsyncMock, _mock_stream: AsyncMock
     ) -> None:

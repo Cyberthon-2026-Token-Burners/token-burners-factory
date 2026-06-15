@@ -12,8 +12,8 @@ from tempfile import TemporaryDirectory, mkdtemp
 from types import SimpleNamespace
 from logging.handlers import RotatingFileHandler
 
-from src.core.models import GlobalPipelineContext
-from src.core.observability import reconfigure_logging, log_token_usage
+from src.shared.core.models import GlobalPipelineContext
+from src.shared.core.observability import reconfigure_logging, log_token_usage
 
 
 class ReconfigureLoggingTests(unittest.TestCase):

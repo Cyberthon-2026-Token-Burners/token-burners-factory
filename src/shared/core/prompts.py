@@ -2,9 +2,9 @@ import re
 from pathlib import Path
 from functools import lru_cache
 
-from src.core.models import GlobalPipelineContext
+from src.shared.core.models import GlobalPipelineContext
 
-_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 _SYSTEM_DIR = _REPO_ROOT / "prompts" / "system"
 _SKILLS_DIR = _REPO_ROOT / "prompts" / "skills"
 
@@ -108,8 +108,8 @@ async def fallback_semantic_search(pr_description: str, file_body: str) -> bool:
     Reuses the existing structured-LLM infra (no embeddings SDK). Returns True when
     the model scores relevance above threshold; degrades to False on any error.
     """
-    from src.utils.llm import run_structured_llm
-    from src.core.models import SkillRelevance
+    from src.shared.utils.llm import run_structured_llm
+    from src.shared.core.models import SkillRelevance
 
     prompt = (
         f"Evaluate if the following skill/rule is required for this PR.\n"

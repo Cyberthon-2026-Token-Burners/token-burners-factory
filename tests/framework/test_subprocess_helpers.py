@@ -10,8 +10,8 @@ from decimal import Decimal
 from unittest import mock
 from unittest.mock import AsyncMock, MagicMock
 
-from src.utils import subprocess_helpers
-from src.utils.subprocess_helpers import (
+from src.shared.utils import subprocess_helpers
+from src.shared.utils.subprocess_helpers import (
     _assert_within_root,
     parse_claude_usage,
     run_claude_cli,
@@ -79,7 +79,7 @@ class AssertWithinRootSecurityTests(_MutedLogMixin, unittest.TestCase):
 class RunClaudeCliTests(_MutedLogMixin, unittest.IsolatedAsyncioTestCase):
     """The launcher validates the sandbox boundary before spawning anything."""
 
-    @mock.patch("src.utils.subprocess_helpers.asyncio.create_subprocess_exec", new_callable=AsyncMock)
+    @mock.patch("src.shared.utils.subprocess_helpers.asyncio.create_subprocess_exec", new_callable=AsyncMock)
     async def test_out_of_sandbox_target_blocks_before_spawn(self, mock_exec: AsyncMock) -> None:
         # Arrange
         forged = os.path.abspath("/srv/sandbox/code-evil/x.py")
@@ -88,7 +88,7 @@ class RunClaudeCliTests(_MutedLogMixin, unittest.IsolatedAsyncioTestCase):
             await run_claude_cli("prompt", [forged], _ROOT)
         mock_exec.assert_not_called()
 
-    @mock.patch("src.utils.subprocess_helpers.asyncio.create_subprocess_exec", new_callable=AsyncMock)
+    @mock.patch("src.shared.utils.subprocess_helpers.asyncio.create_subprocess_exec", new_callable=AsyncMock)
     async def test_builds_expected_command_for_valid_target(self, mock_exec: AsyncMock) -> None:
         # Arrange
         target = os.path.join(_ROOT, "feature.py")
@@ -110,7 +110,7 @@ class RunClaudeCliTests(_MutedLogMixin, unittest.IsolatedAsyncioTestCase):
              "--dangerously-skip-permissions", target),
         )
 
-    @mock.patch("src.utils.subprocess_helpers.asyncio.create_subprocess_exec", new_callable=AsyncMock)
+    @mock.patch("src.shared.utils.subprocess_helpers.asyncio.create_subprocess_exec", new_callable=AsyncMock)
     async def test_forwards_model_and_effort_flags(self, mock_exec: AsyncMock) -> None:
         # Arrange
         target = os.path.join(_ROOT, "feature.py")

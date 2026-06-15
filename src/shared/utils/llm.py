@@ -1,8 +1,8 @@
 import asyncio
 from typing import Any, Type
 
-from src.core.config import instructor_client, ROLE_MODELS
-from src.utils.api_retry import with_api_retry
+from src.shared.core.config import instructor_client, ROLE_MODELS
+from src.shared.utils.api_retry import with_api_retry
 
 
 async def run_structured_llm(

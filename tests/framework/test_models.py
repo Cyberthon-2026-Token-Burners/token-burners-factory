@@ -10,7 +10,7 @@ from pathlib import Path
 from unittest import mock
 from pydantic import ValidationError
 
-from src.core.models import (
+from src.shared.core.models import (
     PipelineTelemetry,
     TechLeadContract,
     TopologyNode,

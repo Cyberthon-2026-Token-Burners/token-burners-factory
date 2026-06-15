@@ -2,12 +2,12 @@ import os
 import sys
 from pathlib import Path
 
-from src.core.observability import log, log_token_usage
-from src.core.config import QA_MODEL
-from src.core.models import QATestSuite, GlobalPipelineContext
-from src.core.prompts import get_system_prompt_sections, build_agent_context, generate_repo_map
-from src.utils.llm import run_structured_llm
-from src.utils.git_helpers import get_git_root, get_pipeline_snapshot_files
+from src.shared.core.observability import log, log_token_usage
+from src.shared.core.config import QA_MODEL
+from src.shared.core.models import QATestSuite, GlobalPipelineContext
+from src.shared.core.prompts import get_system_prompt_sections, build_agent_context, generate_repo_map
+from src.shared.utils.llm import run_structured_llm
+from src.shared.utils.git_helpers import get_git_root, get_pipeline_snapshot_files
 
 async def run_qa_agent_node(ctx: GlobalPipelineContext, error_trace: str = "") -> None:
     model_name = QA_MODEL

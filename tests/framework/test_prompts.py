@@ -3,7 +3,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import mock
 
-from src.core.prompts import (
+from src.shared.core.prompts import (
     get_system_prompt,
     get_system_prompt_sections,
     get_skill,
@@ -57,7 +57,7 @@ class GetSystemPromptTests(unittest.TestCase):
 
     def test_sections_raises_on_missing_separator(self) -> None:
         with mock.patch(
-            "src.core.prompts.get_system_prompt", return_value="no separator here"
+            "src.shared.core.prompts.get_system_prompt", return_value="no separator here"
         ):
             with self.assertRaises(ValueError) as ctx:
                 get_system_prompt_sections("qa")
@@ -65,7 +65,7 @@ class GetSystemPromptTests(unittest.TestCase):
 
     def test_sections_raises_on_empty_section(self) -> None:
         with mock.patch(
-            "src.core.prompts.get_system_prompt", return_value="system rules\n---\n   "
+            "src.shared.core.prompts.get_system_prompt", return_value="system rules\n---\n   "
         ):
             with self.assertRaises(ValueError):
                 get_system_prompt_sections("qa")
@@ -157,11 +157,11 @@ class PathResolutionTests(unittest.TestCase):
         get_system_prompt.cache_clear()
 
     def test_system_dir_exists(self) -> None:
-        from src.core.prompts import _SYSTEM_DIR
+        from src.shared.core.prompts import _SYSTEM_DIR
         self.assertTrue(_SYSTEM_DIR.is_dir(), f"{_SYSTEM_DIR} is not a directory")
 
     def test_skills_dir_exists(self) -> None:
-        from src.core.prompts import _SKILLS_DIR
+        from src.shared.core.prompts import _SKILLS_DIR
         self.assertTrue(_SKILLS_DIR.is_dir(), f"{_SKILLS_DIR} is not a directory")
 
 

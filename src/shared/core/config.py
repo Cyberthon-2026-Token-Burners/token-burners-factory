@@ -6,7 +6,7 @@ from decimal import Decimal
 from google import genai
 from google.genai.errors import ClientError
 
-from src.core.observability import log
+from src.shared.core.observability import log
 
 # ==========================================
 # MODEL ROUTING (single source of truth)

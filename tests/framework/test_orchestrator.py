@@ -9,11 +9,11 @@ from tempfile import TemporaryDirectory
 from unittest import mock
 from unittest.mock import AsyncMock
 
-# orchestrator imports src.core.config at module import time.
+# orchestrator imports src.shared.core.config at module import time.
 os.environ.setdefault("GEMINI_API_KEY", "test-key")
 
-import orchestrator
-from src.core.models import TechLeadContract, GlobalPipelineContext, ReviewReport, WorkspacePaths
+from src.executor import runner as orchestrator
+from src.shared.core.models import TechLeadContract, GlobalPipelineContext, ReviewReport, WorkspacePaths
 
 
 class ParseArgsResumeTests(unittest.TestCase):

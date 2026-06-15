@@ -87,7 +87,7 @@ def log_token_usage(ctx: Any, agent_name: str, raw_response: Any, model_name: st
             fresh_in = max(prompt_tokens - cached, 0)
             cost_usd = 0.0
             if model_name:
-                from src.core.config import estimate_gemini_cost_usd  # lazy: avoid config↔observability cycle
+                from src.shared.core.config import estimate_gemini_cost_usd  # lazy: avoid config↔observability cycle
                 cost_usd = estimate_gemini_cost_usd(model_name, usage)
             ctx.telemetry.record(
                 agent_name, fresh_in, out_tokens, cost_usd, provider="gemini",

@@ -9,15 +9,15 @@ from pathlib import Path
 from typing import NoReturn
 from dataclasses import dataclass
 
-from src.core.observability import log, reconfigure_logging
-from src.core.config import check_environment, PIPELINE_BUDGET_TOKENS, PIPELINE_BUDGET_USD
-from src.core.models import GlobalPipelineContext, WorkspacePaths, RUNS_BASE
-from src.utils.git_helpers import get_git_root, get_pipeline_snapshot_files
-from src.agents.techlead import run_techlead_node
-from src.agents.qa import run_qa_agent_node
-from src.agents.developer import run_developer_node
-from src.agents.reviewer import run_reviewer_node
-from src.nodes.gates import run_qa_unit_tests, run_security_scan
+from src.shared.core.observability import log, reconfigure_logging
+from src.shared.core.config import check_environment, PIPELINE_BUDGET_TOKENS, PIPELINE_BUDGET_USD
+from src.shared.core.models import GlobalPipelineContext, WorkspacePaths, RUNS_BASE
+from src.shared.utils.git_helpers import get_git_root, get_pipeline_snapshot_files
+from src.executor.agents.techlead import run_techlead_node
+from src.executor.agents.qa import run_qa_agent_node
+from src.executor.agents.developer import run_developer_node
+from src.executor.agents.reviewer import run_reviewer_node
+from src.executor.nodes.gates import run_qa_unit_tests, run_security_scan
 
 # ==========================================
 # CLI ARGUMENT PARSER

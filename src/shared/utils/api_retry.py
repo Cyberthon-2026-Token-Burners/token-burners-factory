@@ -5,8 +5,8 @@ from typing import TypeVar, Callable, Awaitable, Any
 
 from google.genai.errors import ClientError
 
-from src.core.config import handle_quota_error
-from src.core.observability import log
+from src.shared.core.config import handle_quota_error
+from src.shared.core.observability import log
 
 T = TypeVar("T")
 

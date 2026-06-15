@@ -7,8 +7,8 @@ OS-specific path/CRLF handling are all exercised — including the new git-ancho
 which performs a **real shallow clone** of a programmatically-created source repo. Only the
 model boundaries are mocked:
 
-* Gemini  -> ``src.utils.llm.instructor_client`` (structured output for techlead/qa/reviewer)
-* Claude  -> ``src.agents.developer.run_claude_cli`` (file mutation)
+* Gemini  -> ``src.shared.utils.llm.instructor_client`` (structured output for techlead/qa/reviewer)
+* Claude  -> ``src.executor.agents.developer.run_claude_cli`` (file mutation)
 * docker QA gate -> ``orchestrator.run_qa_unit_tests`` (docker cannot be assumed portable)
 
 The bandit SAST gate runs for real (pure-Python, portable). ``reconfigure_logging`` is stubbed
@@ -25,11 +25,11 @@ from types import SimpleNamespace
 from unittest import mock
 from unittest.mock import AsyncMock
 
-# orchestrator imports src.core.config at import time, which builds the genai client.
+# orchestrator imports src.shared.core.config at import time, which builds the genai client.
 os.environ.setdefault("GEMINI_API_KEY", "test-key")
 
-import orchestrator
-from src.core.models import (
+from src.executor import runner as orchestrator
+from src.shared.core.models import (
     TechLeadContract,
     QATestSuite,
     ReviewReport,
@@ -147,9 +147,9 @@ class PipelineEndToEndTests(unittest.IsolatedAsyncioTestCase):
                         src_dir="src/", tests_dir="tests/",
                     ),
                 ),
-                mock.patch("src.utils.llm.instructor_client", client),
+                mock.patch("src.shared.utils.llm.instructor_client", client),
                 mock.patch(
-                    "src.agents.developer.run_claude_cli",
+                    "src.executor.agents.developer.run_claude_cli",
                     new=AsyncMock(side_effect=_fake_claude_cli),
                 ),
                 mock.patch.object(
