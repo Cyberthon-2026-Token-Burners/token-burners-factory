@@ -13,6 +13,7 @@ You MUST copy the relevant technical stack, architectural constraints, data cont
 ## PER-TICKET STRUCTURE (the `description` field of every task)
 Each ticket's description MUST contain these sections, fully populated from the Blueprint:
 - **Objective:** one imperative sentence — what this task delivers.
+- **Environment:** every ticket MUST set its `environment_id` field to the exact platform id the Solution Architect selected in the Blueprint, copied verbatim. Do NOT invent or alter it — it MUST be one of the strictly supported platforms: {injected_supported_platforms_list}
 - **File Path(s):** exact path(s) relative to the repo root that this task creates or modifies.
 - **Tech Stack:** the exact libraries/runtime + pinned versions relevant to THIS task (copied from the Blueprint).
 - **Dependencies:** prior `TASK-XX` ids and any external packages required.

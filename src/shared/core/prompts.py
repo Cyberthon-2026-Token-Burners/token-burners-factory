@@ -19,6 +19,25 @@ def get_system_prompt(agent_name: str) -> str:
     return path.read_text(encoding="utf-8").strip()
 
 
+def _format_supported_platforms() -> str:
+    """Render the Paved-Road registry as a bullet list for prompt injection."""
+    from src.shared.core.environments import SUPPORTED_ENVIRONMENTS
+    return "\n".join(f"- {key}: {env['description']}" for key, env in SUPPORTED_ENVIRONMENTS.items())
+
+
+def get_system_prompt_with_platforms(agent_name: str) -> str:
+    """Load a system prompt and inject the supported-platform list into its
+    ``{injected_supported_platforms_list}`` placeholder.
+
+    Uses a brace-safe ``.replace()`` (not ``.format()``) — matching the
+    ``{strict_type_validation_rules}`` convention below — so the prompt body may
+    freely contain literal ``{}`` (e.g. fenced code) without crashing.
+    """
+    return get_system_prompt(agent_name).replace(
+        "{injected_supported_platforms_list}", _format_supported_platforms()
+    )
+
+
 def get_system_prompt_sections(agent_name: str, separator: str = PROMPT_SECTION_SEPARATOR) -> tuple[str, str]:
     """Loads a two-section system prompt (system rules `---` user template) and validates
     its structure. Raises ValueError if the separator is missing or a section is empty."""

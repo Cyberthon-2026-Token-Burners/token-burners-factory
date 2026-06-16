@@ -1,15 +1,27 @@
 # Nexus Control Plane — TPM agent. Breaks an Epic + Blueprint into atomic Developer task tickets.
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
+from src.shared.core.environments import SUPPORTED_ENVIRONMENTS
 from src.shared.core.observability import log
-from src.shared.core.prompts import get_system_prompt
+from src.shared.core.prompts import get_system_prompt_with_platforms
 from src.shared.utils.llm import run_structured_llm
 
 
 class TaskTicket(BaseModel):
     ticket_id: str = Field(description="Stable ticket id, e.g. TASK-01.")
     title: str = Field(description="Short imperative title for the task.")
+    environment_id: str = Field(description="The Paved-Road platform id this ticket executes on, copied verbatim from the Blueprint. MUST be one of the strictly supported environments.")
     description: str = Field(description="A 100% self-contained ticket body. Embed inline (copied from the Blueprint, never referenced): Objective, exact File Path(s), version-pinned Tech Stack, Dependencies, Architectural Constraints with numeric NFRs, Data Contracts/Signatures (names, inputs, outputs, exceptions), and Given/When/Then Acceptance Criteria. NEVER write 'as per the blueprint' or 'see epic' — an agent that never saw the Blueprint must implement this with zero further questions.")
+
+    @field_validator("environment_id")
+    @classmethod
+    def _validate_environment_id(cls, v: str) -> str:
+        if v not in SUPPORTED_ENVIRONMENTS:
+            raise ValueError(
+                f"Unsupported environment_id '{v}'. "
+                f"Choose one of: {sorted(SUPPORTED_ENVIRONMENTS)}."
+            )
+        return v
 
 
 class ProjectPlan(BaseModel):
@@ -28,7 +40,7 @@ async def run_tpm(epic_text: str, blueprint_text: str) -> list[dict]:
         "tpm",
         ProjectPlan,
         [
-            {"role": "system", "content": get_system_prompt("tpm")},
+            {"role": "system", "content": get_system_prompt_with_platforms("tpm")},
             {"role": "user", "content": user_content},
         ],
     )
