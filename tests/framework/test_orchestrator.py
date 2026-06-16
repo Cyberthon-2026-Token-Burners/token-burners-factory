@@ -138,6 +138,7 @@ class MainResumeSkipFlowTests(unittest.IsolatedAsyncioTestCase):
                 mock.patch.object(orchestrator, "check_environment"),
                 mock.patch.object(orchestrator, "reconfigure_logging"),
                 mock.patch.object(orchestrator, "build_production_snapshot"),
+                mock.patch.object(orchestrator, "run_build_gate", new=AsyncMock(return_value=(True, []))),
                 mock.patch.object(orchestrator, "parse_args", return_value=orchestrator.RunConfig(
                     description=None, base_branch="main", resume=Path("cp.json"), reset_attempts=False)),
                 mock.patch.object(GlobalPipelineContext, "load_checkpoint", return_value=ctx),
@@ -203,6 +204,7 @@ class MainCheckpointWritePointsTests(unittest.IsolatedAsyncioTestCase):
                 mock.patch.object(orchestrator, "check_environment"),
                 mock.patch.object(orchestrator, "reconfigure_logging"),
                 mock.patch.object(orchestrator, "build_production_snapshot"),
+                mock.patch.object(orchestrator, "run_build_gate", new=AsyncMock(return_value=(True, []))),
                 mock.patch.object(orchestrator, "parse_args", return_value=orchestrator.RunConfig(
                     description="fresh run", base_branch="main", resume=None, reset_attempts=False,
                     repo="dummy-repo", ticket="DEMO-1")),
@@ -278,6 +280,7 @@ class MainCheckpointWritePointsTests(unittest.IsolatedAsyncioTestCase):
                 mock.patch.object(orchestrator, "check_environment"),
                 mock.patch.object(orchestrator, "reconfigure_logging"),
                 mock.patch.object(orchestrator, "build_production_snapshot"),
+                mock.patch.object(orchestrator, "run_build_gate", new=AsyncMock(return_value=(True, []))),
                 mock.patch.object(orchestrator, "parse_args", return_value=orchestrator.RunConfig(
                     description=None, base_branch="main", resume=Path("cp.json"), reset_attempts=False)),
                 mock.patch.object(GlobalPipelineContext, "load_checkpoint", return_value=ctx),
@@ -343,6 +346,7 @@ class MainCheckpointWritePointsTests(unittest.IsolatedAsyncioTestCase):
                 mock.patch.object(orchestrator, "check_environment"),
                 mock.patch.object(orchestrator, "reconfigure_logging"),
                 mock.patch.object(orchestrator, "build_production_snapshot"),
+                mock.patch.object(orchestrator, "run_build_gate", new=AsyncMock(return_value=(True, []))),
                 mock.patch.object(orchestrator, "parse_args", return_value=orchestrator.RunConfig(
                     description="fresh run", base_branch="main", resume=None, reset_attempts=False,
                     repo="dummy-repo", ticket="DEMO-1")),
@@ -438,6 +442,7 @@ class ResumeFsmRecoveryTests(unittest.IsolatedAsyncioTestCase):
                 mock.patch.object(orchestrator, "check_environment"),
                 mock.patch.object(orchestrator, "reconfigure_logging"),
                 mock.patch.object(orchestrator, "build_production_snapshot"),
+                mock.patch.object(orchestrator, "run_build_gate", new=AsyncMock(return_value=(True, []))),
                 mock.patch.object(orchestrator, "parse_args", return_value=orchestrator.RunConfig(
                     description=None, base_branch="main", resume=Path("cp.json"), reset_attempts=False)),
                 mock.patch.object(GlobalPipelineContext, "load_checkpoint", return_value=ctx),
@@ -508,6 +513,7 @@ class ResumeFsmRecoveryTests(unittest.IsolatedAsyncioTestCase):
                 mock.patch.object(orchestrator, "check_environment"),
                 mock.patch.object(orchestrator, "reconfigure_logging"),
                 mock.patch.object(orchestrator, "build_production_snapshot"),
+                mock.patch.object(orchestrator, "run_build_gate", new=AsyncMock(return_value=(True, []))),
                 mock.patch.object(orchestrator, "parse_args", return_value=orchestrator.RunConfig(
                     description=None, base_branch="main", resume=Path("cp.json"), reset_attempts=False)),
                 mock.patch.object(GlobalPipelineContext, "load_checkpoint", return_value=ctx),
@@ -560,6 +566,7 @@ class ResumeFsmRecoveryTests(unittest.IsolatedAsyncioTestCase):
                 mock.patch.object(orchestrator, "check_environment"),
                 mock.patch.object(orchestrator, "reconfigure_logging"),
                 mock.patch.object(orchestrator, "build_production_snapshot"),
+                mock.patch.object(orchestrator, "run_build_gate", new=AsyncMock(return_value=(True, []))),
                 mock.patch.object(orchestrator, "parse_args", return_value=orchestrator.RunConfig(
                     description=None, base_branch="main", resume=Path("cp.json"), reset_attempts=False)),
                 mock.patch.object(GlobalPipelineContext, "load_checkpoint", return_value=ctx),
@@ -632,6 +639,7 @@ class ResumeFsmRecoveryTests(unittest.IsolatedAsyncioTestCase):
                 mock.patch.object(orchestrator, "check_environment"),
                 mock.patch.object(orchestrator, "reconfigure_logging"),
                 mock.patch.object(orchestrator, "build_production_snapshot"),
+                mock.patch.object(orchestrator, "run_build_gate", new=AsyncMock(return_value=(True, []))),
                 mock.patch.object(orchestrator, "parse_args", return_value=orchestrator.RunConfig(
                     description=None, base_branch="main", resume=Path("cp.json"), reset_attempts=True)),
                 mock.patch.object(GlobalPipelineContext, "load_checkpoint", return_value=ctx),
@@ -1017,6 +1025,7 @@ class DocumentationGuardrailLoopTests(unittest.IsolatedAsyncioTestCase):
                 mock.patch.object(orchestrator, "check_environment"),
                 mock.patch.object(orchestrator, "reconfigure_logging"),
                 mock.patch.object(orchestrator, "build_production_snapshot"),
+                mock.patch.object(orchestrator, "run_build_gate", new=AsyncMock(return_value=(True, []))),
                 mock.patch.object(orchestrator, "parse_args", return_value=orchestrator.RunConfig(
                     description=None, base_branch="main", resume=Path("cp.json"), reset_attempts=False)),
                 mock.patch.object(GlobalPipelineContext, "load_checkpoint", return_value=ctx),
@@ -1044,6 +1053,44 @@ class DocumentationGuardrailLoopTests(unittest.IsolatedAsyncioTestCase):
             # The reroute fed the guardrail diagnostic to the Developer as its error context.
             self.assertEqual(developer.await_args_list[1].args[1], "SYSTEM GUARDRAIL: add comment")
 
+    async def test_compile_gate_failure_reroutes_developer_for_free(self) -> None:
+        # Arrange — docs pass; the compile gate fails once then passes. The failure must fast-fail
+        # reroute the Developer (no functional budget) with the build errors, then proceed.
+        with TemporaryDirectory() as td:
+            ctx = self._resume_ctx(Path(td))
+
+            async def _approve(*_a, **_k) -> None:
+                ctx.review_report = ReviewReport(
+                    code_quality_analysis="ok", test_integrity_analysis="ok", log_verification_analysis="ok",
+                    code_quality_approved=True, test_integrity_approved=True, dev_diagnostic_payload="",
+                )
+
+            with (
+                mock.patch.object(orchestrator, "check_environment"),
+                mock.patch.object(orchestrator, "reconfigure_logging"),
+                mock.patch.object(orchestrator, "build_production_snapshot"),
+                mock.patch.object(orchestrator, "run_build_gate",
+                                  new=AsyncMock(side_effect=[(False, ["undefined: Foo"]), (True, [])])),
+                mock.patch.object(orchestrator, "parse_args", return_value=orchestrator.RunConfig(
+                    description=None, base_branch="main", resume=Path("cp.json"), reset_attempts=False)),
+                mock.patch.object(GlobalPipelineContext, "load_checkpoint", return_value=ctx),
+                mock.patch.object(orchestrator, "run_techlead_node", new_callable=AsyncMock),
+                mock.patch.object(orchestrator, "run_qa_agent_node", new_callable=AsyncMock),
+                mock.patch.object(orchestrator, "run_developer_node", new_callable=AsyncMock) as developer,
+                mock.patch.object(orchestrator, "enforce_documentation_guardrail", new=AsyncMock(return_value=None)),
+                mock.patch.object(orchestrator, "run_reviewer_node", new=AsyncMock(side_effect=_approve)) as reviewer,
+                mock.patch.object(orchestrator, "run_qa_unit_tests", new=AsyncMock(return_value=(True, []))),
+                mock.patch.object(orchestrator, "run_security_scan", new=AsyncMock(return_value=(True, []))),
+                mock.patch.object(orchestrator, "finalize_transaction", new_callable=AsyncMock),
+                mock.patch.object(orchestrator, "run_techwriter_node", new_callable=AsyncMock),
+            ):
+                await orchestrator.main()
+
+            self.assertEqual(developer.await_count, 2)        # initial + one free compile reroute
+            reviewer.assert_awaited_once()                    # Reviewer reached only after a clean build
+            self.assertEqual(ctx.current_attempt, 2)          # exactly ONE functional cycle consumed
+            self.assertIn("undefined: Foo", developer.await_args_list[1].args[1])  # build errors fed back
+
     async def test_cap_exhausted_triggers_hard_halt(self) -> None:
         # Arrange — guardrail keeps missing; after 2 free reroutes the run must hard-halt.
         with TemporaryDirectory() as td:
@@ -1053,6 +1100,7 @@ class DocumentationGuardrailLoopTests(unittest.IsolatedAsyncioTestCase):
                 mock.patch.object(orchestrator, "check_environment"),
                 mock.patch.object(orchestrator, "reconfigure_logging"),
                 mock.patch.object(orchestrator, "build_production_snapshot"),
+                mock.patch.object(orchestrator, "run_build_gate", new=AsyncMock(return_value=(True, []))),
                 mock.patch.object(orchestrator, "parse_args", return_value=orchestrator.RunConfig(
                     description=None, base_branch="main", resume=Path("cp.json"), reset_attempts=False)),
                 mock.patch.object(GlobalPipelineContext, "load_checkpoint", return_value=ctx),
@@ -1194,6 +1242,7 @@ class TestCollectionTriageRoutingTests(unittest.IsolatedAsyncioTestCase):
                 mock.patch.object(orchestrator, "check_environment"),
                 mock.patch.object(orchestrator, "reconfigure_logging"),
                 mock.patch.object(orchestrator, "build_production_snapshot"),
+                mock.patch.object(orchestrator, "run_build_gate", new=AsyncMock(return_value=(True, []))),
                 mock.patch.object(orchestrator, "finalize_transaction", new_callable=AsyncMock),
                 mock.patch.object(orchestrator, "run_techwriter_node", new_callable=AsyncMock),
                 mock.patch.object(orchestrator, "parse_args", return_value=orchestrator.RunConfig(

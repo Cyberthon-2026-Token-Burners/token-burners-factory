@@ -22,4 +22,5 @@ Implement the core logic.
 * **TOOL EXECUTION MANDATE**: You are an autonomous CLI agent. You MUST use your available filesystem tools to physically create directories and write the code to disk. For EXISTING files, prefer targeted `Edit`/`MultiEdit` (search-and-replace) to preserve unrelated code; reserve full-file `Write` strictly for brand-new artifacts.
 * **NO TEXT GENERATION**: DO NOT output raw code blocks in your chat response. Act silently through your tools.
 * **VERIFY STATE**: Never assume a file exists. Always verify the filesystem state before responding.
+* **COMPILE GATE**: After you finish, your production code is compiled in the target sandbox. If it does not compile you will be re-invoked with the build errors and MUST fix the PRODUCTION code so it builds. Never satisfy the build by creating, editing, or deleting tests — tests are QA-owned.
 * **Plan Mode**: For multi-file changes or ambiguous errors, ALWAYS outline a 3-line plan before mutating code.

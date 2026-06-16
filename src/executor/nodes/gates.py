@@ -30,6 +30,33 @@ async def run_qa_unit_tests(environment_id: str, repo_root: str) -> tuple[bool, 
     return returncode == 0, log_lines
 
 
+async def run_build_gate(environment_id: str, repo_root: str) -> tuple[bool, list[str]]:
+    """Compile gate run right after the Developer: restore deps (network ON) then compile/typecheck
+    (network OFF). BUILD/RUN ONLY — `build_cmd` never executes tests, so the Developer stays fenced
+    off from the QA-owned test files. Returns ``(ok, log_lines)``; a no-op pass when the env declares
+    no ``build_cmd``."""
+    spec = SUPPORTED_ENVIRONMENTS[environment_id]
+    build_cmd = spec.get("build_cmd")
+    if not build_cmd:
+        return True, []
+    log_lines: list[str] = []
+
+    setup_cmd = spec.get("setup_cmd")
+    if setup_cmd:
+        log.debug(f"Restoring dependencies for build [{environment_id}] (network ON): {setup_cmd}")
+        rc, out, err = await execute_in_sandbox(environment_id, setup_cmd, repo_root, network="bridge")
+        log_lines += (out + "\n" + err).strip().splitlines()
+        if rc != 0:
+            log.debug(f"Dependency restore (build) failed with exit code: {rc}")
+            return False, ["🚨 Dependency restore failed:"] + log_lines
+
+    log.debug(f"Executing build gate [{environment_id}] (network OFF): {build_cmd}")
+    returncode, stdout, stderr = await execute_in_sandbox(environment_id, build_cmd, repo_root, network="none")
+    log_lines += (stdout + "\n" + stderr).strip().splitlines()
+    log.debug(f"Build gate completed with exit code: {returncode}")
+    return returncode == 0, log_lines
+
+
 async def run_security_scan(environment_id: str, repo_root: str) -> tuple[bool, list[str]]:
     """Generic SAST gate: one Semgrep image scans every language. Network ON only to fetch rulesets —
     Semgrep analyses source, it does not execute the project code."""

@@ -20,7 +20,7 @@ from src.executor.agents.qa import run_qa_agent_node
 from src.executor.agents.developer import run_developer_node
 from src.executor.agents.reviewer import run_reviewer_node
 from src.executor.agents.techwriter import run_techwriter_node
-from src.executor.nodes.gates import run_qa_unit_tests, run_security_scan
+from src.executor.nodes.gates import run_qa_unit_tests, run_security_scan, run_build_gate
 
 # ==========================================
 # CLI ARGUMENT PARSER
@@ -663,16 +663,35 @@ async def main():
                 # Snapshot the real working-tree production delta (git-tracked, full content) for the Reviewer.
                 build_production_snapshot(ctx)
                 guardrail_msg = await enforce_documentation_guardrail(ctx)
-                if not guardrail_msg:
-                    break  # documented (or no new files) → proceed to gates/Reviewer
+                if guardrail_msg:
+                    if guardrail_retries == GUARDRAIL_MAX_REROUTES:
+                        guardrail_halt = True  # cap reached and still failing → hard halt below
+                        break
+                    log.warning(
+                        f"🔶 Doc guardrail: undocumented new file(s) — fast-fail reroute "
+                        f"{guardrail_retries + 1}/{GUARDRAIL_MAX_REROUTES} to Developer (no budget spent), Reviewer bypassed."
+                    )
+                    dev_feedback = guardrail_msg  # focused reroute: just the comment instruction
+                    continue
+
+                # Compile gate: give the Developer REAL build feedback before the expensive QA/Reviewer
+                # cycle. Build/run-only (never tests). A clean build → proceed; a failure fast-fail
+                # reroutes to the Developer (no functional-budget spent), exactly like the doc guardrail.
+                build_ok, build_lines = await run_build_gate(
+                    ctx.contract.environment_id, str(ctx.workspace_paths.repo_dir)
+                )
+                if build_ok:
+                    break  # documented + compiles → proceed to gates/Reviewer
                 if guardrail_retries == GUARDRAIL_MAX_REROUTES:
-                    guardrail_halt = True  # cap reached and still failing → hard halt below
+                    # Persistent compile failure: soft fall-through (NOT a hard halt). The QA gate +
+                    # Reviewer diagnose it with the full retry budget rather than aborting the run.
+                    log.warning("🔶 Compile gate still failing after in-loop reroutes — handing to the gates/Reviewer.")
                     break
                 log.warning(
-                    f"🔶 Doc guardrail: undocumented new file(s) — fast-fail reroute "
+                    f"🔶 Compile gate failed — fast-fail reroute "
                     f"{guardrail_retries + 1}/{GUARDRAIL_MAX_REROUTES} to Developer (no budget spent), Reviewer bypassed."
                 )
-                dev_feedback = guardrail_msg  # focused reroute: just the comment instruction
+                dev_feedback = "The production code failed to compile in the sandbox. Fix it.\n\n" + _cap_text("\n".join(build_lines))
 
             if guardrail_halt:
                 ctx.error_trace = guardrail_msg

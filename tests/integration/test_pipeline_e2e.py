@@ -163,6 +163,11 @@ class PipelineEndToEndTests(unittest.IsolatedAsyncioTestCase):
                 ),
                 mock.patch.object(
                     orchestrator,
+                    "run_build_gate",
+                    new=AsyncMock(return_value=(True, [])),
+                ),
+                mock.patch.object(
+                    orchestrator,
                     "run_qa_unit_tests",
                     new=AsyncMock(return_value=(True, [])),
                 ),

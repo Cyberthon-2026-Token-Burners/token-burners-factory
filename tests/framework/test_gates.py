@@ -8,13 +8,14 @@ import unittest
 from unittest import mock
 from unittest.mock import AsyncMock, call
 
-from src.executor.nodes.gates import run_qa_unit_tests, run_security_scan
+from src.executor.nodes.gates import run_qa_unit_tests, run_security_scan, run_build_gate
 from src.shared.core.environments import SUPPORTED_ENVIRONMENTS, SAST_IMAGE, SAST_CMD
 
 _ENV = "python-3.12-core"
 _REPO = "/abs/repo/root"
 _SETUP = SUPPORTED_ENVIRONMENTS[_ENV]["setup_cmd"]
 _TEST = SUPPORTED_ENVIRONMENTS[_ENV]["test_cmd"]
+_BUILD = SUPPORTED_ENVIRONMENTS[_ENV]["build_cmd"]
 
 
 class RunQaUnitTestsTests(unittest.IsolatedAsyncioTestCase):
@@ -52,6 +53,40 @@ class RunQaUnitTestsTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertFalse(ok)
         self.assertEqual(log_lines, ["out line", "err line"])
+
+
+class RunBuildGateTests(unittest.IsolatedAsyncioTestCase):
+    """The compile gate restores deps (network ON) then builds (network OFF) — build/run only."""
+
+    @mock.patch("src.executor.nodes.gates.execute_in_sandbox", new_callable=AsyncMock)
+    async def test_restore_then_build_with_network_phasing(self, mock_sandbox: AsyncMock) -> None:
+        mock_sandbox.side_effect = [(0, "restored", ""), (0, "build ok", "")]
+
+        ok, log_lines = await run_build_gate(environment_id=_ENV, repo_root=_REPO)
+
+        self.assertTrue(ok)
+        self.assertEqual(mock_sandbox.await_args_list, [
+            call(_ENV, _SETUP, _REPO, network="bridge"),
+            call(_ENV, _BUILD, _REPO, network="none"),
+        ])
+
+    @mock.patch("src.executor.nodes.gates.execute_in_sandbox", new_callable=AsyncMock)
+    async def test_nonzero_build_exit_reports_failure(self, mock_sandbox: AsyncMock) -> None:
+        mock_sandbox.side_effect = [(0, "", ""), (1, "undefined: Foo", "")]
+
+        ok, log_lines = await run_build_gate(environment_id=_ENV, repo_root=_REPO)
+
+        self.assertFalse(ok)
+        self.assertIn("undefined: Foo", log_lines)
+
+    @mock.patch("src.executor.nodes.gates.execute_in_sandbox", new_callable=AsyncMock)
+    async def test_restore_failure_short_circuits_before_build(self, mock_sandbox: AsyncMock) -> None:
+        mock_sandbox.return_value = (1, "deps error", "")
+
+        ok, log_lines = await run_build_gate(environment_id=_ENV, repo_root=_REPO)
+
+        self.assertFalse(ok)
+        mock_sandbox.assert_awaited_once_with(_ENV, _SETUP, _REPO, network="bridge")  # build never reached
 
 
 class RunSecurityScanTests(unittest.IsolatedAsyncioTestCase):

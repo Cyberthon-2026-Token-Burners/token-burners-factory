@@ -7,13 +7,15 @@
 #   image        custom sandbox image built by scripts/build_sandbox_images.sh — carries the test
 #                runner + writable HOME/cache (stock images lack pytest etc. and EPERM on /.cache).
 #   sandbox_env  env vars injected into the container so the non-root --user run has writable caches.
-#   setup_cmd    dependency restore, run in a NETWORK-ON phase before the network-OFF test phase.
+#   setup_cmd    dependency restore, run in a NETWORK-ON phase before the network-OFF build/test.
+#   build_cmd    compile/typecheck only (NEVER runs tests) — the post-Developer compile gate.
 #   test_cmd     the functional-test command (network-OFF).
 # SAST is generic across all stacks — one Semgrep image (SAST_IMAGE/SAST_CMD), never per-language.
 
 SUPPORTED_ENVIRONMENTS = {
     "python-3.12-core": {
         "image": "sdlc-sandbox/python:latest",
+        "build_cmd": "python -m compileall -q .",
         "test_cmd": "pytest",
         "setup_cmd": "pip install -r requirements.txt 2>/dev/null || true",
         "sandbox_env": {"HOME": "/tmp", "XDG_CACHE_HOME": "/tmp/.cache", "PYTHONDONTWRITEBYTECODE": "1"},
@@ -22,6 +24,7 @@ SUPPORTED_ENVIRONMENTS = {
     },
     "go-1.23-cli": {
         "image": "sdlc-sandbox/go:latest",
+        "build_cmd": "go build ./...",
         "test_cmd": "go test ./...",
         "setup_cmd": "go mod download",
         "sandbox_env": {"HOME": "/tmp", "GOCACHE": "/tmp/.cache/go-build", "GOPATH": "/tmp/go", "GOMODCACHE": "/tmp/go/pkg/mod"},
@@ -30,6 +33,7 @@ SUPPORTED_ENVIRONMENTS = {
     },
     "node-20-web": {
         "image": "sdlc-sandbox/node:latest",
+        "build_cmd": "npm run build --if-present",
         "test_cmd": "npm test",
         "setup_cmd": "npm ci || npm install",
         "sandbox_env": {"HOME": "/tmp", "npm_config_cache": "/tmp/.npm"},
@@ -38,6 +42,7 @@ SUPPORTED_ENVIRONMENTS = {
     },
     "dotnet-10-sdk": {
         "image": "sdlc-sandbox/dotnet:latest",
+        "build_cmd": "dotnet build",
         "test_cmd": "dotnet test",
         "setup_cmd": "dotnet restore",
         "sandbox_env": {"HOME": "/tmp", "DOTNET_CLI_HOME": "/tmp", "NUGET_PACKAGES": "/tmp/nuget", "XDG_DATA_HOME": "/tmp/.local"},
