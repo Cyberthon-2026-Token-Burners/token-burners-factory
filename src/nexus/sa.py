@@ -8,7 +8,7 @@ from src.shared.utils.llm import run_structured_llm
 
 class Blueprint(BaseModel):
     """Structured wrapper carrying the architect's Markdown Blueprint."""
-    markdown: str = Field(description="Technical Blueprint as Markdown: tech stack, core libraries, folder structure.")
+    markdown: str = Field(description="Technical Blueprint as Markdown: version-pinned tech stack, hard Non-Functional Requirements with numeric limits, exact File Topology tree, and core Data Contracts & Interfaces (inputs, outputs, exceptions). Every constraint a discrete, quotable bullet. Zero ambiguity.")
 
 
 async def run_sa(epic_text: str) -> str:

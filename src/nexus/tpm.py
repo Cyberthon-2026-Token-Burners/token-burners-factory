@@ -9,7 +9,7 @@ from src.shared.utils.llm import run_structured_llm
 class TaskTicket(BaseModel):
     ticket_id: str = Field(description="Stable ticket id, e.g. TASK-01.")
     title: str = Field(description="Short imperative title for the task.")
-    description: str = Field(description="Specific technical instructions grounded in the Blueprint architecture.")
+    description: str = Field(description="A 100% self-contained ticket body. Embed inline (copied from the Blueprint, never referenced): Objective, exact File Path(s), version-pinned Tech Stack, Dependencies, Architectural Constraints with numeric NFRs, Data Contracts/Signatures (names, inputs, outputs, exceptions), and Given/When/Then Acceptance Criteria. NEVER write 'as per the blueprint' or 'see epic' — an agent that never saw the Blueprint must implement this with zero further questions.")
 
 
 class ProjectPlan(BaseModel):

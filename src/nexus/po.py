@@ -8,7 +8,7 @@ from src.shared.utils.llm import run_structured_llm
 
 class EpicDocument(BaseModel):
     """Structured wrapper so the markdown Epic comes back through the (structured-only) LLM utility."""
-    markdown: str = Field(description="The full Epic as Markdown: Title, Goal, and 3-5 User Stories.")
+    markdown: str = Field(description="The full Epic as Markdown: Title, Goal, measurable Success Metrics, and 3-5 User Stories. Every story carries explicit Given/When/Then acceptance criteria, in/out-of-scope boundaries, edge cases, and numeric success metrics. No marketing speak.")
 
 
 async def run_po(raw_idea: str) -> str:
