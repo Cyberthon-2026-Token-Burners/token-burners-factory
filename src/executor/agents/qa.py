@@ -75,9 +75,10 @@ def _assemble_suite(existing_source: str, suite: QATestSuite) -> str:
     new_imports = _strip_fences(suite.new_imports)
     new_test_code = _strip_fences(suite.new_test_code)
     obsolete = set(suite.obsolete_test_names)
+    overwrite = getattr(suite, "overwrite_existing", False)
 
     pruned, main_guard = "", ""
-    if existing_source.strip():
+    if existing_source.strip() and not overwrite:
         try:
             tree = ast.parse(existing_source)
         except SyntaxError:
@@ -90,12 +91,23 @@ def _assemble_suite(existing_source: str, suite: QATestSuite) -> str:
         guard_nodes = [n for n in tree.body if _is_main_guard(n)]
         if guard_nodes:
             main_guard = "\n\n\n".join(ast.unparse(n) for n in guard_nodes)
-        # Drop obsolete top-level test defs and the guard (re-appended last).
-        tree.body = [
-            n for n in tree.body
-            if not _is_main_guard(n)
-            and not (isinstance(n, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)) and n.name in obsolete)
-        ]
+        # Drop obsolete top-level test defs, stale import aliases, and the guard (re-appended last).
+        new_body = []
+        for n in tree.body:
+            if _is_main_guard(n):
+                continue
+            if isinstance(n, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)) and n.name in obsolete:
+                continue
+            if isinstance(n, ast.Import):
+                n.names = [a for a in n.names if a.name not in obsolete and (a.asname or a.name) not in obsolete]
+                if not n.names:
+                    continue
+            if isinstance(n, ast.ImportFrom):
+                n.names = [a for a in n.names if a.name not in obsolete and (a.asname or a.name) not in obsolete]
+                if not n.names:
+                    continue
+            new_body.append(n)
+        tree.body = new_body
         pruned = ast.unparse(tree)
 
     # Strict import dedup: only keep new_imports lines absent from the pruned body.
@@ -112,6 +124,15 @@ def _assemble_suite(existing_source: str, suite: QATestSuite) -> str:
 async def run_qa_agent_node(ctx: GlobalPipelineContext, error_trace: str = "") -> None:
     model_name = QA_MODEL
     log.info(f"🔶 [ROLE] QA Agent | [MODEL] {model_name}")
+
+    # Structured zombie disposal: the Reviewer names obsolete test files directly (typed array),
+    # so we delete them deterministically here — no log parsing, no LLM round-trip. Reuses the
+    # sandbox-guarded disposer; safe to run before the per-module generation loop.
+    if ctx.review_report and ctx.review_report.zombie_tests_to_delete:
+        tests_dir = ctx.workspace_paths.tests_dir
+        zombies = set(ctx.review_report.zombie_tests_to_delete)
+        log.info(f"🧹 Reviewer-directed structured test pruning triggered for: {zombies}")
+        _dispose_zombie_tests(tests_dir, zombies)
 
     if not ctx.contract or not ctx.contract.files_to_modify:
         log.error("🚨 CRITICAL: Cannot generate tests without a locked TechLead Contract.")

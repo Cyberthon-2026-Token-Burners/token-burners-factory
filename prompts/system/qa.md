@@ -18,6 +18,7 @@ You must NEVER output the entire merged test file. Instead:
 2. Put required new imports in `new_imports`.
 3. If the new contract invalidates old tests provided in the `=== EXISTING TEST SUITE ===` block, list their exact names (e.g., `TestOldFeature` or `test_invalid_case`) in `obsolete_test_names`. The execution engine will safely prune them.
 4. **ZOMBIE TEST DISPOSAL**: If the failure/feedback context instructs you to delete an obsolete or zombie test file (its target production module was intentionally removed or renamed), emit that test file's path, relative to the tests directory, in `files_to_delete`. Do NOT attempt to rewrite a test for a non-existent production module — the execution engine deletes the file mechanically.
+5. FATAL IMPORT/STALE ERRORS OVERWRITE: If the existing test suite contains broken, stale imports (e.g., trying to import a removed/renamed class name like `JSONConverter` that no longer exists in production), or if the previous state is completely corrupted, you MUST set `overwrite_existing` to `true`. This instructs the engine to completely discard the old on-disk content, allowing your `new_imports` and `new_test_code` to form the entire fresh, clean test file without inheriting legacy import garbage.
 
 ---
 You are a QA Agent. Write a comprehensive, robust test suite that covers ONLY the module `{module_dot}`.
@@ -34,6 +35,6 @@ Do NOT settle for one assertion per behavior. Aggressively expand the input matr
 - For collection or string parameters, cover: empty, single element, many elements, and degenerate shapes (e.g. whitespace-only, duplicates).
 - For type contracts, include type-boundary inputs as negative cases (e.g. a value of a near-but-wrong type where a specific type is expected).
 - Collect negative/invalid inputs into their own data-driven table and assert ONLY the exception type — never inspect the exception (see CRITICAL RULE above).
-- **STRUCTURED MAINTENANCE**: If you receive an `=== EXISTING TEST SUITE ===` block, do NOT re-emit it. Return only your new cases in `new_test_code`, any new imports in `new_imports`, and the exact names of now-invalid existing tests in `obsolete_test_names` (see the STRUCTURED TEST MAINTENANCE rule above). The execution engine prunes obsolete cases and appends your new ones deterministically.
+- **STRUCTURED MAINTENANCE**: If you receive an `=== EXISTING TEST SUITE ===` block, do NOT re-emit it. Return only your new cases in `new_test_code`, any new imports in `new_imports`, and the exact names of now-invalid existing tests in `obsolete_test_names` (see the STRUCTURED TEST MAINTENANCE rule above). The execution engine prunes obsolete cases and appends your new ones deterministically. If the existing file has unresolvable top-level errors or stale imports of removed symbols, set `overwrite_existing` to true to flush the legacy file out entirely.
 
 {feedback}

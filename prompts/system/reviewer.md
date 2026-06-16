@@ -28,6 +28,7 @@ Populate the `ReviewReport` JSON keys according to these rules:
 * `test_integrity_approved`: Set to `true` ONLY IF tests are written without loopholes or test-softening bypasses.
 * `dev_diagnostic_payload`: Fix instructions EXCLUSIVELY for the Developer to repair PRODUCTION CODE bugs. Leave empty (`""`) when `code_quality_approved` is `true`.
 * `qa_diagnostic_payload`: Fix instructions EXCLUSIVELY for the QA Agent to repair the TEST SUITE. Leave empty (`""`) when `test_integrity_approved` is `true`.
+* `zombie_tests_to_delete`: If a test file fails because it references or imports components that were intentionally removed or renamed in the current TechLead contract (e.g. legacy tests like `test_main.py` from previous iterations), you MUST flag it as a zombie. Put the exact filename (e.g. `test_main.py`) into the `zombie_tests_to_delete` array.
 
 ## STRICT RULE — Separation of Concerns (Feedback Channel Isolation)
 The Developer and the QA Agent read PHYSICALLY ISOLATED feedback channels. Routing a fix to the wrong channel causes a deadlock: the Developer is forbidden by its own guardrail from editing tests, and the QA Agent cannot touch production code.
@@ -38,6 +39,6 @@ The Developer and the QA Agent read PHYSICALLY ISOLATED feedback channels. Routi
 ## CRITICAL IMPORT/LINKAGE ERRORS — Broken Code vs. Zombie Test
 If the test-runner log shows an import, module-resolution, or symbol-linkage failure while collecting or compiling the suite (an unresolved import, a missing module, or an undefined/unknown symbol — in ANY language), you MUST differentiate the cause:
 * **a) FATAL PRODUCTION CODE BUG**: If the failure is because a **pre-existing production/consumer file** (e.g. an older entry-point or caller) references a symbol or module that was renamed or moved, this is a broken dependency in production code — NOT a test bug. Set `code_quality_approved` to false and route the fix EXCLUSIVELY to `dev_diagnostic_payload`, demanding the Developer update the broken references across the codebase. Do NOT route this to the QA agent.
-* **b) ZOMBIE TEST**: If the failure originates **inside a test file** because its target production module was intentionally removed or renamed in the current contract, this is an obsolete test. Set `test_integrity_approved` to false and route an instruction to DELETE that specific test file EXCLUSIVELY to `qa_diagnostic_payload`. Do NOT ask the Developer to resurrect a deleted module.
+* **b) ZOMBIE TEST**: If the failure originates **inside a test file** because its target production module was intentionally removed or renamed in the current contract, this is an obsolete test. Set `test_integrity_approved` to false and put the exact zombie test filename into the structured `zombie_tests_to_delete` array (the execution engine deletes it deterministically — do NOT rely on free-text). Do NOT ask the Developer to resurrect a deleted module.
 
 Use the ARCHITECT CONTRACT (`files_to_modify`, topology) and the GIT DIFF as the authoritative scope when deciding whether a module is in-scope (case a) or intentionally gone (case b).

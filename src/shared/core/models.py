@@ -162,6 +162,10 @@ class SkillRelevance(BaseModel):
     score: float = Field(description="Semantic relevance score between 0.0 and 1.0")
 
 class QATestSuite(BaseModel):
+    overwrite_existing: bool = Field(
+        default=False,
+        description="If True, completely discard the existing on-disk test suite file and build it fresh from new_imports and new_test_code. Use this to clear fatal top-level import or syntax errors from previous iterations.",
+    )
     new_imports: str = Field(default="", description="New import statements to add, if any. Code only.")
     new_test_code: str = Field(description="Only the NEW test classes/functions. Code only.")
     obsolete_test_names: list[str] = Field(
@@ -191,6 +195,10 @@ class ReviewReport(BaseModel):
     test_integrity_approved: bool = Field(description="Boolean flag indicating test integrity approval status.")
     qa_diagnostic_payload: str = Field(default="", description="Instructions ONLY for the QA Agent to fix incorrect, hallucinated, or broken tests.")
     dev_diagnostic_payload: str = Field(default="", description="Instructions ONLY for the Developer to fix production code bugs.")
+    zombie_tests_to_delete: list[str] = Field(
+        default_factory=list,
+        description="List of specific obsolete or zombie test filenames that must be physically deleted from disk.",
+    )
 
 class GlobalPipelineContext(BaseModel):
     pr_description: str
