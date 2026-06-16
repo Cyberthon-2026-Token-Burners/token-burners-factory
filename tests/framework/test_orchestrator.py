@@ -1254,6 +1254,58 @@ class FinOpsReportTests(unittest.TestCase):
         self.assertIn("claude", report["by_provider"])
 
 
+class BuildProductionSnapshotTests(unittest.TestCase):
+    """The production snapshot must exclude COLOCATED test files (env-aware), not just `tests/`."""
+
+    def setUp(self) -> None:
+        import shutil
+        if not shutil.which("git"):
+            self.skipTest("git binary not available on PATH")
+
+    @staticmethod
+    def _git(args: list, cwd: Path) -> None:
+        import subprocess
+        subprocess.run(["git", *args], cwd=str(cwd), check=True, capture_output=True, text=True)  # nosec B603 B607
+
+    def _ctx(self, repo: Path) -> GlobalPipelineContext:
+        paths = WorkspacePaths(
+            code_dir=repo / "src", tests_dir=repo / "tests",
+            logs_dir=repo / "logs", reports_dir=repo / "reports", repo_dir=repo,
+        )
+        contract = TechLeadContract(
+            files_to_modify=["src/x.go"],
+            topology_contract=[{"file_path": "src/x.go", "exports": ["X"], "depends_on": []}],
+            instruction="impl", function_signatures="func X()",
+            strict_type_validation_rules="n/a", techlead_reasoning="trivial",
+            environment_id="go-1.23-cli",
+        )
+        return GlobalPipelineContext(
+            pr_description="t", base_branch="main", workspace_paths=paths, contract=contract,
+        )
+
+    def test_excludes_colocated_go_test_file(self) -> None:
+        with TemporaryDirectory() as td:
+            repo = Path(td)
+            self._git(["init"], repo)
+            self._git(["config", "user.email", "t@sdlc.local"], repo)
+            self._git(["config", "user.name", "t"], repo)
+            (repo / "README.md").write_text("seed\n", encoding="utf-8")
+            self._git(["add", "."], repo)
+            self._git(["commit", "-m", "seed"], repo)
+            self._git(["branch", "-M", "main"], repo)
+            self._git(["checkout", "-b", "feat"], repo)
+            (repo / "src").mkdir()
+            (repo / "src" / "x.go").write_text("package x\n", encoding="utf-8")
+            (repo / "src" / "x_test.go").write_text("package x\n", encoding="utf-8")  # colocated test
+
+            ctx = self._ctx(repo)
+            orchestrator.build_production_snapshot(ctx)
+
+            # Production file captured; colocated *_test.go fenced out of the Developer's snapshot.
+            self.assertIn("src/x.go", ctx.production_code_snapshot)
+            self.assertNotIn("src/x_test.go", ctx.production_code_snapshot)
+
+
 if __name__ == "__main__":
     unittest.main()
 

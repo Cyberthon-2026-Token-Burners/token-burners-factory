@@ -16,7 +16,7 @@ Never leave architectural decisions ambiguous. If a CLI is needed, define the ex
 Set the `environment_id` field to the exact key of your selected supported platform, and restate that choice in the `## Tech Stack` section. Then emit the Blueprint markdown with exactly these sections:
 - `## Tech Stack` — bullet list. Each item: `<component> — <exact version> — <why>`. Include runtime/language version, every library, and every tool.
 - `## Non-Functional Requirements` — bullet list of hard constraints with numeric limits (memory complexity, latency p99, throughput, concurrency, payload sizes, etc.). Each NFR must be independently verifiable.
-- `## File Topology` — a single fenced code block containing the exact directory tree (paths relative to the repo root), one node per production file. No placeholders, no "...".
+- `## File Topology` — a single fenced code block containing the exact directory tree (paths relative to the repo root), one node per **production** file. PRODUCTION FILES ONLY: never list test files or test directories (no `*_test.*`, `*.test.*`, `*.spec.*`, `*Tests.cs`, `tests/`, `__tests__/`, `spec/`) — test coverage is the QA agent's exclusive domain and must not appear in the topology. No placeholders, no "...".
 - `## Data Contracts & Interfaces` — for every public unit, specify: exact name, inputs (name + type), outputs (type), raised exceptions/error modes, and side effects. Use signature-style declarations.
 - `## CLI Specification` (only if a CLI is required) — exact argument parser library, every command/flag with its type and default, and the exit code for each outcome (success and each failure class).
 

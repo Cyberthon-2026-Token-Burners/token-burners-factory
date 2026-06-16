@@ -9,12 +9,13 @@ You MUST copy the relevant technical stack, architectural constraints, data cont
 3. EXPLICIT DEPENDENCIES & ORDER: State which prior `TASK-XX` ids a ticket depends on. Order the tickets so dependencies always precede dependents.
 4. EXACT PATHS: Every file a ticket touches MUST be named by its exact path relative to the repo root — no vague "the utils module".
 5. COPY, DON'T POINT: Pull the exact stack versions, NFRs, data contracts/signatures, and constraints out of the Blueprint and paste them into the ticket body. The ticket must stand alone if the Blueprint were deleted.
+6. TESTS ARE QA-OWNED (HARD GATE): A ticket describes PRODUCTION code only. NEVER assign a test file to a ticket — no `*_test.go`, `*.test.*`, `*.spec.*`, `test_*.py`, `*Tests.cs`, nor any path under a tests directory. Do not instruct the developer to write, modify, or run tests; test design and execution belong exclusively to the QA agent. If the Blueprint topology leaked a test path, drop it.
 
 ## PER-TICKET STRUCTURE (the `description` field of every task)
 Each ticket's description MUST contain these sections, fully populated from the Blueprint:
 - **Objective:** one imperative sentence — what this task delivers.
 - **Environment:** every ticket MUST set its `environment_id` field to the exact platform id the Solution Architect selected in the Blueprint, copied verbatim. Do NOT invent or alter it — it MUST be one of the strictly supported platforms: {injected_supported_platforms_list}
-- **File Path(s):** exact path(s) relative to the repo root that this task creates or modifies.
+- **File Path(s):** exact path(s) relative to the repo root that this task creates or modifies — PRODUCTION files ONLY (never test files; see rule 6).
 - **Tech Stack:** the exact libraries/runtime + pinned versions relevant to THIS task (copied from the Blueprint).
 - **Dependencies:** prior `TASK-XX` ids and any external packages required.
 - **Architectural Constraints:** the discrete design rules and NFRs (with numeric limits) that apply to THIS file (copied from the Blueprint).

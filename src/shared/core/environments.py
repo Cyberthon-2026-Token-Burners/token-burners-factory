@@ -178,3 +178,22 @@ def derive_test_target(environment_id: str, rel_source_path: str) -> tuple[str, 
     else:
         test_name = f"{profile['test_prefix']}{stem}{profile['test_suffix']}"  # go: foo_test.go / .NET: fooTests.cs
     return (f"{directory}/{test_name}" if directory else test_name), module_ref
+
+
+# Node test files use a separate naming convention (jest/vitest) than the prefix/suffix profile.
+_NODE_TEST_SUFFIXES = (".test.ts", ".test.tsx", ".test.js", ".test.jsx", ".spec.ts", ".spec.js")
+
+
+def is_test_file(environment_id: str, rel_path: str) -> bool:
+    """True if ``rel_path``'s basename matches the target stack's test-file naming convention.
+
+    Single SSOT for "is this a test file": Python ``test_*.py``, Go ``*_test.go``, .NET ``*Tests.cs``,
+    Node ``*.test.*``/``*.spec.*``. Used by the QA agent (zombie disposal, test snapshot) AND by the
+    production-snapshot filter so the Developer is fenced off from tests REGARDLESS of placement
+    (colocated or a separate tests dir).
+    """
+    profile = get_qa_profile(environment_id)
+    name = _posix(rel_path).rsplit("/", 1)[-1]
+    if env_language(environment_id) == "node":
+        return name.endswith(_NODE_TEST_SUFFIXES)
+    return name.startswith(profile["test_prefix"]) and name.endswith(profile["test_suffix"])

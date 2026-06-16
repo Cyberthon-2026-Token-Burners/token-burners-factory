@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from src.shared.core.observability import log, reconfigure_logging
 from src.shared.core.config import check_environment, PIPELINE_BUDGET_TOKENS, PIPELINE_BUDGET_USD
 from src.shared.core.models import GlobalPipelineContext, WorkspacePaths, RUNS_BASE
+from src.shared.core.environments import is_test_file
 from src.shared.utils.git_helpers import get_git_root, get_pipeline_snapshot_files
 from src.executor.agents.techlead import run_techlead_node
 from src.executor.agents.qa import run_qa_agent_node
@@ -276,6 +277,9 @@ def build_production_snapshot(ctx: GlobalPipelineContext) -> None:
         test_prefix = f"{ctx.workspace_paths.tests_dir.relative_to(repo_dir).as_posix()}/"
     except ValueError:
         test_prefix = None  # tests_dir lives outside the repo root → no prefix collision possible
+    # The ticket's environment_id drives the language-aware test-file predicate so COLOCATED tests
+    # (Go `*_test.go`, Node `*.test.ts`, .NET `*Tests.cs`) are excluded too — not just Python `test_*.py`.
+    env_id = ctx.contract.environment_id if ctx.contract else None
 
     # 1. Stage every mutation so the index reflects the complete working-tree state across ALL cycles.
     subprocess.run(["git", "add", "-A"], cwd=str(repo_dir), check=True)  # nosec B603 B607 — fixed git argv, no shell
@@ -301,7 +305,8 @@ def build_production_snapshot(ctx: GlobalPipelineContext) -> None:
         if not rel:
             continue
         # Domain purity: QA-generated tests belong to test_code_snapshot, never the production one.
-        if (test_prefix and rel.startswith(test_prefix)) or Path(rel).name.startswith("test_"):
+        # Exclude both a separate tests dir AND colocated test files (language-aware predicate).
+        if (test_prefix and rel.startswith(test_prefix)) or (env_id and is_test_file(env_id, rel)):
             continue
         file_path = repo_dir / rel
         if not file_path.exists():

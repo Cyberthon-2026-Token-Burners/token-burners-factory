@@ -168,6 +168,10 @@ async def run_claude_cli(
 ) -> tuple[int, dict | None]:
     """Launches the Claude CLI against sandbox-contained files and streams its output.
 
+    The child runs with ``cwd=allowed_root`` (the run's sandbox repo) so the inner Claude Code loads
+    the SANDBOX project context — its own ``.git`` bounds project-root detection, keeping the
+    orchestrator's ``CLAUDE.md``/``.ai/memory`` (which live in a parent directory) out of scope.
+
     The executable is ``CLAUDE_CLI_BIN`` (env-overridable) so a WSL run can target the Linux binary
     rather than resolving to a Windows ``claude.exe`` across the interop boundary. ``model``
     (``--model``) and ``effort`` (``--effort``, reasoning level) are forwarded to the CLI when
@@ -192,9 +196,12 @@ async def run_claude_cli(
         cmd += ["--effort", effort]
     cmd += ["--dangerously-skip-permissions"] + files
     log.debug(f"Executing Developer Subprocess: {' '.join(cmd)}")
+    # Anchor the inner Claude Code to the SANDBOX repo (allowed_root). The cloned run repo has its own
+    # `.git`, which bounds Claude's upward project-root detection, so it loads the sandbox's
+    # CLAUDE.md/memory — NOT the orchestrator's `.ai/memory`/CLAUDE.md sitting in a parent directory.
     proc = await asyncio.create_subprocess_exec(
         *cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        limit=_STREAM_LIMIT,
+        limit=_STREAM_LIMIT, cwd=allowed_root,
     )
 
     loop = asyncio.get_event_loop()

@@ -10,7 +10,7 @@ os.environ.setdefault("GEMINI_API_KEY", "test-key")
 
 from src.executor.agents import qa
 from src.shared.core.models import QATestSuite
-from src.shared.core.environments import is_testable_source, derive_test_target
+from src.shared.core.environments import is_testable_source, derive_test_target, is_test_file
 
 
 class DisposeZombieTestsTests(unittest.TestCase):
@@ -94,6 +94,23 @@ class IsTestableSourceTests(unittest.TestCase):
         self.assertTrue(is_testable_source("node-20-web", "src/app.ts"))
         self.assertFalse(is_testable_source("dotnet-10-sdk", "App.csproj"))
         self.assertTrue(is_testable_source("dotnet-10-sdk", "src/Converter.cs"))
+
+
+class IsTestFileTests(unittest.TestCase):
+    """The shared test-file predicate recognizes each stack's convention (colocated or separate)."""
+
+    def test_positives_per_language(self) -> None:
+        self.assertTrue(is_test_file("go-1.23-cli", "src/internal/converter/converter_test.go"))
+        self.assertTrue(is_test_file("python-3.12-core", "tests/test_converter.py"))
+        self.assertTrue(is_test_file("node-20-web", "src/app.test.ts"))
+        self.assertTrue(is_test_file("node-20-web", "src/app.spec.js"))
+        self.assertTrue(is_test_file("dotnet-10-sdk", "src/ConverterTests.cs"))
+
+    def test_negatives_are_production(self) -> None:
+        self.assertFalse(is_test_file("go-1.23-cli", "src/internal/converter/converter.go"))
+        self.assertFalse(is_test_file("python-3.12-core", "src/converter.py"))
+        self.assertFalse(is_test_file("node-20-web", "src/app.ts"))
+        self.assertFalse(is_test_file("dotnet-10-sdk", "src/Converter.cs"))
 
 
 class DeriveTestTargetTests(unittest.TestCase):

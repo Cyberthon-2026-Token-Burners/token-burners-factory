@@ -6,7 +6,7 @@ from pathlib import Path
 from src.shared.core.observability import log, log_token_usage
 from src.shared.core.config import QA_MODEL
 from src.shared.core.models import QATestSuite, GlobalPipelineContext
-from src.shared.core.environments import get_qa_profile, is_testable_source, derive_test_target, env_language
+from src.shared.core.environments import get_qa_profile, is_testable_source, derive_test_target, env_language, is_test_file
 from src.shared.core.prompts import get_system_prompt_sections, build_agent_context, generate_repo_map
 from src.shared.utils.llm import run_structured_llm
 from src.shared.utils.git_helpers import get_git_root, get_pipeline_snapshot_files
@@ -32,13 +32,11 @@ def _default_py_test_name(name: str) -> bool:
 
 
 def _test_name_predicate(environment_id: str):
-    """Return a predicate matching a basename to the env's test-file naming convention."""
-    profile = get_qa_profile(environment_id)
-    if env_language(environment_id) == "node":
-        suffixes = (".test.ts", ".test.tsx", ".test.js", ".test.jsx", ".spec.ts", ".spec.js")
-        return lambda n: n.endswith(suffixes)
-    prefix, suffix = profile["test_prefix"], profile["test_suffix"]
-    return lambda n: n.startswith(prefix) and n.endswith(suffix)
+    """Return a predicate matching a basename to the env's test-file naming convention.
+
+    Thin wrapper over the shared ``is_test_file`` SSOT so QA and the production-snapshot filter agree.
+    """
+    return lambda n: is_test_file(environment_id, n)
 
 
 def _dispose_zombie_tests(root_dir: Path, names: set[str], name_ok=None) -> None:
