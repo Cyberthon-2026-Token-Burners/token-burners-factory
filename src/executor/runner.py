@@ -18,6 +18,7 @@ from src.executor.agents.techlead import run_techlead_node
 from src.executor.agents.qa import run_qa_agent_node
 from src.executor.agents.developer import run_developer_node
 from src.executor.agents.reviewer import run_reviewer_node
+from src.executor.agents.techwriter import run_techwriter_node
 from src.executor.nodes.gates import run_qa_unit_tests, run_security_scan
 
 # ==========================================
@@ -742,6 +743,9 @@ async def main():
 
         if all_gates_passed:
             log.info("🟩 PIPELINE SUCCESS: All validation gates passed.")
+            # Living-ADR maintenance: update + stage docs/architecture_state.md BEFORE the atomic
+            # commit so the verified delta and its documentation land in the same transaction.
+            await run_techwriter_node(ctx)
             await finalize_transaction(ctx, push=cfg.push)
             write_finops_report(ctx)
             log_finops_summary(ctx)

@@ -161,6 +161,11 @@ class PipelineTelemetry(BaseModel):
 class SkillRelevance(BaseModel):
     score: float = Field(description="Semantic relevance score between 0.0 and 1.0")
 
+class ArchitectureUpdate(BaseModel):
+    updated_architecture_document: str = Field(
+        description="The absolute, complete, updated content of docs/architecture_state.md markdown file, integrating new components, design decisions, and active constraints from the completed task."
+    )
+
 class QATestSuite(BaseModel):
     overwrite_existing: bool = Field(
         default=False,

@@ -12,6 +12,7 @@ from pydantic import ValidationError
 
 from src.shared.core.models import (
     PipelineTelemetry,
+    ArchitectureUpdate,
     TechLeadContract,
     TopologyNode,
     GlobalPipelineContext,
@@ -19,6 +20,19 @@ from src.shared.core.models import (
     ReviewReport,
     WorkspacePaths,
 )
+
+
+class ArchitectureUpdateModelTests(unittest.TestCase):
+    """The TechWriter's structured output round-trips its single cumulative-document field."""
+
+    def test_round_trips_document_field(self) -> None:
+        doc = "# Architecture State\n\n## Invariants\n- Streaming: row-by-row only.\n"
+        update = ArchitectureUpdate(updated_architecture_document=doc)
+        self.assertEqual(update.updated_architecture_document, doc)
+
+    def test_document_field_is_required(self) -> None:
+        with self.assertRaises(ValidationError):
+            ArchitectureUpdate()
 
 
 class QATestSuiteFenceCleaningTests(unittest.TestCase):

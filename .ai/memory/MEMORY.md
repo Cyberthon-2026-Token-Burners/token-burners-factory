@@ -7,3 +7,4 @@
 - [Token Budget Excludes Cache](token_budget_excludes_cache.md) — Token budget = fresh input + output only; Claude CLI cache tracked separately; breaker gates primarily on USD.
 - [Prompt Language Independence](prompt_language_independence.md) — System prompts + non-language-gated skills must be language-neutral; only metadata-declared-language skills may be language-specific.
 - [Skill Routing Frontmatter](skill_routing_frontmatter.md) — How prompts/skills/*.md gate into agents via frontmatter type/nodes/triggers in build_agent_context.
+- [Run Tests via WSL](run_tests_via_wsl.md) — Tests/bandit/venv run only through WSL; Windows python lacks deps and the venv symlinks are WSL-only.

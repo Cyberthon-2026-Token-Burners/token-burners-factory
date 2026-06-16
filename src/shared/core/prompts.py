@@ -180,4 +180,16 @@ async def build_agent_context(
             body = body.format(**topology_kwargs)
         parts.append(body.strip())
 
+    # Living ADR: inject the on-disk architecture state into every consuming node's context.
+    # GUARD: the document does not exist on the first task — never do a bare read_text().
+    repo_dir = getattr(ctx.workspace_paths, "repo_dir", None) if ctx.workspace_paths else None
+    if repo_dir is not None:
+        adr_path = repo_dir / "docs" / "architecture_state.md"
+        adr_content = (
+            adr_path.read_text(encoding="utf-8").strip()
+            if adr_path.exists()
+            else "(No architecture state documented yet. This is the first iteration.)"
+        )
+        parts.append("=== LIVING ARCHITECTURE DOCUMENT (ADR) ===\n" + adr_content)
+
     return "\n\n".join(parts)

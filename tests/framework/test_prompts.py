@@ -8,7 +8,9 @@ from src.shared.core.prompts import (
     get_system_prompt_sections,
     get_skill,
     generate_repo_map,
+    build_agent_context,
 )
+from src.shared.core.models import GlobalPipelineContext, WorkspacePaths
 
 
 class GetSystemPromptTests(unittest.TestCase):
@@ -167,6 +169,43 @@ class PathResolutionTests(unittest.TestCase):
     def test_skills_dir_exists(self) -> None:
         from src.shared.core.prompts import _SKILLS_DIR
         self.assertTrue(_SKILLS_DIR.is_dir(), f"{_SKILLS_DIR} is not a directory")
+
+
+class BuildAgentContextADRTests(unittest.IsolatedAsyncioTestCase):
+    """The living ADR is injected into every consuming node, with first-iteration safety.
+
+    Uses ``techwriter`` as the node name: no skill targets it, so the skill loop is a no-op and the
+    only output is the ADR block — keeping the assertion hermetic (no domain LLM fallback fires).
+    """
+
+    @staticmethod
+    def _ctx(repo: Path) -> GlobalPipelineContext:
+        paths = WorkspacePaths(
+            code_dir=repo / "src", tests_dir=repo / "tests",
+            logs_dir=repo / "logs", reports_dir=repo / "reports", repo_dir=repo,
+        )
+        return GlobalPipelineContext(pr_description="t", base_branch="main", workspace_paths=paths)
+
+    async def test_injects_on_disk_document_when_present(self) -> None:
+        with TemporaryDirectory() as td:
+            repo = Path(td)
+            (repo / "docs").mkdir()
+            (repo / "docs" / "architecture_state.md").write_text(
+                "# State\nStreaming invariant: row-by-row.", encoding="utf-8")
+            out = await build_agent_context("techwriter", self._ctx(repo))
+            self.assertIn("LIVING ARCHITECTURE DOCUMENT", out)
+            self.assertIn("row-by-row", out)
+
+    async def test_injects_placeholder_on_first_iteration(self) -> None:
+        # GUARD: the document does not exist yet — must NOT raise, must feed the placeholder.
+        with TemporaryDirectory() as td:
+            out = await build_agent_context("techwriter", self._ctx(Path(td)))
+            self.assertIn("LIVING ARCHITECTURE DOCUMENT", out)
+            self.assertIn("first iteration", out)
+
+    async def test_skips_injection_when_workspace_unbound(self) -> None:
+        out = await build_agent_context("techwriter", GlobalPipelineContext(pr_description="t"))
+        self.assertNotIn("LIVING ARCHITECTURE DOCUMENT", out)
 
 
 if __name__ == "__main__":

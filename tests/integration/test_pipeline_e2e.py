@@ -33,6 +33,7 @@ from src.shared.core.models import (
     TechLeadContract,
     QATestSuite,
     ReviewReport,
+    ArchitectureUpdate,
 )
 
 # Deterministic production code the (mocked) Claude developer "writes", and a trivial but
@@ -43,6 +44,11 @@ _TEST_CODE = (
     "class CalculatorTests(unittest.TestCase):\n"
     "    def test_add(self) -> None:\n"
     "        self.assertEqual(2, 2)\n"
+)
+_ADR_DOC = (
+    "# Architecture State\n\n"
+    "## Components\n- add(a, b) -> int\n\n"
+    "## Invariants\n- Pure function; operands must be int.\n"
 )
 
 
@@ -77,6 +83,8 @@ def _fake_structured_llm(*, model, response_model, messages):
             ),
             raw,
         )
+    if response_model is ArchitectureUpdate:
+        return ArchitectureUpdate(updated_architecture_document=_ADR_DOC), raw
     raise AssertionError(f"Unexpected response_model: {response_model!r}")
 
 
@@ -214,6 +222,17 @@ class PipelineEndToEndTests(unittest.IsolatedAsyncioTestCase):
                 capture_output=True, text=True, check=True,
             ).stdout.strip())
             self.assertGreaterEqual(count, 2)
+
+            # Assert — the Technical Writer wrote the living ADR and it was committed atomically
+            # (staged before finalize_transaction, so it rides the same single success commit).
+            adr_file = repo_dir / "docs" / "architecture_state.md"
+            self.assertTrue(adr_file.is_file(), "techwriter did not write the ADR")
+            self.assertIn("Architecture State", adr_file.read_text(encoding="utf-8"))
+            tracked = subprocess.run(
+                ["git", "-C", str(repo_dir), "ls-files", "docs/architecture_state.md"],
+                capture_output=True, text=True, check=True,
+            ).stdout.strip()
+            self.assertEqual(tracked, "docs/architecture_state.md")
 
 
 if __name__ == "__main__":

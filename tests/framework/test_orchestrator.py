@@ -146,6 +146,7 @@ class MainResumeSkipFlowTests(unittest.IsolatedAsyncioTestCase):
                 mock.patch.object(orchestrator, "run_qa_unit_tests", new=AsyncMock(return_value=(True, []))),
                 mock.patch.object(orchestrator, "run_security_scan", new=AsyncMock(return_value=(True, []))),
                 mock.patch.object(orchestrator, "finalize_transaction", new_callable=AsyncMock),
+                mock.patch.object(orchestrator, "run_techwriter_node", new_callable=AsyncMock),
                 mock.patch.object(GlobalPipelineContext, "save_checkpoint", autospec=True) as save_checkpoint,
             ):
                 # Act
@@ -218,6 +219,7 @@ class MainCheckpointWritePointsTests(unittest.IsolatedAsyncioTestCase):
                 mock.patch.object(orchestrator, "run_qa_unit_tests", new=AsyncMock(return_value=(True, []))),
                 mock.patch.object(orchestrator, "run_security_scan", new=AsyncMock(return_value=(True, []))),
                 mock.patch.object(orchestrator, "finalize_transaction", new_callable=AsyncMock),
+                mock.patch.object(orchestrator, "run_techwriter_node", new_callable=AsyncMock),
                 mock.patch.object(orchestrator, "GlobalPipelineContext", wraps=GlobalPipelineContext) as wrapped_ctx_cls,
             ):
                 # Ensure freshly created context uses isolated reports dir for deterministic assertion.
@@ -280,6 +282,7 @@ class MainCheckpointWritePointsTests(unittest.IsolatedAsyncioTestCase):
                 mock.patch.object(orchestrator, "run_qa_unit_tests", new=AsyncMock(return_value=(True, []))),
                 mock.patch.object(orchestrator, "run_security_scan", new=AsyncMock(return_value=(True, []))),
                 mock.patch.object(orchestrator, "finalize_transaction", new_callable=AsyncMock),
+                mock.patch.object(orchestrator, "run_techwriter_node", new_callable=AsyncMock),
                 mock.patch.object(GlobalPipelineContext, "save_checkpoint", autospec=True) as save_checkpoint,
             ):
                 # Act
@@ -352,6 +355,7 @@ class MainCheckpointWritePointsTests(unittest.IsolatedAsyncioTestCase):
                 mock.patch.object(orchestrator, "run_qa_unit_tests", new=AsyncMock(side_effect=[(False, ["fail"]), (True, [])])),
                 mock.patch.object(orchestrator, "run_security_scan", new=AsyncMock(return_value=(True, []))),
                 mock.patch.object(orchestrator, "finalize_transaction", new_callable=AsyncMock),
+                mock.patch.object(orchestrator, "run_techwriter_node", new_callable=AsyncMock),
                 mock.patch.object(orchestrator, "GlobalPipelineContext", wraps=GlobalPipelineContext) as wrapped_ctx_cls,
             ):
                 # Ensure freshly created context uses isolated reports dir for deterministic assertion.
@@ -434,6 +438,7 @@ class ResumeFsmRecoveryTests(unittest.IsolatedAsyncioTestCase):
                 mock.patch.object(orchestrator, "run_qa_unit_tests", new=AsyncMock(return_value=(True, []))),
                 mock.patch.object(orchestrator, "run_security_scan", new=AsyncMock(return_value=(True, []))),
                 mock.patch.object(orchestrator, "finalize_transaction", new_callable=AsyncMock),
+                mock.patch.object(orchestrator, "run_techwriter_node", new_callable=AsyncMock),
             ):
                 # Act
                 await orchestrator.main()
@@ -501,6 +506,7 @@ class ResumeFsmRecoveryTests(unittest.IsolatedAsyncioTestCase):
                 mock.patch.object(orchestrator, "run_qa_unit_tests", new=AsyncMock(return_value=(True, []))),
                 mock.patch.object(orchestrator, "run_security_scan", new=AsyncMock(return_value=(True, []))),
                 mock.patch.object(orchestrator, "finalize_transaction", new_callable=AsyncMock),
+                mock.patch.object(orchestrator, "run_techwriter_node", new_callable=AsyncMock),
             ):
                 # Act
                 await orchestrator.main()
@@ -550,6 +556,7 @@ class ResumeFsmRecoveryTests(unittest.IsolatedAsyncioTestCase):
                 mock.patch.object(orchestrator, "run_qa_unit_tests", new=AsyncMock(return_value=(True, []))),
                 mock.patch.object(orchestrator, "run_security_scan", new=AsyncMock(return_value=(True, []))),
                 mock.patch.object(orchestrator, "finalize_transaction", new_callable=AsyncMock),
+                mock.patch.object(orchestrator, "run_techwriter_node", new_callable=AsyncMock),
             ):
                 with self.assertRaises(SystemExit) as exit_ctx:
                     await orchestrator.main()
@@ -619,6 +626,7 @@ class ResumeFsmRecoveryTests(unittest.IsolatedAsyncioTestCase):
                 mock.patch.object(orchestrator, "run_qa_unit_tests", new=AsyncMock(return_value=(True, []))),
                 mock.patch.object(orchestrator, "run_security_scan", new=AsyncMock(return_value=(True, []))),
                 mock.patch.object(orchestrator, "finalize_transaction", new_callable=AsyncMock),
+                mock.patch.object(orchestrator, "run_techwriter_node", new_callable=AsyncMock),
             ):
                 # Act
                 await orchestrator.main()
@@ -1003,6 +1011,7 @@ class DocumentationGuardrailLoopTests(unittest.IsolatedAsyncioTestCase):
                 mock.patch.object(orchestrator, "run_qa_unit_tests", new=AsyncMock(return_value=(True, []))),
                 mock.patch.object(orchestrator, "run_security_scan", new=AsyncMock(return_value=(True, []))),
                 mock.patch.object(orchestrator, "finalize_transaction", new_callable=AsyncMock),
+                mock.patch.object(orchestrator, "run_techwriter_node", new_callable=AsyncMock),
                 mock.patch.object(GlobalPipelineContext, "save_checkpoint", autospec=True) as save_checkpoint,
             ):
                 # Act
@@ -1038,6 +1047,7 @@ class DocumentationGuardrailLoopTests(unittest.IsolatedAsyncioTestCase):
                 mock.patch.object(orchestrator, "run_qa_unit_tests", new=AsyncMock(return_value=(True, []))),
                 mock.patch.object(orchestrator, "run_security_scan", new=AsyncMock(return_value=(True, []))),
                 mock.patch.object(orchestrator, "finalize_transaction", new_callable=AsyncMock),
+                mock.patch.object(orchestrator, "run_techwriter_node", new_callable=AsyncMock),
             ):
                 # Act / Assert
                 with self.assertRaises(SystemExit) as exit_ctx:
@@ -1166,6 +1176,7 @@ class TestCollectionTriageRoutingTests(unittest.IsolatedAsyncioTestCase):
                 mock.patch.object(orchestrator, "reconfigure_logging"),
                 mock.patch.object(orchestrator, "build_production_snapshot"),
                 mock.patch.object(orchestrator, "finalize_transaction", new_callable=AsyncMock),
+                mock.patch.object(orchestrator, "run_techwriter_node", new_callable=AsyncMock),
                 mock.patch.object(orchestrator, "parse_args", return_value=orchestrator.RunConfig(
                     description=None, base_branch="main", resume=Path("cp.json"), reset_attempts=False)),
                 mock.patch.object(GlobalPipelineContext, "load_checkpoint", return_value=ctx),

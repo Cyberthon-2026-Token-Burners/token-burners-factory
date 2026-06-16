@@ -33,6 +33,7 @@ AVAILABLE_GEMINI_MODELS = (
 TECHLEAD_MODEL = GEMINI_3_1_FLASH_LITE
 QA_MODEL = GEMINI_3_1_FLASH_LITE
 REVIEWER_MODEL = GEMINI_3_1_FLASH_LITE
+TECHWRITER_MODEL = GEMINI_3_1_FLASH_LITE   # Living-ADR maintainer; matches the other Gemini worker roles.
 # Nexus Control Plane roles (Product Owner / Solution Architect / TPM). Defaulted to the
 # cheap flash-lite tier to match the worker roles and keep the PoC inexpensive; SA/TPM can be
 # bumped to GEMINI_2_5_PRO for deeper architectural reasoning.
@@ -82,6 +83,7 @@ ROLE_MODELS = {
     "techlead": (TECHLEAD_MODEL, "Technical Lead Agent"),
     "qa":        (QA_MODEL,        "QA Agent"),
     "reviewer":  (REVIEWER_MODEL,  "Reviewer Agent"),
+    "techwriter": (TECHWRITER_MODEL, "Technical Writer Agent"),
     # Nexus Control Plane roles.
     "po":      (PO_MODEL,      "Product Owner Agent"),
     "sa":      (SA_MODEL,      "Solution Architect Agent"),
