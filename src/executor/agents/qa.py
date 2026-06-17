@@ -1,5 +1,4 @@
 import re
-import ast
 import sys
 from pathlib import Path
 
@@ -26,11 +25,6 @@ def _strip_fences(code: str) -> str:
     return code.strip()
 
 
-def _default_py_test_name(name: str) -> bool:
-    """The Python test-file predicate (default for zombie disposal)."""
-    return name.startswith("test_") and name.endswith(".py")
-
-
 def _test_name_predicate(environment_id: str):
     """Return a predicate matching a basename to the env's test-file naming convention.
 
@@ -39,18 +33,17 @@ def _test_name_predicate(environment_id: str):
     return lambda n: is_test_file(environment_id, n)
 
 
-def _dispose_zombie_tests(root_dir: Path, names: set[str], name_ok=None) -> None:
+def _dispose_zombie_tests(root_dir: Path, names: set[str], name_ok) -> None:
     """Mechanically delete Reviewer-flagged zombie test files, strictly contained within ``root_dir``.
 
     A zombie test targets a production module the TechLead intentionally removed/renamed, so it can
     never collect. The Reviewer (not the orchestrator) decides disposal; this only executes it. Every
     path is resolved and verified to live inside ``root_dir`` and match the language's test-file naming
-    convention (``name_ok``; defaults to Python ``test_*.py``) before unlink — rejecting traversal
-    (``..``, absolute escapes) so a hallucinated path can never delete outside the tree. ``root_dir`` is
-    the tests dir for a separate layout (python) or the repo root for a colocated layout (go/node/.NET).
+    convention (``name_ok`` — the env's SSOT ``is_test_file`` predicate, supplied by the caller) before
+    unlink — rejecting traversal (``..``, absolute escapes) so a hallucinated path can never delete
+    outside the tree. ``root_dir`` is the tests dir for a separate layout (python) or the repo root for
+    a colocated layout (go/node/.NET).
     """
-    if name_ok is None:
-        name_ok = _default_py_test_name
     root = root_dir.resolve()
     for name in names:
         if not name or not name.strip():
@@ -66,84 +59,18 @@ def _dispose_zombie_tests(root_dir: Path, names: set[str], name_ok=None) -> None
         log.info(f"🗑️  Zombie test disposed: {candidate.name}")
 
 
-def _is_main_guard(node: ast.stmt) -> bool:
-    """True for an ``if __name__ == "__main__":`` block."""
-    if not isinstance(node, ast.If) or not isinstance(node.test, ast.Compare):
-        return False
-    cmp = node.test
-    left_is_name = isinstance(cmp.left, ast.Name) and cmp.left.id == "__name__"
-    right_is_main = (
-        len(cmp.comparators) == 1
-        and isinstance(cmp.comparators[0], ast.Constant)
-        and cmp.comparators[0].value == "__main__"
-    )
-    return left_is_name and right_is_main
-
-
 def _assemble_suite(existing_source: str, suite: QATestSuite) -> str:
-    """Deterministically prune obsolete cases from *existing_source* and append the model's deltas.
+    """Whole-file assembly, identical for every language (no language-specific parser).
 
-    Structured maintenance: the model returns only ``new_imports`` / ``new_test_code`` and the
-    ``obsolete_test_names`` to drop. We parse the existing file, remove the named top-level defs,
-    dedupe imports, relocate any ``__main__`` guard to the very end, and join with blank-line
-    separators so nothing fuses into a SyntaxError. Always rewritten in place by the caller.
-    """
-    new_imports = _strip_fences(suite.new_imports)
-    new_test_code = _strip_fences(suite.new_test_code)
-    obsolete = set(suite.obsolete_test_names)
-    overwrite = getattr(suite, "overwrite_existing", False)
+    The QA system prompt + per-language skill instruct the model to return the COMPLETE test file
+    (header in ``new_imports``, every test in ``new_test_code``, ``overwrite_existing=true``), so we
+    treat that as the authoritative content and write it verbatim. Correct packaging/namespacing/
+    placement is the agent's responsibility (driven by the skills + the production snapshot); a wrong
+    package is caught by the compile gate and routed back to QA, never silently rewritten here.
 
-    pruned, main_guard = "", ""
-    if existing_source.strip() and not overwrite:
-        try:
-            tree = ast.parse(existing_source)
-        except SyntaxError:
-            # On-disk file is malformed — don't crash or silently drop prior tests. Append, no prune.
-            log.warning("🛡️ QA: existing test file is not parseable; appending new tests without AST pruning.")
-            segments = [existing_source.strip(), new_imports, new_test_code]
-            return "\n\n\n".join(s for s in segments if s.strip()) + "\n"
-
-        # Relocate the runner guard so newly appended classes are defined BEFORE unittest.main().
-        guard_nodes = [n for n in tree.body if _is_main_guard(n)]
-        if guard_nodes:
-            main_guard = "\n\n\n".join(ast.unparse(n) for n in guard_nodes)
-        # Drop obsolete top-level test defs, stale import aliases, and the guard (re-appended last).
-        new_body = []
-        for n in tree.body:
-            if _is_main_guard(n):
-                continue
-            if isinstance(n, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)) and n.name in obsolete:
-                continue
-            if isinstance(n, ast.Import):
-                n.names = [a for a in n.names if a.name not in obsolete and (a.asname or a.name) not in obsolete]
-                if not n.names:
-                    continue
-            if isinstance(n, ast.ImportFrom):
-                n.names = [a for a in n.names if a.name not in obsolete and (a.asname or a.name) not in obsolete]
-                if not n.names:
-                    continue
-            new_body.append(n)
-        tree.body = new_body
-        pruned = ast.unparse(tree)
-
-    # Strict import dedup: only keep new_imports lines absent from the pruned body.
-    existing_lines = {ln.strip() for ln in pruned.splitlines() if ln.strip()}
-    deduped_imports = "\n".join(
-        ln for ln in new_imports.splitlines() if ln.strip() and ln.strip() not in existing_lines
-    )
-
-    # Guard LAST so it sits below every test definition; blank-line separators prevent fusion.
-    segments = [deduped_imports, pruned, new_test_code, main_guard]
-    return "\n\n\n".join(s for s in segments if s.strip()) + "\n"
-
-
-def _assemble_suite_text(existing_source: str, suite: QATestSuite) -> str:
-    """Whole-file assembly for non-Python stacks (no language-specific AST available).
-
-    The per-language QA skill instructs the model to return the COMPLETE test file for these stacks,
-    so we treat ``new_imports`` + ``new_test_code`` as the authoritative content. If the model returns
-    nothing new and an existing file is present (and overwrite is not requested), keep the existing
-    file rather than truncating it — defensive against an empty delta clobbering a good suite.
+    Safety net: if the model returns nothing new and an existing file is present (and overwrite was not
+    requested), keep the existing file rather than truncating it — an empty delta must not clobber a
+    good suite.
     """
     new_imports = _strip_fences(suite.new_imports)
     new_test_code = _strip_fences(suite.new_test_code)
@@ -153,52 +80,6 @@ def _assemble_suite_text(existing_source: str, suite: QATestSuite) -> str:
     if not body.strip() and existing_source.strip() and not overwrite:
         return existing_source if existing_source.endswith("\n") else existing_source + "\n"
     return body + "\n"
-
-
-_GO_PACKAGE_RE = re.compile(r"^\s*package\s+([A-Za-z_]\w*)\s*$")
-
-
-def _derive_go_package(test_rel_path: str, production_snapshot: dict | None) -> str:
-    """Best-effort Go package name for a colocated ``*_test.go`` when the model omitted the clause.
-
-    Exact when a sibling production ``.go`` is in the snapshot (regeneration cycles); otherwise a
-    convention heuristic (``main`` for cmd/entrypoint dirs, else the sanitized directory basename).
-    """
-    directory = test_rel_path.rsplit("/", 1)[0] if "/" in test_rel_path else ""
-    for path, content in (production_snapshot or {}).items():
-        same_dir = (path.rsplit("/", 1)[0] if "/" in path else "") == directory
-        if same_dir and path.endswith(".go") and not path.endswith("_test.go"):
-            m = re.search(r"^\s*package\s+([A-Za-z_]\w*)", content, re.MULTILINE)
-            if m:
-                return m.group(1)
-    base = directory.rsplit("/", 1)[-1] if directory else ""
-    if f"{test_rel_path}/".startswith("cmd/") or "/cmd/" in f"/{test_rel_path}" or base in ("", "cmd"):
-        return "main"
-    ident = re.sub(r"\W", "", base)
-    if not ident:
-        return "main"
-    return ("p" + ident) if ident[0].isdigit() else ident
-
-
-def _ensure_go_package_clause(code: str, test_rel_path: str, production_snapshot: dict | None) -> str:
-    """Guarantee a Go test file starts with a `package <pkg>` clause — Go's package loader rejects any
-    file whose first declaration isn't `package`. Repairs a missing clause (derived) or one emitted in
-    the wrong position (moved to the top). No-op for already-valid input."""
-    lines = code.splitlines()
-    first_code_idx = next(
-        (i for i, ln in enumerate(lines)
-         if ln.strip() and not ln.strip().startswith(("//", "/*", "*"))),
-        None,
-    )
-    pkg_idx = next((i for i, ln in enumerate(lines) if _GO_PACKAGE_RE.match(ln)), None)
-    if pkg_idx is not None and pkg_idx == first_code_idx:
-        return code  # already correct (comments may precede it)
-    if pkg_idx is not None:
-        pkg_line = lines.pop(pkg_idx)                      # misplaced (e.g. after imports) → hoist
-        return pkg_line.strip() + "\n\n" + "\n".join(lines).lstrip("\n")
-    pkg = _derive_go_package(test_rel_path, production_snapshot)
-    log.warning(f"🛠️  QA: Go test file missing `package` clause — prepending `package {pkg}` ({test_rel_path}).")
-    return f"package {pkg}\n\n" + code.lstrip("\n")
 
 
 async def run_qa_agent_node(ctx: GlobalPipelineContext, error_trace: str = "") -> None:
@@ -238,9 +119,8 @@ async def run_qa_agent_node(ctx: GlobalPipelineContext, error_trace: str = "") -
         else "Write each test file into the dedicated tests/ directory."
     )
     assembly_contract = (
-        "Return ONLY new code as deltas (new_test_code / new_imports / obsolete_test_names); the engine merges them."
-        if profile["uses_ast"]
-        else "Return the COMPLETE test file content in new_imports + new_test_code (no incremental deltas); set overwrite_existing=true."
+        "Return the COMPLETE test file content in new_imports + new_test_code, PRESERVING all "
+        "still-valid existing tests (re-emit them); set overwrite_existing=true."
     )
     qa_system_prompt += (
         "\n\n=== TARGET ENVIRONMENT PROFILE ===\n"
@@ -297,8 +177,9 @@ async def run_qa_agent_node(ctx: GlobalPipelineContext, error_trace: str = "") -
         rel_test_path, module_ref = derive_test_target(env_id, module_file)
         test_path = (repo_dir / rel_test_path) if profile["layout"] == "colocated" else (tests_dir / rel_test_path)
         test_path.parent.mkdir(parents=True, exist_ok=True)
-        # Surface the current on-disk suite so the agent returns DELTAS (new code + obsolete names)
-        # instead of re-emitting the whole file. Read once; reused for prompt and AST assembly.
+        # Surface the current on-disk suite as the agent's WORKING DRAFT so it returns the complete
+        # corrected file (preserve valid cases, fix flagged ones). Read once; reused for the empty-delta
+        # safety net in _assemble_suite.
         user_prompt = _build_prompt(module_ref)
         existing_source = test_path.read_text(encoding="utf-8") if test_path.exists() else ""
         if existing_source:
@@ -325,14 +206,10 @@ async def run_qa_agent_node(ctx: GlobalPipelineContext, error_trace: str = "") -
     assembled = []
     for test_path, existing_source, suite, raw_response in results:
         log_token_usage(ctx, "QA Agent", raw_response, QA_MODEL)
-        # Python uses AST-based incremental maintenance; other stacks use whole-file text assembly
-        # (no language-specific parser available — the model returns the complete suite).
-        final_code = _assemble_suite(existing_source, suite) if profile["uses_ast"] else _assemble_suite_text(existing_source, suite)
-        # Go's package loader rejects any file whose first declaration isn't `package` — guarantee it,
-        # so a model that omits/misplaces the clause can't write an un-parseable file the gates choke on.
-        if env_language(env_id) == "go":
-            rel = Path(test_path).relative_to(repo_dir).as_posix()
-            final_code = _ensure_go_package_clause(final_code, rel, ctx.production_code_snapshot)
+        # One language-neutral assembly path: the model returns the complete file (header + tests);
+        # correct package/namespace/placement is enforced by the skills + the compile-gate→QA loop,
+        # not by any per-language post-processing here.
+        final_code = _assemble_suite(existing_source, suite)
         with open(test_path, "w", encoding="utf-8") as f:
             f.write(final_code)
         written_paths.append(str(test_path))

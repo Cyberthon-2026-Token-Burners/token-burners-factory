@@ -10,6 +10,13 @@ LANGUAGE TARGET: Go — test-suite rules for the Go tech stack.
 - The test file's VERY FIRST line MUST be `package <pkg>` — the SAME package as the unit under test
   (white-box) — BEFORE any `import`. NEVER start the file with `import`. Use an external `_test`
   package only when the contract exposes a pure public API.
+- The package MUST be the one declared by the colocated production sibling in the PRODUCTION CODE
+  SNAPSHOT — NEVER a package borrowed from another module you happen to exercise (e.g. a root
+  `main_test.go` next to `package main`'s `main.go` must be `package main`, never `package converter`).
+- A `package main` file whose only logic is `func main()` delegating to other packages has NO white-box
+  logic of its own: test that logic in its real package's `_test.go`. For the entrypoint emit at most a
+  faithful `package main` check (e.g. the wired collaborators are reachable) — do not fabricate a suite
+  for another package inside the entrypoint's test file.
 - Shape every Go test file exactly like this:
 
 ```

@@ -79,3 +79,51 @@ test/compile errors.
 **Fixed by:** `run_qa_unit_tests` / `run_build_gate` now keep **successful**-restore output OUT of the
 returned failure context (debug-logged only); the failure lines are exclusively the test/build phase's
 output. Restore output is still surfaced when restore itself fails.
+
+---
+New items from `run_3dc1e2043ea74ed082f47ec1744e4d8e` (Go `json2csv`, `CIRCUIT BREAKER OPEN` after 4
+cycles — both gates red EVERY cycle). Root cause: QA writes a root-level `main_test.go` declared
+`package converter` colocated with `main.go` (`package main`) → `could not import main (cannot import
+"main")`, the same build failure every cycle. The Reviewer correctly flags it as a zombie, but the
+disposal is undone by regeneration within the same QA node run. (The Reviewer's cycle-1 `go.mod module
+== "main"` / "circular imports" diagnosis was a hallucination — `go.mod` is `github.com/godeltech/jsonconv`.)
+
+## 9. [P0] QA emitted a wrong-package test (root `main_test.go` as `package converter`) — ✅ RESOLVED (reframed)
+**Was:** every cycle `go test ./...` failed with `could not import main (cannot import "main")` — a root
+`main_test.go` declared `package converter` next to `main.go`'s `package main`. The original fix (extend
+the Go package guard to rewrite a wrong-but-present clause) was rejected as per-language hardcode.
+**Fixed by (ADR 0014):** made test correctness skills-driven and DE-HARDCODED the QA agent instead of
+adding more mechanical rewriting. Removed the Go package guard, the Python-only AST merge, the
+`env_language=="go"` branch, and the `uses_ast`/`fence_lang` profile keys; QA now has ONE language-neutral
+whole-file assembly path. Added **TEST-FILE IDENTITY FIDELITY** + **Thin / untestable module** rules to
+`prompts/system/qa.md`, concrete package/namespace/placement idioms to `go_qa.md`/`python_qa.md`/
+`dotnet_qa.md`, and `reviewer.md` case **(c) WRONG TEST PACKAGE/NAMESPACE** so a slip-through is caught by
+the compile gate and routed to QA (not the Developer → no deadlock). Partly addresses #11.
+
+## 10. [P0] Zombie disposal is a no-op — QA regenerates the file it was told to delete
+**Symptom:** log shows `🗑️ Zombie test disposed: main_test.go` then, same cycle,
+`QA generated test files: [...main_test.go...]` — the Reviewer's `zombie_tests_to_delete` verdict can
+never stick, so the breaker is inevitable.
+**Cause:** in `run_qa_agent_node` ([qa.py:226](src/executor/agents/qa.py#L226)) disposal runs BEFORE
+the generation loop, and the disposed module is still in `target_modules` (derived from
+`files_to_modify` via `derive_test_target`), so QA recreates the identical test every cycle.
+**Fix direction:** feed `zombie_tests_to_delete` into generation as a hard exclusion — drop any module
+whose derived test path is a flagged zombie from `target_modules` (and skip writing it), so a
+condemned test file is not resurrected. Disposal must persist across regeneration.
+
+## 11. [P1] Reviewer hallucinates production defects not present in the gate output
+**Symptom:** cycle 1 `code_quality_approved=false` + `dev_diagnostic_payload` "rename go.mod module
+from `main`, fix circular imports" — none of which exist (`go.mod` is `github.com/godeltech/jsonconv`,
+imports are correct). Burned a Developer reroute on a phantom; the real fault was entirely in the test
+file.
+**Fix direction:** constrain the Reviewer prompt so `code_quality_approved=false` / `dev_diagnostic_payload`
+must cite a verbatim line from the actual gate output (build/test/SAST), not inferred structure; when
+the only failing file refs are test files, the production verdict must default to approved.
+
+## 12. [env] Build the Semgrep sandbox image before runs (operational, not code)
+**Symptom:** `[GATE][SAST-SECURITY]` FAILED every cycle with `pull access denied for sdlc-sandbox/semgrep,
+repository does not exist` — the vendored-rules image from #6 was never built in this environment, so
+SAST=False regardless of code (a green run is impossible even with perfect tests).
+**Fix direction:** run `bash scripts/build_sandbox_images.sh` (now includes `sdlc-sandbox/semgrep`)
+before re-running; consider a preflight check in the orchestrator that verifies required sandbox images
+exist and fails fast with a clear message instead of per-cycle gate noise.

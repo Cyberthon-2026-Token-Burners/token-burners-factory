@@ -12,8 +12,15 @@ LANGUAGE TARGET: .NET (C#) — test-suite rules for the .NET tech stack.
   `ConverterTests.cs`). `dotnet test` requires a test project (a `.csproj` referencing
   `Microsoft.NET.Test.Sdk` + the xUnit packages and the project under test) — assume the contract /
   Developer provides that test project; emit the test class into it.
-- Declare a namespace consistent with the project under test so internal types resolve (use
-  `InternalsVisibleTo` only when the contract specifies a public surface).
+## Namespace & Placement Fidelity (MANDATORY)
+- The test class's `namespace` MUST match the namespace of the type under test exactly as declared in
+  its sibling in the PRODUCTION CODE SNAPSHOT — never a namespace borrowed from a collaborator. A
+  mismatch breaks `internal` visibility and symbol resolution and fails the whole build.
+- Use an external test namespace / `InternalsVisibleTo` ONLY when the contract exposes a public API;
+  otherwise stay in the production type's own namespace (white-box).
+- A thin entrypoint (a `Program`/`Main` bootstrap that only wires up and delegates) has no white-box
+  logic of its own: test that logic where it lives. For the entrypoint emit at most a faithful minimal
+  check in its OWN namespace — never a fabricated suite for a different type under a foreign namespace.
 
 ## Test Shape
 - One `[Fact]` per single behavior; use `[Theory]` with `[InlineData(...)]` rows for the input matrix

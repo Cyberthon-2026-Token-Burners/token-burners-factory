@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Each release maps to a completed SDLC iteration; the corresponding Architecture
 Decision Record (ADR) is linked from the version heading.
 
+## [v0.14.0] - 2026-06-17 — Language-Neutral QA: Skills-Driven Test Correctness & De-Hardcoded Agent
+
+ADR: [0014-language-neutral-qa-whole-file-assembly](./docs/adr/0014-language-neutral-qa-whole-file-assembly.md)
+(supersedes [0013](./docs/adr/0013-structured-test-maintenance-ast-pruning.md))
+
+### Changed
+- **QA agent is now fully language-neutral.** Removed all per-language imperative code from `src/executor/agents/qa.py`: the Python-only `ast` merge (`_assemble_suite`/`_is_main_guard`), the Go package-clause guard (`_GO_PACKAGE_RE`/`_ensure_go_package_clause`/`_derive_go_package`), the `env_language == "go"` write-loop branch, and the Python-default zombie predicate. A single `_assemble_suite` writes the model's complete file verbatim with one safety net (empty delta + existing file + no `overwrite_existing` keeps the existing file). Dropped the now-dead `uses_ast`/`fence_lang` profile keys from `src/shared/core/environments.py`.
+- **Test correctness moved into prompts/skills.** `prompts/system/qa.md` gains **TEST-FILE IDENTITY FIDELITY** (a test's package/namespace/module must match its production sibling — never a foreign one) and a **Thin / untestable module** rule; the delta-based `STRUCTURED TEST MAINTENANCE` section is replaced by a uniform **TEST FILE ASSEMBLY** contract (return the complete file, preserve still-valid cases, `overwrite_existing=true`). `go_qa.md`/`python_qa.md`/`dotnet_qa.md` state the concrete per-stack idiom.
+
+### Fixed
+- **CIRCUIT BREAKER on `run_3dc1e2043ea74ed082f47ec1744e4d8e`** (Go `json2csv`): QA emitted a root `main_test.go` declaring `package converter` next to `package main`, failing `go test ./...` every cycle (`could not import "main"`). The wrong package now (a) is far less likely — the agent is told to match the production sibling and not to fabricate a foreign-package test for a thin entrypoint — and (b) self-heals if it still slips through: the compile gate classifies it test-only and the Reviewer routes it to QA via new `reviewer.md` case **(c) WRONG TEST PACKAGE/NAMESPACE**, instead of mis-routing to the Developer (who cannot edit tests → deadlock).
+
 ## [v0.13.0] - 2026-06-16 — Structured Test Maintenance (AST-Aware Pruning) & CI Security-Gate Fix
 
 ADR: [0013-structured-test-maintenance-ast-pruning](./docs/adr/0013-structured-test-maintenance-ast-pruning.md)

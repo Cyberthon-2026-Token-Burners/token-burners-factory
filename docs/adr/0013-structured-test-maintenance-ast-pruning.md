@@ -2,7 +2,10 @@
 
 ## Status
 
-Accepted
+Superseded by [0014](0014-language-neutral-qa-whole-file-assembly.md) — the AST-aware Python-only
+merge was removed to eliminate per-language hardcode in the QA agent. QA now uses one language-neutral
+whole-file assembly path; test correctness (packaging/namespace/placement) is driven by skills + the
+compile-gate→QA retry loop rather than engine-side surgery.
 
 ## Context
 

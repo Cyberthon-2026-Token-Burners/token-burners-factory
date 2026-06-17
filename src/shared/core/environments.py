@@ -70,8 +70,8 @@ SAST_CMD = "semgrep scan --error --metrics off --config /opt/semgrep-rules /work
 #                  "colocated" -> tests sit NEXT TO the source file (go test ./..., jest, dotnet test)
 #   source_exts    extensions QA generates tests for; everything else (.md, LICENSE, .gitignore,
 #                  lockfiles, package markers) is filtered out.
-#   uses_ast       only Python uses the ast.parse-based incremental assembly; other languages
-#                  use whole-file text assembly (the model returns the complete suite).
+# Assembly is language-neutral: the QA agent always returns the COMPLETE test file (skills-driven,
+# overwrite_existing=true) — there is no per-language merge/parser in the engine.
 # ==========================================================================================
 QA_LANGUAGE_PROFILES = {
     "python": {
@@ -80,8 +80,6 @@ QA_LANGUAGE_PROFILES = {
         "test_prefix": "test_",
         "test_suffix": ".py",
         "module_ref_style": "dotted",
-        "fence_lang": "python",
-        "uses_ast": True,
         "framework_label": "unittest (pytest-discovered)",
         "package_markers": ("__init__.py",),
     },
@@ -91,8 +89,6 @@ QA_LANGUAGE_PROFILES = {
         "test_prefix": "",
         "test_suffix": "_test.go",
         "module_ref_style": "path",
-        "fence_lang": "go",
-        "uses_ast": False,
         "framework_label": "Go testing (go test ./...)",
         "package_markers": ("go.mod", "go.sum"),
     },
@@ -102,8 +98,6 @@ QA_LANGUAGE_PROFILES = {
         "test_prefix": "",
         "test_suffix": ".test",   # extension is appended from the source file (.test.ts / .test.js)
         "module_ref_style": "path",
-        "fence_lang": "typescript",
-        "uses_ast": False,
         "framework_label": "jest/vitest (npm test)",
         "package_markers": ("package.json", "package-lock.json", "tsconfig.json", "yarn.lock"),
     },
@@ -113,8 +107,6 @@ QA_LANGUAGE_PROFILES = {
         "test_prefix": "",
         "test_suffix": "Tests.cs",
         "module_ref_style": "namespace",
-        "fence_lang": "csharp",
-        "uses_ast": False,
         "framework_label": "xUnit (dotnet test)",
         "package_markers": (),  # *.csproj excluded via the generic non-source filter below
     },

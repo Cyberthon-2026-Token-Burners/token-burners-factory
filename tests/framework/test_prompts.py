@@ -41,6 +41,23 @@ class GetSystemPromptTests(unittest.TestCase):
         self.assertIn("CRITICAL PACKAGING RULE", result)
         self.assertIn("never guess a path", result)
 
+    def test_qa_prompt_has_identity_fidelity_and_thin_module(self) -> None:
+        # Language-neutral correctness: test pkg/namespace matches the sibling; no foreign-pkg fabrication.
+        result = get_system_prompt("qa")
+        self.assertIn("TEST-FILE IDENTITY FIDELITY", result)
+        self.assertIn("Thin / untestable module", result)
+
+    def test_qa_prompt_has_whole_file_assembly(self) -> None:
+        # Unified, language-neutral assembly — no delta/AST language remains.
+        result = get_system_prompt("qa")
+        self.assertIn("TEST FILE ASSEMBLY", result)
+        self.assertNotIn("obsolete_test_names", result)
+
+    def test_reviewer_prompt_routes_wrong_test_package_to_qa(self) -> None:
+        # Closes the convergence gap: a wrong-package test is a QA defect, never the Developer's.
+        result = get_system_prompt("reviewer")
+        self.assertIn("WRONG TEST PACKAGE/NAMESPACE", result)
+
     def test_loads_template_with_placeholders(self) -> None:
         raw = get_system_prompt("developer")
         rendered = raw.format(
@@ -110,6 +127,27 @@ class GetSkillTests(unittest.TestCase):
         first = get_skill("strict_validation")
         second = get_skill("strict_validation")
         self.assertIs(first, second)
+
+
+class QASkillFidelityTests(unittest.TestCase):
+    """The per-language QA skills carry concrete package/namespace/placement + thin-entrypoint rules."""
+
+    def setUp(self) -> None:
+        get_skill.cache_clear()
+
+    def test_go_qa_forbids_foreign_package_in_entrypoint_test(self) -> None:
+        raw = get_skill("go_qa")
+        self.assertIn("colocated production sibling", raw)
+        self.assertIn("package main", raw)
+
+    def test_python_qa_has_placement_and_module_identity(self) -> None:
+        raw = get_skill("python_qa")
+        self.assertIn("File Placement & Module Identity", raw)
+        self.assertIn("__main__", raw)
+
+    def test_dotnet_qa_has_namespace_fidelity(self) -> None:
+        raw = get_skill("dotnet_qa")
+        self.assertIn("Namespace & Placement Fidelity", raw)
 
 
 class GenerateRepoMapTests(unittest.TestCase):
