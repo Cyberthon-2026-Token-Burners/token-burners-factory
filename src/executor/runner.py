@@ -426,8 +426,9 @@ def _cap_text(text: str, max_chars: int = FEEDBACK_MAX_CHARS) -> str:
 
 
 # Language-agnostic comment lead-ins. ''' is added beyond the spec list so a Python single-quote module
-# docstring (a valid justification) isn't flagged as undocumented.
-_COMMENT_PREFIXES = ("#", "//", "/*", "*", '"""', "'''")
+# docstring (a valid justification) isn't flagged as undocumented; '<!--' covers XML-family files
+# (.csproj / .xml / .html) whose only valid comment syntax the scanner would otherwise miss.
+_COMMENT_PREFIXES = ("#", "//", "/*", "*", '"""', "'''", "<!--")
 _GUARDRAIL_MESSAGE = (
     "SYSTEM GUARDRAIL: File `{file_name}` was created without an architectural justification. "
     "You must add a comment block at the top of the file explaining its purpose before the system "
@@ -470,7 +471,14 @@ async def enforce_documentation_guardrail(ctx: GlobalPipelineContext) -> str | N
         return None
 
     contract_files = {Path(f).as_posix() for f in (ctx.contract.files_to_modify if ctx.contract else [])}
-    uncontracted = [rel for rel in ctx.production_code_snapshot if Path(rel).as_posix() not in contract_files]
+    # Out-of-scope source on an infra-only ticket is the SCOPE-DISCIPLINE guardrail's domain — it
+    # soft-falls-through to the Reviewer at the reroute cap. The doc guardrail must NOT also police
+    # those same files, or the two deadlock: scope tolerates them while doc HARD-HALTs on them.
+    scope_owned = {Path(f).as_posix() for f in _out_of_scope_source_files(ctx)}
+    uncontracted = [
+        rel for rel in ctx.production_code_snapshot
+        if Path(rel).as_posix() not in contract_files and Path(rel).as_posix() not in scope_owned
+    ]
     if not uncontracted:
         return None
 
@@ -702,10 +710,11 @@ async def main():
             log.info("⏭️  DAG bypass: production code approved — regenerating tests only, Developer skipped.")
         else:
             dev_feedback = prev_dev_trace
+            dev_focus_files: list[str] | None = None
             guardrail_halt = False
             guardrail_msg: str | None = None
             for guardrail_retries in range(GUARDRAIL_MAX_REROUTES + 1):
-                await run_developer_node(ctx, dev_feedback)
+                await run_developer_node(ctx, dev_feedback, dev_focus_files)
                 # Snapshot the real working-tree production delta (git-tracked, full content) for the Reviewer.
                 build_production_snapshot(ctx)
 
@@ -726,6 +735,7 @@ async def main():
                             "You did not create these contracted files — create EACH of them now with the "
                             f"literal content required by the ticket: {', '.join(missing)}"
                         )
+                        dev_focus_files = None
                         continue
 
                 # Scope discipline: on an infra-only ticket the Developer must NOT implement source
@@ -742,11 +752,15 @@ async def main():
                             f"(no budget spent), Reviewer bypassed."
                         )
                         dev_feedback = (
-                            "These files are OUTSIDE this infrastructure task's scope — DELETE them: "
-                            f"{', '.join(out_of_scope)}. This ticket only initializes repository artifacts "
-                            "(the contracted files); application logic and entrypoints belong to later tickets, "
-                            "even if the README or project context mentions them."
+                            "SCOPE VIOLATION — this is an INFRASTRUCTURE-ONLY ticket and your previous "
+                            "attempt is REJECTED. Using your file tools, DELETE each of these out-of-scope "
+                            f"files NOW: {', '.join(out_of_scope)}. Do NOT recreate them and do NOT write "
+                            "any application logic, features, or entrypoints — that work belongs to LATER "
+                            "tickets, even if the README, blueprint, or project context references it. After "
+                            "deletion the ONLY production files for this ticket must be the contracted "
+                            f"artifacts: {', '.join(ctx.contract.files_to_modify)}."
                         )
+                        dev_focus_files = out_of_scope  # point the CLI at the files it must delete
                         continue
 
                 guardrail_msg = await enforce_documentation_guardrail(ctx)
@@ -759,6 +773,7 @@ async def main():
                         f"{guardrail_retries + 1}/{GUARDRAIL_MAX_REROUTES} to Developer (no budget spent), Reviewer bypassed."
                     )
                     dev_feedback = guardrail_msg  # focused reroute: just the comment instruction
+                    dev_focus_files = None
                     continue
 
                 # Compile gate: give the Developer REAL build feedback before the expensive QA/Reviewer
@@ -785,6 +800,7 @@ async def main():
                     f"{guardrail_retries + 1}/{GUARDRAIL_MAX_REROUTES} to Developer (no budget spent), Reviewer bypassed."
                 )
                 dev_feedback = "The production code failed to compile in the sandbox. Fix it.\n\n" + _cap_text("\n".join(build_lines))
+                dev_focus_files = None
 
             if guardrail_halt:
                 ctx.error_trace = guardrail_msg

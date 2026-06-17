@@ -966,7 +966,7 @@ class TopBlockCommentScannerTests(unittest.TestCase):
             self.assertIsNone(orchestrator._top_block_has_comment(Path(td) / "nope.py"))
 
     def test_language_agnostic_prefixes_are_detected(self) -> None:
-        for lead in ("// c-style", "/* block", "* continuation", '"""docstring', "'''docstring"):
+        for lead in ("// c-style", "/* block", "* continuation", '"""docstring', "'''docstring", "<!-- xml/csproj"):
             with TemporaryDirectory() as td:
                 p = self._write(td, "a.txt", lead + "\nbody\n")
                 self.assertIs(orchestrator._top_block_has_comment(p), True, lead)
@@ -1056,6 +1056,19 @@ class EnforceDocumentationGuardrailTests(unittest.IsolatedAsyncioTestCase):
             with mock.patch.object(orchestrator, "get_pipeline_snapshot_files", new_callable=AsyncMock) as git:
                 self.assertIsNone(await orchestrator.enforce_documentation_guardrail(ctx))
             git.assert_not_awaited()  # contracted-only candidates short-circuit before any git call
+
+    async def test_out_of_scope_source_on_infra_ticket_is_not_doc_flagged(self) -> None:
+        # Regression: on an infra-only contract the SCOPE-DISCIPLINE guardrail owns over-delivered
+        # source (it soft-falls-through to the Reviewer at the cap). The doc guardrail must NOT also
+        # flag the same file, or the two deadlock into a Hard Halt on otherwise-complete code.
+        with TemporaryDirectory() as td:
+            repo = Path(td)
+            ctx = self._ctx(repo, ["README.md"], ["src/main.py"])  # infra-only ticket, source overreach
+            (repo / "src").mkdir(parents=True, exist_ok=True)
+            (repo / "src" / "main.py").write_text("def x():\n    return 1\n", encoding="utf-8")  # no comment
+            with mock.patch.object(orchestrator, "get_pipeline_snapshot_files",
+                                   new=AsyncMock(return_value=["src/main.py"])):
+                self.assertIsNone(await orchestrator.enforce_documentation_guardrail(ctx))
 
 
 class DocumentationGuardrailLoopTests(unittest.IsolatedAsyncioTestCase):
@@ -1197,6 +1210,50 @@ class DocumentationGuardrailLoopTests(unittest.IsolatedAsyncioTestCase):
             reviewer.assert_awaited_once()
             self.assertEqual(ctx.current_attempt, 2)          # one functional cycle consumed
             self.assertIn("LICENSE", developer.await_args_list[1].args[1])  # missing file named in the reroute
+
+    async def test_out_of_scope_reroute_commands_deletion_and_focuses_the_cli(self) -> None:
+        # Arrange — infra-only ticket; the Developer drops an out-of-scope source file on the first
+        # pass, deletes it on the second. The reroute must name the file + "delete" and surface it to
+        # the CLI as focus_files so the agent is pointed at exactly what it must remove.
+        with TemporaryDirectory() as td:
+            ctx = self._resume_ctx(Path(td))
+
+            async def _approve(*_a, **_k) -> None:
+                ctx.review_report = ReviewReport(
+                    code_quality_analysis="ok", test_integrity_analysis="ok", log_verification_analysis="ok",
+                    code_quality_approved=True, test_integrity_approved=True, dev_diagnostic_payload="",
+                )
+
+            with (
+                mock.patch.object(orchestrator, "check_environment"),
+                mock.patch.object(orchestrator, "reconfigure_logging"),
+                mock.patch.object(orchestrator, "build_production_snapshot"),
+                mock.patch.object(orchestrator, "run_build_gate", new=AsyncMock(return_value=(True, []))),
+                mock.patch.object(orchestrator, "_missing_contract_files", return_value=[]),
+                mock.patch.object(orchestrator, "_out_of_scope_source_files",
+                                  side_effect=[["src/Program.cs"], []]),
+                mock.patch.object(orchestrator, "parse_args", return_value=orchestrator.RunConfig(
+                    description=None, base_branch="main", resume=Path("cp.json"), reset_attempts=False)),
+                mock.patch.object(GlobalPipelineContext, "load_checkpoint", return_value=ctx),
+                mock.patch.object(orchestrator, "run_techlead_node", new_callable=AsyncMock),
+                mock.patch.object(orchestrator, "run_qa_agent_node", new_callable=AsyncMock),
+                mock.patch.object(orchestrator, "run_developer_node", new_callable=AsyncMock) as developer,
+                mock.patch.object(orchestrator, "enforce_documentation_guardrail", new=AsyncMock(return_value=None)),
+                mock.patch.object(orchestrator, "run_reviewer_node", new=AsyncMock(side_effect=_approve)) as reviewer,
+                mock.patch.object(orchestrator, "run_qa_unit_tests", new=AsyncMock(return_value=(True, []))),
+                mock.patch.object(orchestrator, "run_security_scan", new=AsyncMock(return_value=(True, []))),
+                mock.patch.object(orchestrator, "finalize_transaction", new_callable=AsyncMock),
+                mock.patch.object(orchestrator, "run_techwriter_node", new_callable=AsyncMock),
+            ):
+                await orchestrator.main()
+
+            self.assertEqual(developer.await_count, 2)        # initial + one free scope reroute
+            reviewer.assert_awaited_once()
+            self.assertEqual(ctx.current_attempt, 2)          # one functional cycle consumed
+            reroute = developer.await_args_list[1]
+            self.assertIn("src/Program.cs", reroute.args[1])  # file named in the reroute feedback
+            self.assertIn("DELETE", reroute.args[1])          # imperative deletion command
+            self.assertEqual(reroute.args[2], ["src/Program.cs"])  # CLI focused on the file to delete
 
     async def test_compile_gate_test_only_failure_does_not_reroute_developer(self) -> None:
         # Arrange — compile gate fails but ONLY on test files (Go package loader parsing `*_test.go`).

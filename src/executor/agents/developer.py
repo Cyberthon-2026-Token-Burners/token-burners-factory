@@ -4,7 +4,9 @@ from src.shared.core.models import GlobalPipelineContext
 from src.shared.core.prompts import get_system_prompt, build_agent_context
 from src.shared.utils.subprocess_helpers import run_claude_cli
 
-async def run_developer_node(ctx: GlobalPipelineContext, error_trace: str = "") -> None:
+async def run_developer_node(
+    ctx: GlobalPipelineContext, error_trace: str = "", focus_files: list[str] | None = None
+) -> None:
     log.info(f"🟩 [ROLE] Developer Agent | [PROVIDER] Claude | [MODEL] {DEVELOPER_MODEL} | [EFFORT] {DEVELOPER_EFFORT}")
 
     repo_dir_path = ctx.workspace_paths.repo_dir
@@ -31,11 +33,24 @@ async def run_developer_node(ctx: GlobalPipelineContext, error_trace: str = "") 
             f"authoritative) ===\n{ctx.contract.shared_context}"
         )
 
+    # On a reroute the Developer is a FRESH Claude session — it has no memory of the prior correction.
+    # A trailing footer loses to the strong system-prompt directives above it, so the correction is
+    # PREPENDED as a mandatory, contract-overriding header: highest salience, read first.
     if error_trace:
-        prompt += f"\n\nValidation Failure Context:\n{error_trace}"
+        prompt = (
+            "⚠️ MANDATORY CORRECTION (overrides the Contract below for this turn) — your previous "
+            "attempt was REJECTED. You MUST resolve the following before doing anything else:\n"
+            f"{error_trace}\n"
+            + "=" * 60 + "\n\n"
+            + prompt
+        )
 
     # The clone is already a git repo on feat/ticket-<id>; agents only mutate the working tree.
     code_files = [str(repo_dir_path / f) for f in ctx.contract.files_to_modify]
+    # Surface the exact files a reroute targets (e.g. out-of-scope files to delete) so the CLI focuses
+    # the agent on them; they stay under allowed_root so _assert_within_root passes.
+    if focus_files:
+        code_files += [str(repo_dir_path / f) for f in focus_files]
     returncode, usage = await run_claude_cli(
         prompt, code_files, allowed_root=repo_dir, model=DEVELOPER_MODEL, effort=DEVELOPER_EFFORT,
         timeout=DEVELOPER_CLI_TIMEOUT, idle_timeout=DEVELOPER_CLI_IDLE_TIMEOUT,

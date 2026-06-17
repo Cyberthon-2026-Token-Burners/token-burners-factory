@@ -67,6 +67,39 @@ class DeveloperContextInjectionTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(_DEV_BLOCK, prompt)
 
 
+_CORRECTION_MARKER = "⚠️ MANDATORY CORRECTION"
+
+
+class DeveloperRerouteFeedbackTests(unittest.IsolatedAsyncioTestCase):
+    """On a reroute the correction is prepended (highest salience) and target files reach the CLI."""
+
+    async def _run(self, error_trace: str, focus_files=None) -> tuple[str, list[str]]:
+        with TemporaryDirectory() as td:
+            ctx = GlobalPipelineContext(pr_description="x", workspace_paths=_paths(Path(td)))
+            ctx.contract = _contract("")
+            with (
+                mock.patch.object(developer, "build_agent_context", new=AsyncMock(return_value="SKILLS")),
+                mock.patch.object(developer, "run_claude_cli", new=AsyncMock(return_value=(0, None))) as cli,
+            ):
+                await developer.run_developer_node(ctx, error_trace, focus_files)
+            return cli.await_args.args[0], cli.await_args.args[1]  # (prompt, files)
+
+    async def test_correction_is_prepended_before_the_contract(self) -> None:
+        prompt, _ = await self._run("DELETE src/main.py — out of scope.")
+        self.assertIn(_CORRECTION_MARKER, prompt)
+        self.assertIn("DELETE src/main.py", prompt)
+        # The correction must come BEFORE the contract Directives, not as a trailing footnote.
+        self.assertLess(prompt.index(_CORRECTION_MARKER), prompt.index("Implement add(a, b)."))
+
+    async def test_no_correction_block_on_first_run(self) -> None:
+        prompt, _ = await self._run("")
+        self.assertNotIn(_CORRECTION_MARKER, prompt)
+
+    async def test_focus_files_reach_the_cli(self) -> None:
+        _, files = await self._run("delete it", focus_files=["src/overreach.py"])
+        self.assertTrue(any(f.replace("\\", "/").endswith("src/overreach.py") for f in files))
+
+
 class QaContextInjectionTests(unittest.IsolatedAsyncioTestCase):
     """The QA system prompt carries the reference PROJECT CONTEXT block iff shared_context is set."""
 
