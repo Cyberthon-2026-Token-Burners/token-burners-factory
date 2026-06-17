@@ -9,6 +9,7 @@ from src.shared.core.environments import get_qa_profile, is_testable_source, der
 from src.shared.core.prompts import get_system_prompt_sections, build_agent_context, generate_repo_map
 from src.shared.utils.llm import run_structured_llm
 from src.shared.utils.git_helpers import get_git_root, get_pipeline_snapshot_files
+from src.executor.nodes.gates import run_format_pass
 
 # Edge markdown fences the model occasionally wraps a code field in (belt-and-braces; the
 # QATestSuite validator already strips these at construction). Language-neutral: the opening
@@ -219,6 +220,13 @@ async def run_qa_agent_node(ctx: GlobalPipelineContext, error_trace: str = "") -
             f.write(final_code)
         written_paths.append(str(test_path))
         assembled.append(final_code)
+
+    # Deterministic cleanup over the freshly written tests BEFORE snapshotting/reviewing: strips unused
+    # imports (a HARD compile error in Go) so the generated suite doesn't bounce the compile gate and
+    # burn a QA→Reviewer cycle. Non-fatal — a formatter hiccup never blocks the run. Runs before the
+    # snapshot below so ctx.test_code_snapshot captures the cleaned files.
+    if written_paths:
+        await run_format_pass(env_id, str(repo_dir))
 
     # Reviewer-routed zombie disposal: delete whole test files whose target module was intentionally
     # removed/renamed (they can never collect). Aggregated across per-module suites, deduped, guarded.

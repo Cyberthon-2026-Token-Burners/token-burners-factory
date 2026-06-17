@@ -10,6 +10,9 @@
 #   setup_cmd    dependency restore, run in a NETWORK-ON phase before the network-OFF build/test.
 #   build_cmd    compile/typecheck only (NEVER runs tests) — the post-Developer compile gate.
 #   test_cmd     the functional-test command (network-OFF).
+#   format_cmd   OPTIONAL deterministic cleanup run over freshly generated test files (network-OFF),
+#                primarily to strip unused imports before the compile gate. Best-effort/non-fatal.
+
 # SAST is generic across all stacks — one Semgrep image (SAST_IMAGE/SAST_CMD), never per-language.
 
 SUPPORTED_ENVIRONMENTS = {
@@ -22,6 +25,9 @@ SUPPORTED_ENVIRONMENTS = {
         # insert only the test file's own dir, breaking cross-package imports. See BACKLOG #15.
         "test_cmd": "python -m pytest",
         "setup_cmd": "pip install -r requirements.txt 2>/dev/null || true",
+        # format_cmd: deterministic post-QA cleanup pass — strips unused imports (the #1 cause of a
+        # compile-gate bounce on freshly generated tests). ruff --fix is autofix-only; non-fatal.
+        "format_cmd": "ruff check --fix --quiet .",
         "sandbox_env": {"HOME": "/tmp", "XDG_CACHE_HOME": "/tmp/.cache", "PYTHONDONTWRITEBYTECODE": "1"},
         "language_id": "python",
         "description": "Python 3.12 core runtime (pytest; Semgrep SAST).",
@@ -31,6 +37,11 @@ SUPPORTED_ENVIRONMENTS = {
         "build_cmd": "go build ./...",
         "test_cmd": "go test ./...",
         "setup_cmd": "go mod download",
+        # goimports (NOT gofmt) removes unused imports — Go treats those as a HARD compile error, the
+        # exact failure that bounced QA's tests through an extra Reviewer cycle. Baked into the image
+        # (docker/go.Dockerfile); falls back to gofmt (always present) if the build couldn't fetch
+        # goimports behind a proxy — gofmt still formats, just won't strip imports. Non-fatal post-QA pass.
+        "format_cmd": "goimports -w . 2>/dev/null || gofmt -w .",
         "sandbox_env": {"HOME": "/tmp", "GOCACHE": "/tmp/.cache/go-build", "GOPATH": "/tmp/go", "GOMODCACHE": "/tmp/go/pkg/mod"},
         "language_id": "go",
         "description": "Go 1.23 CLI runtime, full compile toolchain (go test; Semgrep SAST).",
@@ -40,6 +51,9 @@ SUPPORTED_ENVIRONMENTS = {
         "build_cmd": "npm run build --if-present",
         "test_cmd": "npm test",
         "setup_cmd": "npm ci || npm install",
+        # Best-effort: only fixes if a project-local eslint is installed (--no-install never fetches).
+        # Non-fatal, so a project without eslint just skips the cleanup.
+        "format_cmd": "npx --no-install eslint --fix . || true",
         "sandbox_env": {"HOME": "/tmp", "npm_config_cache": "/tmp/.npm"},
         "language_id": "node",
         "description": "Node.js 20 / JS / React (node, npm — frontend build & tests; Semgrep SAST).",
@@ -49,6 +63,8 @@ SUPPORTED_ENVIRONMENTS = {
         "build_cmd": "dotnet build",
         "test_cmd": "dotnet test",
         "setup_cmd": "dotnet restore",
+        # Best-effort: --no-restore keeps it network-OFF; removes unused usings where the SDK supports it.
+        "format_cmd": "dotnet format --no-restore",
         "sandbox_env": {"HOME": "/tmp", "DOTNET_CLI_HOME": "/tmp", "NUGET_PACKAGES": "/tmp/nuget", "XDG_DATA_HOME": "/tmp/.local"},
         "language_id": "dotnet",
         "description": ".NET 10 SDK (full toolchain — dotnet build & dotnet test; Semgrep SAST).",

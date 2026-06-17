@@ -14,6 +14,7 @@ from src.shared.core.observability import log, reconfigure_logging
 from src.shared.core.config import check_environment, PIPELINE_BUDGET_TOKENS, PIPELINE_BUDGET_USD
 from src.shared.core.models import GlobalPipelineContext, WorkspacePaths, RUNS_BASE
 from src.shared.core.environments import is_test_file, get_qa_profile
+from src.shared.core.prompts import generate_repo_map
 from src.shared.utils.git_helpers import get_git_root, get_pipeline_snapshot_files
 from src.shared.utils.redaction import redact
 from src.executor.agents.techlead import run_techlead_node
@@ -205,6 +206,9 @@ async def finalize_transaction(ctx: GlobalPipelineContext, push: bool = False) -
 
     desc = (ctx.pr_description or "").strip()
     summary = next((line.strip() for line in desc.splitlines() if line.strip()), "") if desc else ""
+    # First line is often a markdown heading (`# Title`) — strip the leading hashes/space so the
+    # conventional-commit subject reads cleanly (e.g. "feat(T-01): Repository initialization …").
+    summary = summary.lstrip("#").strip()
     summary = (summary or ctx.ticket or "automated change")[:72]
     subject = f"feat({ctx.ticket or 'ticket'}): {summary}"
 
@@ -609,7 +613,10 @@ async def main():
             blueprint_path = Path(cfg.file).parent / "blueprint.md"
             if blueprint_path.exists():
                 bp_content = blueprint_path.read_text(encoding="utf-8")
-                ctx.pr_description = (
+                # Build the routing brief in a SEPARATE field — do NOT overwrite pr_description, which
+                # stays the clean ticket text used for the commit subject / PR body. Leaking the
+                # [CURRENT TASK …] header into pr_description is what produced the placeholder commit.
+                ctx.techlead_brief = (
                     f"[CURRENT TASK — the authoritative scope of this contract]\n{ctx.pr_description}\n\n"
                     f"[ARCHITECTURAL BLUEPRINT — reference only; whole-project specs, NOT your file list]\n{bp_content}"
                 )
@@ -680,6 +687,10 @@ async def main():
                 await run_developer_node(ctx, dev_feedback, dev_focus_files)
                 # Snapshot the real working-tree production delta (git-tracked, full content) for the Reviewer.
                 build_production_snapshot(ctx)
+                # Refresh the repo map now that the Developer has materialized the contract files. The
+                # early map (built at the TechLead node, before any code existed) is stale — without this
+                # the checkpoint/Reviewer see only the pre-clone tree (e.g. just LICENSE).
+                ctx.repository_map = generate_repo_map(ctx.workspace_paths.repo_dir)
 
                 # Contract completeness: the Developer must create EVERY contracted file (it tends to
                 # skip non-code artifacts like .gitignore/LICENSE). Fast-fail reroute on any missing

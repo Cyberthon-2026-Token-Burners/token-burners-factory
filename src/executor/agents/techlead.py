@@ -46,7 +46,7 @@ async def run_techlead_node(ctx: GlobalPipelineContext) -> None:
             {
                 "role": "user",
                 "content": f"=== EXISTING REPOSITORY TOPOLOGY ===\n{ctx.repository_map}\n\n"
-                + ctx.pr_description,
+                + (ctx.techlead_brief or ctx.pr_description),
             },
         ],
     )

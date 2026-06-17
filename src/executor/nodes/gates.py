@@ -139,6 +139,28 @@ async def run_build_gate(environment_id: str, repo_root: str) -> tuple[bool, lis
     return returncode == 0, log_lines
 
 
+async def run_format_pass(environment_id: str, repo_root: str) -> None:
+    """Deterministic cleanup run over the workspace right after QA writes test files, before the
+    compile gate. Its main job is stripping unused imports (a HARD compile error in Go) so generated
+    tests don't bounce QA→Reviewer over a trivial `imported and not used`. Runs the env's optional
+    `format_cmd` (network OFF). STRICTLY non-fatal: any missing tool, non-zero exit, or sandbox error
+    is logged and swallowed — a formatter hiccup must never derail the pipeline. No-ops when the env
+    declares no `format_cmd`."""
+    format_cmd = SUPPORTED_ENVIRONMENTS[environment_id].get("format_cmd")
+    if not format_cmd:
+        return
+    try:
+        log.debug(f"Executing format pass [{environment_id}] (network OFF): {format_cmd}")
+        rc, stdout, stderr = await execute_in_sandbox(environment_id, format_cmd, repo_root, network="none")
+        if rc != 0:
+            tail = (stderr or stdout).strip().splitlines()[-3:]
+            log.warning(f"🟡 Format pass [{environment_id}] exited {rc} (non-fatal): {' | '.join(tail)}")
+        else:
+            log.debug(f"Format pass [{environment_id}] applied cleanly.")
+    except Exception as exc:  # never let a cleanup pass break the run
+        log.warning(f"🟡 Format pass [{environment_id}] errored (non-fatal): {exc}")
+
+
 async def run_security_scan(environment_id: str, repo_root: str) -> tuple[bool, list[str]]:
     """Generic SAST gate: one Semgrep image scans every language. Runs fully OFFLINE — the image
     vendors its rules, so no semgrep.dev call (which fails behind a corporate TLS proxy) and no

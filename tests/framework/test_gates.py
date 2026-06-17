@@ -9,8 +9,8 @@ from unittest import mock
 from unittest.mock import AsyncMock, call
 
 from src.executor.nodes.gates import (
-    run_qa_unit_tests, run_security_scan, run_build_gate, build_failure_is_test_only,
-    build_failure_is_environmental, _has_test_files,
+    run_qa_unit_tests, run_security_scan, run_build_gate, run_format_pass,
+    build_failure_is_test_only, build_failure_is_environmental, _has_test_files,
 )
 from src.shared.core.environments import SUPPORTED_ENVIRONMENTS, SAST_IMAGE, SAST_CMD
 
@@ -78,6 +78,40 @@ class RunQaUnitTestsTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertFalse(ok)
         self.assertEqual(log_lines, ["out line", "err line"])
+
+
+class RunFormatPassTests(unittest.IsolatedAsyncioTestCase):
+    """The post-QA format pass runs the env's optional format_cmd (network OFF) and is strictly
+    non-fatal: a missing key no-ops, and a non-zero exit or sandbox error is swallowed."""
+
+    _GO = "go-1.23-cli"
+    _GO_FMT = SUPPORTED_ENVIRONMENTS[_GO]["format_cmd"]
+
+    @mock.patch("src.executor.nodes.gates.execute_in_sandbox", new_callable=AsyncMock)
+    async def test_runs_format_cmd_network_off(self, mock_sandbox: AsyncMock) -> None:
+        mock_sandbox.return_value = (0, "", "")
+        await run_format_pass(self._GO, _REPO)
+        mock_sandbox.assert_awaited_once_with(self._GO, self._GO_FMT, _REPO, network="none")
+
+    @mock.patch("src.executor.nodes.gates.execute_in_sandbox", new_callable=AsyncMock)
+    async def test_noop_when_no_format_cmd(self, mock_sandbox: AsyncMock) -> None:
+        # Build a throwaway env spec with no format_cmd; the pass must not touch the sandbox.
+        env_id = "no-fmt-env"
+        with mock.patch.dict(SUPPORTED_ENVIRONMENTS, {env_id: {"image": "x"}}, clear=False):
+            await run_format_pass(env_id, _REPO)
+        mock_sandbox.assert_not_awaited()
+
+    @mock.patch("src.executor.nodes.gates.execute_in_sandbox", new_callable=AsyncMock)
+    async def test_nonzero_exit_is_non_fatal(self, mock_sandbox: AsyncMock) -> None:
+        mock_sandbox.return_value = (1, "", "goimports: boom")
+        # Must NOT raise — a formatter hiccup never derails the pipeline.
+        await run_format_pass(self._GO, _REPO)
+        mock_sandbox.assert_awaited_once()
+
+    @mock.patch("src.executor.nodes.gates.execute_in_sandbox", new_callable=AsyncMock)
+    async def test_sandbox_exception_is_swallowed(self, mock_sandbox: AsyncMock) -> None:
+        mock_sandbox.side_effect = RuntimeError("docker unavailable")
+        await run_format_pass(self._GO, _REPO)  # no raise
 
 
 class EmptySuiteGateTests(unittest.IsolatedAsyncioTestCase):

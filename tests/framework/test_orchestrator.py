@@ -845,6 +845,31 @@ class FinalizeTransactionTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("user.name=AI Agent (DEMO-1)", commit_cmd)
             self.assertIn("user.email=agent-demo-1@sdlc-factory.local", commit_cmd)
 
+    async def test_markdown_heading_description_yields_clean_subject(self) -> None:
+        # Arrange — pr_description leads with a markdown heading (the common ticket shape). The
+        # subject must strip the leading `#` and must NOT leak any [CURRENT TASK …] template header
+        # (that scaffolding now lives in techlead_brief, never pr_description).
+        with TemporaryDirectory() as td:
+            ctx = self._ctx(Path(td))
+            ctx.pr_description = "# Repository initialization and core converter logic\n\nbody"
+            ctx.techlead_brief = "[CURRENT TASK — the authoritative scope of this contract]\n# X"
+            proc = mock.MagicMock()
+            proc.returncode = 0
+            proc.communicate = AsyncMock(return_value=(b"", b""))
+            with (
+                mock.patch.object(orchestrator, "get_git_root", new=AsyncMock(return_value="/repo")),
+                mock.patch.object(orchestrator, "_has_staged_changes", new=AsyncMock(return_value=True)),
+                mock.patch("asyncio.create_subprocess_exec", new=AsyncMock(return_value=proc)) as exec_mock,
+            ):
+                # Act
+                await orchestrator.finalize_transaction(ctx, push=False)
+            # Assert — clean conventional subject, no heading hash, no template placeholder.
+            commit_cmd = exec_mock.call_args_list[0].args
+            self.assertIn("feat(DEMO-1): Repository initialization and core converter logic", commit_cmd)
+            self.assertNotIn("# Repository initialization and core converter logic", commit_cmd)
+            joined = " ".join(str(a) for a in commit_cmd)
+            self.assertNotIn("CURRENT TASK", joined)
+
     async def test_skips_commit_when_index_clean(self) -> None:
         # Arrange — empty-commit guard trips.
         with TemporaryDirectory() as td:

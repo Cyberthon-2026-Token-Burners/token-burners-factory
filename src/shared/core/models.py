@@ -250,7 +250,11 @@ class ReviewReport(BaseModel):
     )
 
 class GlobalPipelineContext(BaseModel):
-    pr_description: str
+    pr_description: str              # CLEAN ticket description — SSOT for the commit subject / PR body.
+    # TechLead routing brief: pr_description prefixed with the [CURRENT TASK] header + appended
+    # [ARCHITECTURAL BLUEPRINT]. Kept SEPARATE from pr_description so the template scaffolding never
+    # leaks into the commit/PR (the TechLead is the sole consumer). Empty on a resumed run → falls back.
+    techlead_brief: str = ""
     base_branch: str = "main"
     ticket: str = ""
     # Bound by the orchestrator via `WorkspacePaths.for_run` once the git-anchored session
