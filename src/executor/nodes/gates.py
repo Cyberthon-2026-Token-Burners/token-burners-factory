@@ -1,3 +1,4 @@
+import os
 import re
 
 from src.shared.core.observability import log
@@ -19,6 +20,20 @@ def build_failure_is_test_only(environment_id: str, log_lines: list[str]) -> boo
         return False
     return all(is_test_file(environment_id, p) for p in referenced)
 
+
+def _has_test_files(environment_id: str, repo_root: str) -> bool:
+    """True if the workspace holds ≥1 test file for the target stack (language-aware, via the
+    is_test_file SSOT). Runner-agnostic empty-suite detection: rather than special-casing each
+    runner's "no tests" exit code (pytest 5, jest 1, go/dotnet 0), ask whether any test file is
+    even present. None present → the functional gate is a no-op pass (e.g. an infra-only ticket).
+    The Reviewer's test_integrity gate remains the backstop when tests WERE expected."""
+    for root, dirs, files in os.walk(repo_root):
+        if ".git" in dirs:
+            dirs.remove(".git")  # never descend into git internals
+        if any(is_test_file(environment_id, name) for name in files):
+            return True
+    return False
+
 # ==========================================
 # PARALLEL RUNTIME GATES (Sandboxed execution)
 # ==========================================
@@ -29,6 +44,13 @@ async def run_qa_unit_tests(environment_id: str, repo_root: str) -> tuple[bool, 
     baked into the image); the tests themselves then run with network OFF (isolated execution)."""
     spec = SUPPORTED_ENVIRONMENTS[environment_id]
     log_lines: list[str] = []
+
+    # Empty-suite short-circuit: with no test files there is nothing to execute, so the gate is a
+    # no-op pass — skipping the dependency restore too. This avoids a fictitious failure from a
+    # runner that exits non-zero on "no tests collected" (pytest 5, jest 1) for infra-only tickets.
+    if not _has_test_files(environment_id, repo_root):
+        log.debug(f"No test files present for [{environment_id}] — functional-test gate is a no-op pass.")
+        return True, ["No test files present — functional-test gate skipped (empty suite is a no-op pass)."]
 
     setup_cmd = spec.get("setup_cmd")
     if setup_cmd:

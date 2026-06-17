@@ -9,7 +9,7 @@ from unittest import mock
 from unittest.mock import AsyncMock, call
 
 from src.executor.nodes.gates import (
-    run_qa_unit_tests, run_security_scan, run_build_gate, build_failure_is_test_only,
+    run_qa_unit_tests, run_security_scan, run_build_gate, build_failure_is_test_only, _has_test_files,
 )
 from src.shared.core.environments import SUPPORTED_ENVIRONMENTS, SAST_IMAGE, SAST_CMD
 
@@ -21,10 +21,14 @@ _BUILD = SUPPORTED_ENVIRONMENTS[_ENV]["build_cmd"]
 
 
 class RunQaUnitTestsTests(unittest.IsolatedAsyncioTestCase):
-    """The QA gate restores deps (network ON) then runs the registry test_cmd (network OFF)."""
+    """The QA gate restores deps (network ON) then runs the registry test_cmd (network OFF).
 
+    The empty-suite guard (`_has_test_files`) is forced True here so these cases exercise the
+    restore/test phasing; the no-test no-op pass is covered by EmptySuiteGateTests below."""
+
+    @mock.patch("src.executor.nodes.gates._has_test_files", return_value=True)
     @mock.patch("src.executor.nodes.gates.execute_in_sandbox", new_callable=AsyncMock)
-    async def test_restore_then_test_with_network_phasing(self, mock_sandbox: AsyncMock) -> None:
+    async def test_restore_then_test_with_network_phasing(self, mock_sandbox: AsyncMock, _has: mock.Mock) -> None:
         mock_sandbox.side_effect = [(0, "go: no module dependencies to download", ""), (0, "ran 3 tests", "")]
 
         ok, log_lines = await run_qa_unit_tests(environment_id=_ENV, repo_root=_REPO)
@@ -38,8 +42,9 @@ class RunQaUnitTestsTests(unittest.IsolatedAsyncioTestCase):
         # Benign successful-restore output must NOT pollute the test result context.
         self.assertEqual(log_lines, ["ran 3 tests"])
 
+    @mock.patch("src.executor.nodes.gates._has_test_files", return_value=True)
     @mock.patch("src.executor.nodes.gates.execute_in_sandbox", new_callable=AsyncMock)
-    async def test_successful_restore_noise_excluded_from_test_failure(self, mock_sandbox: AsyncMock) -> None:
+    async def test_successful_restore_noise_excluded_from_test_failure(self, mock_sandbox: AsyncMock, _has: mock.Mock) -> None:
         # Restore succeeds (benign stderr), tests FAIL — the failure context is the test output only.
         mock_sandbox.side_effect = [
             (0, "go: no module dependencies to download", ""),
@@ -52,8 +57,9 @@ class RunQaUnitTestsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(log_lines, ["processor_test.go:9: undefined: Convert"])
         self.assertNotIn("go: no module dependencies to download", log_lines)
 
+    @mock.patch("src.executor.nodes.gates._has_test_files", return_value=True)
     @mock.patch("src.executor.nodes.gates.execute_in_sandbox", new_callable=AsyncMock)
-    async def test_restore_failure_short_circuits_before_tests(self, mock_sandbox: AsyncMock) -> None:
+    async def test_restore_failure_short_circuits_before_tests(self, mock_sandbox: AsyncMock, _has: mock.Mock) -> None:
         mock_sandbox.return_value = (1, "could not resolve deps", "")
 
         ok, log_lines = await run_qa_unit_tests(environment_id=_ENV, repo_root=_REPO)
@@ -62,14 +68,48 @@ class RunQaUnitTestsTests(unittest.IsolatedAsyncioTestCase):
         mock_sandbox.assert_awaited_once_with(_ENV, _SETUP, _REPO, network="bridge")  # tests never reached
         self.assertIn("🚨 Dependency restore failed:", log_lines[0])
 
+    @mock.patch("src.executor.nodes.gates._has_test_files", return_value=True)
     @mock.patch("src.executor.nodes.gates.execute_in_sandbox", new_callable=AsyncMock)
-    async def test_nonzero_test_exit_reports_failure(self, mock_sandbox: AsyncMock) -> None:
+    async def test_nonzero_test_exit_reports_failure(self, mock_sandbox: AsyncMock, _has: mock.Mock) -> None:
         mock_sandbox.side_effect = [(0, "", ""), (1, "out line", "err line")]
 
         ok, log_lines = await run_qa_unit_tests(environment_id=_ENV, repo_root=_REPO)
 
         self.assertFalse(ok)
         self.assertEqual(log_lines, ["out line", "err line"])
+
+
+class EmptySuiteGateTests(unittest.IsolatedAsyncioTestCase):
+    """An empty test suite (no test files) is a no-op PASS — never a fictitious functional failure
+    from a runner that exits non-zero on "no tests collected" (pytest 5, jest 1)."""
+
+    @mock.patch("src.executor.nodes.gates._has_test_files", return_value=False)
+    @mock.patch("src.executor.nodes.gates.execute_in_sandbox", new_callable=AsyncMock)
+    async def test_no_test_files_passes_without_running_runner(self, mock_sandbox: AsyncMock, _has: mock.Mock) -> None:
+        ok, log_lines = await run_qa_unit_tests(environment_id=_ENV, repo_root=_REPO)
+
+        self.assertTrue(ok)
+        # Neither dependency restore nor the test runner is invoked — there is nothing to execute.
+        mock_sandbox.assert_not_awaited()
+        self.assertTrue(any("empty suite" in line for line in log_lines))
+
+
+class HasTestFilesTests(unittest.TestCase):
+    """`_has_test_files` applies the env-aware `is_test_file` SSOT over the workspace tree."""
+
+    def test_detects_python_test_file(self) -> None:
+        import tempfile, os as _os
+        with tempfile.TemporaryDirectory() as d:
+            _os.makedirs(_os.path.join(d, "tests"))
+            open(_os.path.join(d, "tests", "test_converter.py"), "w").close()
+            self.assertTrue(_has_test_files(_ENV, d))
+
+    def test_no_test_files_in_infra_only_tree(self) -> None:
+        import tempfile, os as _os
+        with tempfile.TemporaryDirectory() as d:
+            for name in (".gitignore", "README.md", "LICENSE"):
+                open(_os.path.join(d, name), "w").close()
+            self.assertFalse(_has_test_files(_ENV, d))
 
 
 class RunBuildGateTests(unittest.IsolatedAsyncioTestCase):
