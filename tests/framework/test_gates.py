@@ -25,7 +25,7 @@ class RunQaUnitTestsTests(unittest.IsolatedAsyncioTestCase):
 
     @mock.patch("src.executor.nodes.gates.execute_in_sandbox", new_callable=AsyncMock)
     async def test_restore_then_test_with_network_phasing(self, mock_sandbox: AsyncMock) -> None:
-        mock_sandbox.side_effect = [(0, "restored", ""), (0, "ran 3 tests", "")]
+        mock_sandbox.side_effect = [(0, "go: no module dependencies to download", ""), (0, "ran 3 tests", "")]
 
         ok, log_lines = await run_qa_unit_tests(environment_id=_ENV, repo_root=_REPO)
 
@@ -35,7 +35,22 @@ class RunQaUnitTestsTests(unittest.IsolatedAsyncioTestCase):
             call(_ENV, _SETUP, _REPO, network="bridge"),
             call(_ENV, _TEST, _REPO, network="none"),
         ])
-        self.assertEqual(log_lines, ["restored", "ran 3 tests"])
+        # Benign successful-restore output must NOT pollute the test result context.
+        self.assertEqual(log_lines, ["ran 3 tests"])
+
+    @mock.patch("src.executor.nodes.gates.execute_in_sandbox", new_callable=AsyncMock)
+    async def test_successful_restore_noise_excluded_from_test_failure(self, mock_sandbox: AsyncMock) -> None:
+        # Restore succeeds (benign stderr), tests FAIL — the failure context is the test output only.
+        mock_sandbox.side_effect = [
+            (0, "go: no module dependencies to download", ""),
+            (1, "", "processor_test.go:9: undefined: Convert"),
+        ]
+
+        ok, log_lines = await run_qa_unit_tests(environment_id=_ENV, repo_root=_REPO)
+
+        self.assertFalse(ok)
+        self.assertEqual(log_lines, ["processor_test.go:9: undefined: Convert"])
+        self.assertNotIn("go: no module dependencies to download", log_lines)
 
     @mock.patch("src.executor.nodes.gates.execute_in_sandbox", new_callable=AsyncMock)
     async def test_restore_failure_short_circuits_before_tests(self, mock_sandbox: AsyncMock) -> None:

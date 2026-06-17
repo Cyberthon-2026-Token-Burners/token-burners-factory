@@ -335,6 +335,23 @@ def build_production_snapshot(ctx: GlobalPipelineContext) -> None:
 GUARDRAIL_TOP_LINES = 15        # top-of-file window scanned for a justification
 GUARDRAIL_MAX_REROUTES = 2      # local guardrail_retries cap: free reroutes before a Hard Halt
 
+
+def _missing_contract_files(ctx: GlobalPipelineContext) -> list[str]:
+    """Contracted production files the Developer was supposed to create but didn't.
+
+    The Developer tends to skip non-code artifacts (`.gitignore`, `LICENSE`) even though they are in
+    `files_to_modify`, and nothing else enforces their presence. Checks the working tree directly
+    (independent of the snapshot's `.gitignore` filter); test files are QA-owned and excluded.
+    """
+    if not ctx.contract or not ctx.contract.files_to_modify:
+        return []
+    repo_dir = ctx.workspace_paths.repo_dir
+    env_id = ctx.contract.environment_id
+    return [
+        f for f in ctx.contract.files_to_modify
+        if not is_test_file(env_id, f) and not (repo_dir / f).exists()
+    ]
+
 # ==========================================
 # RUNNER-LOG FORWARDING (Reviewer feed, context pruning)
 # ==========================================
@@ -662,6 +679,26 @@ async def main():
                 await run_developer_node(ctx, dev_feedback)
                 # Snapshot the real working-tree production delta (git-tracked, full content) for the Reviewer.
                 build_production_snapshot(ctx)
+
+                # Contract completeness: the Developer must create EVERY contracted file (it tends to
+                # skip non-code artifacts like .gitignore/LICENSE). Fast-fail reroute on any missing
+                # file (no functional budget); soft fall-through at the cap so a stray missing file
+                # never hard-halts an otherwise-good run.
+                missing = _missing_contract_files(ctx)
+                if missing:
+                    if guardrail_retries == GUARDRAIL_MAX_REROUTES:
+                        log.warning(f"🔶 Contracted files still missing after in-loop reroutes: {missing} — proceeding to the gates/Reviewer.")
+                    else:
+                        log.warning(
+                            f"🔶 Developer skipped contracted file(s) {missing} — fast-fail reroute "
+                            f"{guardrail_retries + 1}/{GUARDRAIL_MAX_REROUTES} (no budget spent), Reviewer bypassed."
+                        )
+                        dev_feedback = (
+                            "You did not create these contracted files — create EACH of them now with the "
+                            f"literal content required by the ticket: {', '.join(missing)}"
+                        )
+                        continue
+
                 guardrail_msg = await enforce_documentation_guardrail(ctx)
                 if guardrail_msg:
                     if guardrail_retries == GUARDRAIL_MAX_REROUTES:

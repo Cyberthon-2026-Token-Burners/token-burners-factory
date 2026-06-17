@@ -29,11 +29,15 @@ network window.
 **Fix direction:** route restore through an egress-restricted proxy (allowlist package registries),
 or vendor dependencies offline, so no phase has unrestricted network.
 
-## 3. TASK-01 mandated baseline artifacts don't survive the run
-**Symptom:** the contract included `.gitignore` and `LICENSE`, but the final repo tree had only
-`README.md`, `go.mod`, `src/cmd/json2csv/main.go`, `src/internal/converter/converter.go`.
-**Fix direction:** investigate why mandated TASK-01 files (`.gitignore`, `LICENSE`) are lost across
-the develop/snapshot/retry cycles and ensure baseline artifacts persist to the final commit.
+## 3. TASK-01 mandated baseline artifacts don't survive the run — ✅ RESOLVED
+**Was:** the Developer wrote code + `README.md` but skipped non-code contracted files (`.gitignore`,
+`LICENSE`), and nothing verified the contract was complete (confirmed in `run_bb7a…`: those two
+missing across all cycles). `finalize_transaction` commits the whole staged tree, so the files were
+simply never created.
+**Fixed by:** `_missing_contract_files(ctx)` in `runner.py` (non-test `files_to_modify` paths absent
+from the working tree) + a fast-fail reroute in the Developer loop that re-invokes the dev with the
+missing-file list (no functional budget; soft fall-through at the cap); plus a `developer.md`
+CONTRACT COMPLETENESS guardrail to create EVERY contracted file incl. `.gitignore`/`LICENSE`/manifests.
 
 ---
 New items from `run_bb7a268aad844656910343c081e44f3e` (Go `json2csv`, `CIRCUIT BREAKER OPEN` after 3
@@ -68,10 +72,10 @@ The compile-gate branch in `runner.py` now breaks (falls through to the gates �
 on a test-only build failure instead of rerouting the Developer. Combined with #5 (parseable test
 files), well-formed tests no longer fail the build at all.
 
-## 8. [P2] Misleading gate failure surface buries the real error
-**Symptom:** `[GATE][FUNCTIONAL-TESTS] Failure raw output:` showed only
-`go: no module dependencies to download` — an INFORMATIONAL stderr line from `go mod download`
-(exit 0, stdlib-only project), while the actual compile errors were elsewhere in the stream.
-**Fix direction:** drop restore-phase stderr (and known-benign informational lines) from the
-functional-failure context shown to the operator/Reviewer; surface the build/test phase's real
-diagnostics. Keeps `_extract_failure_context` pointed at the true root cause.
+## 8. [P2] Misleading gate failure surface buries the real error — ✅ RESOLVED
+**Was:** `[GATE][FUNCTIONAL-TESTS] Failure raw output:` showed only `go: no module dependencies to
+download` — a benign exit-0 stderr line from the `go mod download` restore phase — burying the real
+test/compile errors.
+**Fixed by:** `run_qa_unit_tests` / `run_build_gate` now keep **successful**-restore output OUT of the
+returned failure context (debug-logged only); the failure lines are exclusively the test/build phase's
+output. Restore output is still surfaced when restore itself fails.

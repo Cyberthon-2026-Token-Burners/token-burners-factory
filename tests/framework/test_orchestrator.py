@@ -139,6 +139,7 @@ class MainResumeSkipFlowTests(unittest.IsolatedAsyncioTestCase):
                 mock.patch.object(orchestrator, "reconfigure_logging"),
                 mock.patch.object(orchestrator, "build_production_snapshot"),
                 mock.patch.object(orchestrator, "run_build_gate", new=AsyncMock(return_value=(True, []))),
+                mock.patch.object(orchestrator, "_missing_contract_files", return_value=[]),
                 mock.patch.object(orchestrator, "parse_args", return_value=orchestrator.RunConfig(
                     description=None, base_branch="main", resume=Path("cp.json"), reset_attempts=False)),
                 mock.patch.object(GlobalPipelineContext, "load_checkpoint", return_value=ctx),
@@ -205,6 +206,7 @@ class MainCheckpointWritePointsTests(unittest.IsolatedAsyncioTestCase):
                 mock.patch.object(orchestrator, "reconfigure_logging"),
                 mock.patch.object(orchestrator, "build_production_snapshot"),
                 mock.patch.object(orchestrator, "run_build_gate", new=AsyncMock(return_value=(True, []))),
+                mock.patch.object(orchestrator, "_missing_contract_files", return_value=[]),
                 mock.patch.object(orchestrator, "parse_args", return_value=orchestrator.RunConfig(
                     description="fresh run", base_branch="main", resume=None, reset_attempts=False,
                     repo="dummy-repo", ticket="DEMO-1")),
@@ -281,6 +283,7 @@ class MainCheckpointWritePointsTests(unittest.IsolatedAsyncioTestCase):
                 mock.patch.object(orchestrator, "reconfigure_logging"),
                 mock.patch.object(orchestrator, "build_production_snapshot"),
                 mock.patch.object(orchestrator, "run_build_gate", new=AsyncMock(return_value=(True, []))),
+                mock.patch.object(orchestrator, "_missing_contract_files", return_value=[]),
                 mock.patch.object(orchestrator, "parse_args", return_value=orchestrator.RunConfig(
                     description=None, base_branch="main", resume=Path("cp.json"), reset_attempts=False)),
                 mock.patch.object(GlobalPipelineContext, "load_checkpoint", return_value=ctx),
@@ -347,6 +350,7 @@ class MainCheckpointWritePointsTests(unittest.IsolatedAsyncioTestCase):
                 mock.patch.object(orchestrator, "reconfigure_logging"),
                 mock.patch.object(orchestrator, "build_production_snapshot"),
                 mock.patch.object(orchestrator, "run_build_gate", new=AsyncMock(return_value=(True, []))),
+                mock.patch.object(orchestrator, "_missing_contract_files", return_value=[]),
                 mock.patch.object(orchestrator, "parse_args", return_value=orchestrator.RunConfig(
                     description="fresh run", base_branch="main", resume=None, reset_attempts=False,
                     repo="dummy-repo", ticket="DEMO-1")),
@@ -443,6 +447,7 @@ class ResumeFsmRecoveryTests(unittest.IsolatedAsyncioTestCase):
                 mock.patch.object(orchestrator, "reconfigure_logging"),
                 mock.patch.object(orchestrator, "build_production_snapshot"),
                 mock.patch.object(orchestrator, "run_build_gate", new=AsyncMock(return_value=(True, []))),
+                mock.patch.object(orchestrator, "_missing_contract_files", return_value=[]),
                 mock.patch.object(orchestrator, "parse_args", return_value=orchestrator.RunConfig(
                     description=None, base_branch="main", resume=Path("cp.json"), reset_attempts=False)),
                 mock.patch.object(GlobalPipelineContext, "load_checkpoint", return_value=ctx),
@@ -514,6 +519,7 @@ class ResumeFsmRecoveryTests(unittest.IsolatedAsyncioTestCase):
                 mock.patch.object(orchestrator, "reconfigure_logging"),
                 mock.patch.object(orchestrator, "build_production_snapshot"),
                 mock.patch.object(orchestrator, "run_build_gate", new=AsyncMock(return_value=(True, []))),
+                mock.patch.object(orchestrator, "_missing_contract_files", return_value=[]),
                 mock.patch.object(orchestrator, "parse_args", return_value=orchestrator.RunConfig(
                     description=None, base_branch="main", resume=Path("cp.json"), reset_attempts=False)),
                 mock.patch.object(GlobalPipelineContext, "load_checkpoint", return_value=ctx),
@@ -567,6 +573,7 @@ class ResumeFsmRecoveryTests(unittest.IsolatedAsyncioTestCase):
                 mock.patch.object(orchestrator, "reconfigure_logging"),
                 mock.patch.object(orchestrator, "build_production_snapshot"),
                 mock.patch.object(orchestrator, "run_build_gate", new=AsyncMock(return_value=(True, []))),
+                mock.patch.object(orchestrator, "_missing_contract_files", return_value=[]),
                 mock.patch.object(orchestrator, "parse_args", return_value=orchestrator.RunConfig(
                     description=None, base_branch="main", resume=Path("cp.json"), reset_attempts=False)),
                 mock.patch.object(GlobalPipelineContext, "load_checkpoint", return_value=ctx),
@@ -640,6 +647,7 @@ class ResumeFsmRecoveryTests(unittest.IsolatedAsyncioTestCase):
                 mock.patch.object(orchestrator, "reconfigure_logging"),
                 mock.patch.object(orchestrator, "build_production_snapshot"),
                 mock.patch.object(orchestrator, "run_build_gate", new=AsyncMock(return_value=(True, []))),
+                mock.patch.object(orchestrator, "_missing_contract_files", return_value=[]),
                 mock.patch.object(orchestrator, "parse_args", return_value=orchestrator.RunConfig(
                     description=None, base_branch="main", resume=Path("cp.json"), reset_attempts=True)),
                 mock.patch.object(GlobalPipelineContext, "load_checkpoint", return_value=ctx),
@@ -1026,6 +1034,7 @@ class DocumentationGuardrailLoopTests(unittest.IsolatedAsyncioTestCase):
                 mock.patch.object(orchestrator, "reconfigure_logging"),
                 mock.patch.object(orchestrator, "build_production_snapshot"),
                 mock.patch.object(orchestrator, "run_build_gate", new=AsyncMock(return_value=(True, []))),
+                mock.patch.object(orchestrator, "_missing_contract_files", return_value=[]),
                 mock.patch.object(orchestrator, "parse_args", return_value=orchestrator.RunConfig(
                     description=None, base_branch="main", resume=Path("cp.json"), reset_attempts=False)),
                 mock.patch.object(GlobalPipelineContext, "load_checkpoint", return_value=ctx),
@@ -1071,6 +1080,7 @@ class DocumentationGuardrailLoopTests(unittest.IsolatedAsyncioTestCase):
                 mock.patch.object(orchestrator, "build_production_snapshot"),
                 mock.patch.object(orchestrator, "run_build_gate",
                                   new=AsyncMock(side_effect=[(False, ["undefined: Foo"]), (True, [])])),
+                mock.patch.object(orchestrator, "_missing_contract_files", return_value=[]),
                 mock.patch.object(orchestrator, "parse_args", return_value=orchestrator.RunConfig(
                     description=None, base_branch="main", resume=Path("cp.json"), reset_attempts=False)),
                 mock.patch.object(GlobalPipelineContext, "load_checkpoint", return_value=ctx),
@@ -1091,6 +1101,43 @@ class DocumentationGuardrailLoopTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(ctx.current_attempt, 2)          # exactly ONE functional cycle consumed
             self.assertIn("undefined: Foo", developer.await_args_list[1].args[1])  # build errors fed back
 
+    async def test_missing_contracted_file_reroutes_developer_for_free(self) -> None:
+        # Arrange — a contracted file (LICENSE) is missing on the first dev pass, present on the second.
+        with TemporaryDirectory() as td:
+            ctx = self._resume_ctx(Path(td))
+
+            async def _approve(*_a, **_k) -> None:
+                ctx.review_report = ReviewReport(
+                    code_quality_analysis="ok", test_integrity_analysis="ok", log_verification_analysis="ok",
+                    code_quality_approved=True, test_integrity_approved=True, dev_diagnostic_payload="",
+                )
+
+            with (
+                mock.patch.object(orchestrator, "check_environment"),
+                mock.patch.object(orchestrator, "reconfigure_logging"),
+                mock.patch.object(orchestrator, "build_production_snapshot"),
+                mock.patch.object(orchestrator, "run_build_gate", new=AsyncMock(return_value=(True, []))),
+                mock.patch.object(orchestrator, "_missing_contract_files", side_effect=[["LICENSE"], []]),
+                mock.patch.object(orchestrator, "parse_args", return_value=orchestrator.RunConfig(
+                    description=None, base_branch="main", resume=Path("cp.json"), reset_attempts=False)),
+                mock.patch.object(GlobalPipelineContext, "load_checkpoint", return_value=ctx),
+                mock.patch.object(orchestrator, "run_techlead_node", new_callable=AsyncMock),
+                mock.patch.object(orchestrator, "run_qa_agent_node", new_callable=AsyncMock),
+                mock.patch.object(orchestrator, "run_developer_node", new_callable=AsyncMock) as developer,
+                mock.patch.object(orchestrator, "enforce_documentation_guardrail", new=AsyncMock(return_value=None)),
+                mock.patch.object(orchestrator, "run_reviewer_node", new=AsyncMock(side_effect=_approve)) as reviewer,
+                mock.patch.object(orchestrator, "run_qa_unit_tests", new=AsyncMock(return_value=(True, []))),
+                mock.patch.object(orchestrator, "run_security_scan", new=AsyncMock(return_value=(True, []))),
+                mock.patch.object(orchestrator, "finalize_transaction", new_callable=AsyncMock),
+                mock.patch.object(orchestrator, "run_techwriter_node", new_callable=AsyncMock),
+            ):
+                await orchestrator.main()
+
+            self.assertEqual(developer.await_count, 2)        # initial + one free completeness reroute
+            reviewer.assert_awaited_once()
+            self.assertEqual(ctx.current_attempt, 2)          # one functional cycle consumed
+            self.assertIn("LICENSE", developer.await_args_list[1].args[1])  # missing file named in the reroute
+
     async def test_compile_gate_test_only_failure_does_not_reroute_developer(self) -> None:
         # Arrange — compile gate fails but ONLY on test files (Go package loader parsing `*_test.go`).
         # The Developer must NOT be rerouted (tests are QA-owned); the run falls through to the gates.
@@ -1110,6 +1157,7 @@ class DocumentationGuardrailLoopTests(unittest.IsolatedAsyncioTestCase):
                 mock.patch.object(orchestrator, "build_production_snapshot"),
                 mock.patch.object(orchestrator, "run_build_gate", new=AsyncMock(
                     return_value=(False, ["internal/converter/processor_test.go:1:1: expected 'package', found 'import'"]))),
+                mock.patch.object(orchestrator, "_missing_contract_files", return_value=[]),
                 mock.patch.object(orchestrator, "parse_args", return_value=orchestrator.RunConfig(
                     description=None, base_branch="main", resume=Path("cp.json"), reset_attempts=False)),
                 mock.patch.object(GlobalPipelineContext, "load_checkpoint", return_value=ctx),
@@ -1138,6 +1186,7 @@ class DocumentationGuardrailLoopTests(unittest.IsolatedAsyncioTestCase):
                 mock.patch.object(orchestrator, "reconfigure_logging"),
                 mock.patch.object(orchestrator, "build_production_snapshot"),
                 mock.patch.object(orchestrator, "run_build_gate", new=AsyncMock(return_value=(True, []))),
+                mock.patch.object(orchestrator, "_missing_contract_files", return_value=[]),
                 mock.patch.object(orchestrator, "parse_args", return_value=orchestrator.RunConfig(
                     description=None, base_branch="main", resume=Path("cp.json"), reset_attempts=False)),
                 mock.patch.object(GlobalPipelineContext, "load_checkpoint", return_value=ctx),
@@ -1280,6 +1329,7 @@ class TestCollectionTriageRoutingTests(unittest.IsolatedAsyncioTestCase):
                 mock.patch.object(orchestrator, "reconfigure_logging"),
                 mock.patch.object(orchestrator, "build_production_snapshot"),
                 mock.patch.object(orchestrator, "run_build_gate", new=AsyncMock(return_value=(True, []))),
+                mock.patch.object(orchestrator, "_missing_contract_files", return_value=[]),
                 mock.patch.object(orchestrator, "finalize_transaction", new_callable=AsyncMock),
                 mock.patch.object(orchestrator, "run_techwriter_node", new_callable=AsyncMock),
                 mock.patch.object(orchestrator, "parse_args", return_value=orchestrator.RunConfig(
@@ -1338,6 +1388,31 @@ class FinOpsReportTests(unittest.TestCase):
         self.assertEqual(report["budget_tokens"], 10_000)
         self.assertIn("gemini", report["by_provider"])
         self.assertIn("claude", report["by_provider"])
+
+
+class MissingContractFilesTests(unittest.TestCase):
+    """`_missing_contract_files` reports contracted production files absent from the working tree."""
+
+    def test_reports_only_missing_non_test_files(self) -> None:
+        with TemporaryDirectory() as td:
+            repo = Path(td)
+            (repo / "main.go").write_text("package main\n", encoding="utf-8")  # present
+            paths = WorkspacePaths(
+                code_dir=repo, tests_dir=repo / "tests",
+                logs_dir=repo / "logs", reports_dir=repo / "reports", repo_dir=repo,
+            )
+            contract = TechLeadContract(
+                files_to_modify=["main.go", ".gitignore", "LICENSE", "main_test.go"],
+                topology_contract=[], instruction="x", function_signatures="x",
+                strict_type_validation_rules="x", techlead_reasoning="x",
+                environment_id="go-1.23-cli",
+            )
+            ctx = GlobalPipelineContext(pr_description="t", workspace_paths=paths, contract=contract)
+
+            missing = orchestrator._missing_contract_files(ctx)
+
+            # main.go exists; .gitignore/LICENSE are missing; the *_test.go is QA-owned (excluded).
+            self.assertEqual(sorted(missing), [".gitignore", "LICENSE"])
 
 
 class BuildProductionSnapshotTests(unittest.TestCase):

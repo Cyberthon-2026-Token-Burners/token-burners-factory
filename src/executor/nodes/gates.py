@@ -34,15 +34,19 @@ async def run_qa_unit_tests(environment_id: str, repo_root: str) -> tuple[bool, 
     if setup_cmd:
         log.debug(f"Restoring dependencies [{environment_id}] (network ON): {setup_cmd}")
         rc, out, err = await execute_in_sandbox(environment_id, setup_cmd, repo_root, network="bridge")
-        log_lines += (out + "\n" + err).strip().splitlines()
+        restore_out = (out + "\n" + err).strip()
         if rc != 0:
             log.debug(f"Dependency restore failed with exit code: {rc}")
-            return False, ["🚨 Dependency restore failed:"] + log_lines
+            return False, ["🚨 Dependency restore failed:"] + restore_out.splitlines()
+        # Restore succeeded: its output (e.g. "go: no module dependencies to download") is benign
+        # noise — keep it OUT of the failure context so the test phase's real errors aren't buried.
+        if restore_out:
+            log.debug(f"Dependency restore output: {restore_out}")
 
     test_cmd = spec["test_cmd"]
     log.debug(f"Executing QA runtime gate [{environment_id}] (network OFF): {test_cmd}")
     returncode, stdout, stderr = await execute_in_sandbox(environment_id, test_cmd, repo_root, network="none")
-    log_lines += (stdout + "\n" + stderr).strip().splitlines()
+    log_lines = (stdout + "\n" + stderr).strip().splitlines()
     log.debug(f"QA Runtime Gate completed with exit code: {returncode}")
     return returncode == 0, log_lines
 
@@ -56,20 +60,23 @@ async def run_build_gate(environment_id: str, repo_root: str) -> tuple[bool, lis
     build_cmd = spec.get("build_cmd")
     if not build_cmd:
         return True, []
-    log_lines: list[str] = []
 
     setup_cmd = spec.get("setup_cmd")
     if setup_cmd:
         log.debug(f"Restoring dependencies for build [{environment_id}] (network ON): {setup_cmd}")
         rc, out, err = await execute_in_sandbox(environment_id, setup_cmd, repo_root, network="bridge")
-        log_lines += (out + "\n" + err).strip().splitlines()
+        restore_out = (out + "\n" + err).strip()
         if rc != 0:
             log.debug(f"Dependency restore (build) failed with exit code: {rc}")
-            return False, ["🚨 Dependency restore failed:"] + log_lines
+            return False, ["🚨 Dependency restore failed:"] + restore_out.splitlines()
+        # Restore succeeded: benign output stays OUT of the failure context (the build errors are
+        # what the Developer must act on), debug-logged only.
+        if restore_out:
+            log.debug(f"Dependency restore output: {restore_out}")
 
     log.debug(f"Executing build gate [{environment_id}] (network OFF): {build_cmd}")
     returncode, stdout, stderr = await execute_in_sandbox(environment_id, build_cmd, repo_root, network="none")
-    log_lines += (stdout + "\n" + stderr).strip().splitlines()
+    log_lines = (stdout + "\n" + stderr).strip().splitlines()
     log.debug(f"Build gate completed with exit code: {returncode}")
     return returncode == 0, log_lines
 
