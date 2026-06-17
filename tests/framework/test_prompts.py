@@ -29,6 +29,14 @@ class GetSystemPromptTests(unittest.TestCase):
         self.assertIn("TOPOLOGY RULE", result)
         self.assertIn("topology_contract", result)
 
+    def test_tpm_reserves_task00_repo_prep_business_starts_task01(self) -> None:
+        # Repo baseline is a dedicated FIRST task (TASK-00); all other tickets are business-only.
+        result = get_system_prompt("tpm")
+        self.assertIn("MANDATORY REPOSITORY PREPARATION RULE", result)
+        self.assertIn("`TASK-00` is RESERVED", result)
+        self.assertIn("BUSINESS TICKETS START AT `TASK-01`", result)
+        self.assertIn("PRESENCE AND CURRENCY", result)
+
     def test_qa_prompt_has_dependency_resolution_rule(self) -> None:
         # QA translates the neutral topology graph into language-specific imports.
         result = get_system_prompt("qa")

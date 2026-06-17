@@ -120,10 +120,46 @@ file.
 must cite a verbatim line from the actual gate output (build/test/SAST), not inferred structure; when
 the only failing file refs are test files, the production verdict must default to approved.
 
-## 12. [env] Build the Semgrep sandbox image before runs (operational, not code)
-**Symptom:** `[GATE][SAST-SECURITY]` FAILED every cycle with `pull access denied for sdlc-sandbox/semgrep,
-repository does not exist` — the vendored-rules image from #6 was never built in this environment, so
-SAST=False regardless of code (a green run is impossible even with perfect tests).
-**Fix direction:** run `bash scripts/build_sandbox_images.sh` (now includes `sdlc-sandbox/semgrep`)
-before re-running; consider a preflight check in the orchestrator that verifies required sandbox images
-exist and fails fast with a clear message instead of per-cycle gate noise.
+## 12. [env] Build the Semgrep sandbox image before runs (operational, not code) — ✅ RESOLVED
+**Was:** `[GATE][SAST-SECURITY]` FAILED with `pull access denied for sdlc-sandbox/semgrep` — the image
+wasn't built; AND the build itself failed: `docker/semgrep.Dockerfile` pinned `SEMGREP_RULES_TAG=v1.92.0`,
+but the `semgrep-rules` repo carries NO tags (it is versioned separately from the CLI), so
+`git clone --branch v1.92.0` → `Remote branch v1.92.0 not found`.
+**Fixed by:** pinning a commit SHA on the stable `release` branch (`SEMGREP_RULES_REF=818d4cc…`) and
+fetching it directly (`git init` + `git fetch --depth 1 origin <SHA>` + `checkout FETCH_HEAD`) — fully
+reproducible, no dependency on a tag/moving branch. Verified: image builds, 6 rule dirs + 921 rules
+vendored, scan runs `--network none`. Still consider a preflight image-existence check (see below).
+
+---
+New items from `run_410195801a124f369ccb6c6052fb5257` (Python `json2csv`-style; Developer succeeded
+exit 0 but the post-Developer guardrail/snapshot misbehaved). The Developer created a VALID
+`requirements.txt` and ran `python -c …`/`pip install`, which produced `__pycache__/*.pyc`.
+
+## 13. [P1] Doc guardrail flags valid manifests/config as "undocumented" — must exempt non-source files
+**Symptom:** `[GUARDRAIL] 1 undocumented new file(s): ['requirements.txt']` → fast-fail reroute to the
+Developer, even though `requirements.txt` is a legitimate, correctly-formed Python dependency manifest.
+**Cause:** `enforce_documentation_guardrail` ([runner.py:433](src/executor/runner.py#L433)) flags ANY
+uncontracted, newly-added file whose top `GUARDRAIL_TOP_LINES` carry no comment lead-in. Manifests /
+lockfiles / config (`requirements.txt`, `go.mod`/`go.sum`, `package.json`, `*.csproj`, `tsconfig.json`)
+and doc artifacts often can't or shouldn't carry an architectural-justification comment — the guardrail
+is meant to catch hallucinated/orphan CODE files, not infra.
+**Fix direction (generic, all envs):** restrict guardrail candidates to actual stack SOURCE files via the
+registry SSOT `is_testable_source(env_id, rel)` (True only for real source; already filters
+docs/config/markers/lockfiles). Non-source files are never required to carry a justification comment.
+Preserves the guardrail's intent for genuinely uncontracted source the Developer adds without a comment.
+
+## 14. [P1] Build artifacts (`__pycache__/*.pyc`) pollute the production snapshot when no `.gitignore` exists — ✅ RESOLVED (TPM-level)
+**Was:** `[SNAPSHOT] Captured 9 production file(s)` included `src/__pycache__/*.pyc` — bytecode the
+Developer's `python -c`/`pip install` generated, staged by `git add -A` because the business ticket's
+clone of `main` had no `.gitignore`. A generic engine-side artifact filter was REJECTED (no per-stack
+hardcode in the snapshot).
+**Fixed by (TPM):** the planner now emits a dedicated **`TASK-00` repository-preparation** ticket that
+runs FIRST and idempotently verifies presence+currency of `.gitignore`/`README.md`/`LICENSE` (creating/
+reconciling them); all business tickets start at `TASK-01` and are forbidden from carrying baseline
+files. A complete, env-tailored `.gitignore` established by `TASK-00` keeps later business tickets'
+snapshots clean — no engine filter.
+**Limitation (by design):** each ticket runs in an isolated `git clone --depth 1` of `main`
+([runner.py bootstrap_session](src/executor/runner.py)), so `TASK-00`'s `.gitignore` only protects a
+later business ticket once `TASK-00` is run and merged to `main` before that ticket clones. A single
+isolated business-ticket run against a baseline-less `main` can still pollute — accepted trade-off of
+the TPM-only approach (no generic filter, per decision).

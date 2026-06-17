@@ -18,6 +18,7 @@ ADR: [0014-language-neutral-qa-whole-file-assembly](./docs/adr/0014-language-neu
 
 ### Fixed
 - **CIRCUIT BREAKER on `run_3dc1e2043ea74ed082f47ec1744e4d8e`** (Go `json2csv`): QA emitted a root `main_test.go` declaring `package converter` next to `package main`, failing `go test ./...` every cycle (`could not import "main"`). The wrong package now (a) is far less likely — the agent is told to match the production sibling and not to fabricate a foreign-package test for a thin entrypoint — and (b) self-heals if it still slips through: the compile gate classifies it test-only and the Reviewer routes it to QA via new `reviewer.md` case **(c) WRONG TEST PACKAGE/NAMESPACE**, instead of mis-routing to the Developer (who cannot edit tests → deadlock).
+- **`__pycache__/*.pyc` polluting the production snapshot** (`run_410195801a124f369ccb6c6052fb5257`): build artifacts were staged by `git add -A` because the business ticket's clone had no `.gitignore`. Fixed at the planner level — `prompts/system/tpm.md` now reserves **`TASK-00`** as a dedicated repository-preparation ticket (verify presence + currency of `.gitignore`/`README.md`/`LICENSE`, idempotently create/reconcile) that runs FIRST; **business tickets start at `TASK-01`** and may not carry baseline/infra files. The env-tailored `.gitignore` keeps later business snapshots clean without any per-language engine filter (`src/nexus/tpm.py` schema docstrings updated to match).
 
 ## [v0.13.0] - 2026-06-16 — Structured Test Maintenance (AST-Aware Pruning) & CI Security-Gate Fix
 
