@@ -120,6 +120,80 @@ QA_LANGUAGE_PROFILES = {
     },
 }
 
+# ==========================================================================================
+# CANONICAL .gitignore TEMPLATES — sourced verbatim from github/gitignore (functional patterns;
+# explanatory prose comments trimmed). Keyed by the env's `language_id`. The TPM injects the
+# matching block into TASK-01's repository-preparation directive instead of inventing patterns.
+#
+# WHY THIS IS THE SSOT (not the agent): an agent-authored ignore file once emitted an UNANCHORED
+# `json2csv` (the binary name) to ignore the compiled binary — but git applies an unanchored token
+# to ANY path component, so the `cmd/json2csv/` SOURCE directory was ignored too. `git add -A`
+# then silently dropped `main.go` from the production snapshot and the Reviewer rejected the run in
+# a loop until the circuit breaker tripped. These templates ignore build output by EXTENSION
+# (`*.exe`, `*.test`, `*.out`) and by ANCHORED dir (`/bin/`, `bin/`, `obj/`) — NEVER by a bare
+# project/binary name — so a same-named source dir can never be swallowed.
+# ==========================================================================================
+GITIGNORE_TEMPLATES = {
+    "go": (
+        "# Binaries for programs and plugins\n"
+        "*.exe\n*.exe~\n*.dll\n*.so\n*.dylib\n\n"
+        "# Test binary, built with `go test -c`\n"
+        "*.test\n\n"
+        "# Code coverage profiles and other test artifacts\n"
+        "*.out\ncoverage.*\n*.coverprofile\nprofile.cov\n\n"
+        "# Go workspace file\n"
+        "go.work\ngo.work.sum\n\n"
+        "# Build output directory (anchored to repo root — never matches a source dir)\n"
+        "/bin/\n\n"
+        "# env file\n.env\n"
+    ),
+    "python": (
+        "# Byte-compiled / optimized / DLL files\n"
+        "__pycache__/\n*.py[cod]\n*$py.class\n\n"
+        "# C extensions\n*.so\n\n"
+        "# Distribution / packaging\n"
+        "build/\ndist/\ndownloads/\neggs/\n.eggs/\nwheels/\n*.egg-info/\n*.egg\nMANIFEST\n\n"
+        "# Unit test / coverage reports\n"
+        "htmlcov/\n.tox/\n.nox/\n.coverage\n.coverage.*\ncoverage.xml\n*.cover\n.hypothesis/\n.pytest_cache/\n.cache\n\n"
+        "# Type checkers\n.mypy_cache/\n.dmypy.json\n.pyre/\n.pytype/\n\n"
+        "# Environments\n.env\n.venv\nenv/\nvenv/\nENV/\n"
+    ),
+    "node": (
+        "# Logs\n"
+        "logs\n*.log\nnpm-debug.log*\nyarn-debug.log*\nyarn-error.log*\n\n"
+        "# Dependency directories\n"
+        "node_modules/\njspm_packages/\n\n"
+        "# Build output\n"
+        "dist/\nbuild/\nout/\n.next\n.nuxt\n.output\n\n"
+        "# Coverage\n"
+        "coverage/\n*.lcov\n.nyc_output\n\n"
+        "# Caches\n"
+        ".npm\n.eslintcache\n.cache\n.parcel-cache\n*.tsbuildinfo\n\n"
+        "# env files\n.env\n.env.*\n!.env.example\n"
+    ),
+    "dotnet": (
+        "# Build results (anchored dir patterns — never match a source dir)\n"
+        "[Bb]in/\n[Oo]bj/\n[Dd]ebug/\n[Rr]elease/\n[Dd]ebugPublic/\n[Rr]eleases/\nartifacts/\n\n"
+        "# Visual Studio\n"
+        ".vs/\n*.user\n*.suo\n*.userosscache\n*.sln.docstates\n\n"
+        "# Test results\n"
+        "[Tt]est[Rr]esult*/\n*.trx\nTestResult.xml\n\n"
+        "# NuGet\n"
+        "*.nupkg\nproject.lock.json\nproject.fragment.lock.json\n\n"
+        "# Logs\n*.log\n"
+    ),
+}
+
+
+def get_gitignore_template(environment_id: str) -> str:
+    """Return the canonical .gitignore body for an environment_id (keyed via its language_id).
+
+    Fails fast on an unsupported environment_id — parity with get_qa_profile — so a bad id never
+    silently yields an empty ignore file.
+    """
+    return GITIGNORE_TEMPLATES[env_language(environment_id)]
+
+
 # Doc/config artifacts that are NEVER testable source in any stack (fixes "tests for README/LICENSE").
 _NON_SOURCE_NAMES = frozenset({"license", "license.md", "license.txt", "readme.md", ".gitignore", ".dockerignore"})
 _NON_SOURCE_EXTS = frozenset({".md", ".txt", ".lock", ".json", ".yml", ".yaml", ".toml", ".cfg", ".ini", ".csproj", ".sln"})

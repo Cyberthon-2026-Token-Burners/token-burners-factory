@@ -36,15 +36,20 @@ IDEMPOTENT UPDATE (HARD GATE): Any of these three files MAY already exist in the
 - `README.md`: ensure the required `##` sections exist; insert any missing section while preserving existing prose and sections; update stale Tech Stack / commands to match the Blueprint rather than discarding user content.
 - `LICENSE`: if an MIT license already exists, update only the copyright year (`2026`) and holder; if a different license exists or none exists, write the full literal MIT text.
 
-1. `.gitignore` — the exact, comprehensive ignore patterns tailored STRICTLY to the selected `environment_id`. The pattern set MUST match the chosen platform (only the supported platforms exist — there is no Rust or other stack). Copy the matching block verbatim into the ticket `description`:
-   - `python-3.12-core`: `__pycache__/`, `*.py[cod]`, `.venv/`, `venv/`, `env/`, `.pytest_cache/`, `.mypy_cache/`, `*.egg-info/`, `dist/`, `build/`, `.coverage`
-   - `node-20-web`: `node_modules/`, `dist/`, `build/`, `coverage/`, `.cache/`, `npm-debug.log*`, `.env`, `.DS_Store`
-   - `dotnet-10-sdk`: `bin/`, `obj/`, `*.user`, `.vs/`, `[Dd]ebug/`, `[Rr]elease/`, `*.nupkg`, `TestResults/`
-   - `go-1.23-cli`: compiled binaries (`*.exe`, `*.test`, `*.out`), the built binary path, `bin/`, coverage files (`*.cover`), and optionally `vendor/`
-2. `README.md` — the required documentation structure, populated from the Blueprint. The ticket `description` MUST mandate these `##` sections with real content copied from the Blueprint:
-   - **Project Goal:** what the project delivers (from the Epic/Blueprint).
-   - **Tech Stack:** the version-pinned runtime and libraries, copied verbatim from the Blueprint.
-   - **Local Setup / Execution Commands:** the install, run, and test commands that match the Blueprint and the selected `environment_id` (e.g. the platform's install + test commands).
+1. `.gitignore` — copy the CANONICAL template for the selected `environment_id` VERBATIM into the ticket `description`. These are engine-curated (sourced from github/gitignore); do NOT improvise, reorder, or "improve" them. The pattern set MUST match the chosen platform (only the supported platforms exist — there is no Rust or other stack):
+
+{injected_gitignore_templates}
+
+   HARD RULE — NEVER ignore a build artifact by its bare project/binary NAME (e.g. `myapp`, `json2csv`). An unanchored token matches ANY path component, so a same-named SOURCE directory (`cmd/myapp/`) would be ignored too and silently dropped from the production snapshot, failing the build forever. Ignore build output ONLY by extension (`*.exe`, `*.test`, `*.out`) or by an ANCHORED directory (`/bin/`, `bin/`, `obj/`) — exactly as the templates above do. Do not append the binary's name even when the Blueprint mentions it.
+2. `README.md` — copy the CANONICAL scaffold below into the ticket `description` and fill EVERY `<...>` slot with REAL content distilled from the Epic/Blueprint. The README MUST accurately reflect the essence of THIS project (per GitHub's "About READMEs" guidance: what it does, why it's useful, how to get started, how to use it, how to test). It is a HARD GATE that no `<...>` placeholder, lorem-ipsum, or generic filler ("this is a tool that does things") survives into the ticket — every section must state concrete, project-specific facts pulled from the Blueprint:
+
+{injected_readme_scaffold}
+
+   For the **Installation & Build** and **Running Tests** fenced blocks, use the selected `environment_id`'s exact Paved-Road commands (do NOT invent them):
+
+{injected_env_commands}
+
+   For **Usage**, copy the REAL invocation from the Blueprint's CLI specification (exact flags/arguments). For **Tech Stack**, copy the version-pinned runtime/libraries verbatim. For **Features**, write one bullet per real Blueprint user story — never aspirational scope.
 3. `LICENSE` — a standard MIT License. The ticket `description` MUST contain the FULL literal MIT license text so the developer agent pastes it verbatim. The year MUST be `2026`. The copyright holder MUST be dynamically derived from the repository author; if the author is unknown, fall back to the repository/author name rather than leaving a placeholder.
 
 CONTEXT EMBEDDING (REITERATED): For `TASK-01`'s repository-preparation block you MUST write out the exact required text structures, templates, and specific ignore patterns INLINE inside the ticket `description`. Do not point to external configuration, do not write "use a standard .gitignore", and do not offload any choice to the developer agent — the downstream executor applies your literal specifications blindly.

@@ -6,6 +6,7 @@ from unittest import mock
 from src.shared.core.prompts import (
     get_system_prompt,
     get_system_prompt_sections,
+    get_system_prompt_with_platforms,
     get_skill,
     generate_repo_map,
     build_agent_context,
@@ -48,6 +49,28 @@ class GetSystemPromptTests(unittest.TestCase):
         # The old reserved-TASK-00 contract must be gone.
         self.assertNotIn("`TASK-00` is RESERVED", result)
         self.assertNotIn("BUSINESS TICKETS START AT `TASK-01`", result)
+
+    def test_tpm_injects_canonical_gitignore_templates(self) -> None:
+        # The vague per-env pattern lists (and the bug-causing "built binary path" line) are gone;
+        # the canonical github/gitignore templates are injected verbatim and the placeholder filled.
+        result = get_system_prompt_with_platforms("tpm")
+        self.assertNotIn("{injected_gitignore_templates}", result)
+        self.assertNotIn("the built binary path", result)
+        self.assertIn("```gitignore", result)              # fenced canonical blocks present
+        self.assertIn("*.test", result)                    # go template patterns injected
+        self.assertIn("NEVER ignore a build artifact by its bare project/binary NAME", result)
+
+    def test_tpm_injects_readme_scaffold_and_env_commands(self) -> None:
+        # README must follow the GitHub-aligned scaffold and pull accurate per-env commands; the
+        # placeholders are filled and the old loose 3-bullet structure no longer drives it alone.
+        result = get_system_prompt_with_platforms("tpm")
+        self.assertNotIn("{injected_readme_scaffold}", result)
+        self.assertNotIn("{injected_env_commands}", result)
+        self.assertIn("## Getting Started", result)             # scaffold section injected
+        self.assertIn("## Running Tests", result)
+        self.assertIn("accurately reflect the essence", result)  # the project-fidelity hard gate
+        self.assertIn("go build ./...", result)                 # real go env command injected
+        self.assertIn("python -m pytest", result)               # real python env command injected
 
     def test_sa_prompt_honors_user_mandated_stack(self) -> None:
         # An explicitly user-mandated language/platform must not be overridden by the architect.

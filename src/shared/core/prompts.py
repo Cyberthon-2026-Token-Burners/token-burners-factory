@@ -25,16 +25,88 @@ def _format_supported_platforms() -> str:
     return "\n".join(f"- {key}: {env['description']}" for key, env in SUPPORTED_ENVIRONMENTS.items())
 
 
+def _format_gitignore_templates() -> str:
+    """Render the canonical per-environment .gitignore templates as labelled fenced blocks.
+
+    The TPM copies the block whose `environment_id` matches the ticket into TASK-01 verbatim, so
+    the ignore file is engine-curated (github/gitignore-sourced) — never an agent's invention that
+    can ignore a same-named source directory (see GITIGNORE_TEMPLATES rationale in environments.py).
+    """
+    from src.shared.core.environments import SUPPORTED_ENVIRONMENTS, get_gitignore_template
+    blocks = []
+    for env_id in SUPPORTED_ENVIRONMENTS:
+        blocks.append(f"`{env_id}`:\n```gitignore\n{get_gitignore_template(env_id).rstrip()}\n```")
+    return "\n\n".join(blocks)
+
+
+# Canonical README scaffold — aligned with GitHub's "About READMEs" guidance (what the project does,
+# why it's useful, how to get started, how to use it, how to test, license). The TPM copies this into
+# TASK-01 and fills every <...> slot with REAL content distilled from the Epic/Blueprint — so the
+# README reflects the actual project, never generic filler. Build/test commands come from the env's
+# Paved-Road entry (injected separately), so "Getting Started" is accurate, not invented.
+README_SCAFFOLD = """# <Project Name — the real name, from the Epic/Blueprint>
+
+<One-to-three sentences: WHAT this project does and WHY it is useful. Distil the Epic goal — concrete,
+no marketing filler, no "this project is a tool that...".>
+
+## Features
+- <key user-facing capability, drawn from a Blueprint user story>
+- <another concrete capability — one bullet per real feature, not aspirational>
+
+## Tech Stack
+<version-pinned runtime and libraries, copied verbatim from the Blueprint Tech Stack>
+
+## Getting Started
+
+### Prerequisites
+<the runtime/toolchain the selected environment_id requires, with the pinned version>
+
+### Installation & Build
+```sh
+<the selected environment_id's setup + build commands — see the injected per-env command table>
+```
+
+## Usage
+```sh
+<the exact invocation with the REAL flags/arguments from the CLI specification (e.g. -i, -o, -d)>
+```
+
+## Running Tests
+```sh
+<the selected environment_id's test command — see the injected per-env command table>
+```
+
+## License
+<the license declared in this ticket's LICENSE file (e.g. MIT © 2026 <holder>)>
+"""
+
+
+def _format_env_commands() -> str:
+    """Render each environment's Paved-Road setup/build/test commands for the README scaffold."""
+    from src.shared.core.environments import SUPPORTED_ENVIRONMENTS
+    return "\n".join(
+        f"- `{env_id}`: setup `{env['setup_cmd']}` | build `{env['build_cmd']}` | test `{env['test_cmd']}`"
+        for env_id, env in SUPPORTED_ENVIRONMENTS.items()
+    )
+
+
 def get_system_prompt_with_platforms(agent_name: str) -> str:
-    """Load a system prompt and inject the supported-platform list into its
-    ``{injected_supported_platforms_list}`` placeholder.
+    """Load a system prompt and inject the engine-curated assets into its placeholders:
+    ``{injected_supported_platforms_list}`` (Paved-Road registry), ``{injected_gitignore_templates}``
+    (canonical .gitignore per env), ``{injected_readme_scaffold}`` (GitHub-aligned README structure),
+    and ``{injected_env_commands}`` (per-env setup/build/test commands).
 
     Uses a brace-safe ``.replace()`` (not ``.format()``) — matching the
     ``{strict_type_validation_rules}`` convention below — so the prompt body may
-    freely contain literal ``{}`` (e.g. fenced code) without crashing.
+    freely contain literal ``{}`` (e.g. fenced code) without crashing. ``.replace()`` is a no-op
+    when a placeholder is absent, so prompts that use only some (e.g. ``sa.md``) are unaffected.
     """
-    return get_system_prompt(agent_name).replace(
-        "{injected_supported_platforms_list}", _format_supported_platforms()
+    return (
+        get_system_prompt(agent_name)
+        .replace("{injected_supported_platforms_list}", _format_supported_platforms())
+        .replace("{injected_gitignore_templates}", _format_gitignore_templates())
+        .replace("{injected_readme_scaffold}", README_SCAFFOLD)
+        .replace("{injected_env_commands}", _format_env_commands())
     )
 
 
