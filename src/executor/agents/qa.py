@@ -82,6 +82,23 @@ def _assemble_suite(existing_source: str, suite: QATestSuite) -> str:
     return body + "\n"
 
 
+def _environment_profile_block(env_id: str, profile: dict) -> str:
+    """The `=== TARGET ENVIRONMENT PROFILE ===` block — PURE registry DATA, no instructions.
+
+    What to do with these values (native framework only, placement by layout, assembly contract) lives
+    in qa.md / the per-language skill, which reference this block by name. Keeping the block
+    instruction-free is the language-neutral, single-source-of-truth boundary: code assembles data,
+    prompts carry behavior.
+    """
+    return (
+        "\n\n=== TARGET ENVIRONMENT PROFILE ===\n"
+        f"environment_id: {env_id}\n"
+        f"language: {env_language(env_id)}\n"
+        f"test framework: {profile['framework_label']}\n"
+        f"layout: {profile['layout']}\n"
+    )
+
+
 async def run_qa_agent_node(ctx: GlobalPipelineContext, error_trace: str = "") -> None:
     model_name = QA_MODEL
     log.info(f"🔶 [ROLE] QA Agent | [MODEL] {model_name}")
@@ -112,25 +129,7 @@ async def run_qa_agent_node(ctx: GlobalPipelineContext, error_trace: str = "") -
     qa_system_prompt, user_template = get_system_prompt_sections("qa")
     qa_system_prompt += "\n\n" + await build_agent_context("qa", ctx, is_retry=bool(error_trace))
 
-    # Tell the model exactly which stack/framework/file-convention to target (built from the profile).
-    placement = (
-        "Write each test file NEXT TO its source file (colocated)."
-        if profile["layout"] == "colocated"
-        else "Write each test file into the dedicated tests/ directory."
-    )
-    assembly_contract = (
-        "Return the COMPLETE test file content in new_imports + new_test_code, PRESERVING all "
-        "still-valid existing tests (re-emit them); set overwrite_existing=true."
-    )
-    qa_system_prompt += (
-        "\n\n=== TARGET ENVIRONMENT PROFILE ===\n"
-        f"environment_id: {env_id}\n"
-        f"language: {env_language(env_id)}\n"
-        f"test framework: {profile['framework_label']}\n"
-        f"test file placement: {placement}\n"
-        f"assembly contract: {assembly_contract}\n"
-        "Generate tests using ONLY this stack's native testing framework and idioms."
-    )
+    qa_system_prompt += _environment_profile_block(env_id, profile)
 
     if not ctx.repository_map:
         ctx.repository_map = generate_repo_map(ctx.workspace_paths.repo_dir)

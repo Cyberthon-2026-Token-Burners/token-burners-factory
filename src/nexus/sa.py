@@ -9,8 +9,8 @@ from src.shared.utils.llm import run_structured_llm
 
 class Blueprint(BaseModel):
     """Structured wrapper carrying the architect's Markdown Blueprint."""
-    environment_id: str = Field(description="The single Paved-Road platform id this Blueprint targets. MUST be one of the strictly supported environments — you cannot invent a tech stack.")
-    markdown: str = Field(description="Technical Blueprint as Markdown: version-pinned tech stack, hard Non-Functional Requirements with numeric limits, exact File Topology tree, and core Data Contracts & Interfaces (inputs, outputs, exceptions). Every constraint a discrete, quotable bullet. Zero ambiguity.")
+    environment_id: str = Field(description="The single supported Paved-Road platform id this Blueprint targets (selection rules in the system prompt).")
+    markdown: str = Field(description="The Technical Blueprint as Markdown, structured per the OUTPUT CONTRACT in the system prompt.")
 
     @field_validator("environment_id")
     @classmethod

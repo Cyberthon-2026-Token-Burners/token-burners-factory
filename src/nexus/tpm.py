@@ -8,10 +8,10 @@ from src.shared.utils.llm import run_structured_llm
 
 
 class TaskTicket(BaseModel):
-    ticket_id: str = Field(description="Stable ticket id. TASK-00 is the RESERVED repository-preparation baseline (always first); business tickets start at TASK-01.")
+    ticket_id: str = Field(description="Stable ticket id (e.g. TASK-00, TASK-01); numbering/ordering rules in the system prompt.")
     title: str = Field(description="Short imperative title for the task.")
-    environment_id: str = Field(description="The Paved-Road platform id this ticket executes on, copied verbatim from the Blueprint. MUST be one of the strictly supported environments.")
-    description: str = Field(description="A 100% self-contained ticket body. Embed inline (copied from the Blueprint, never referenced): Objective, exact File Path(s), version-pinned Tech Stack, Dependencies, Architectural Constraints with numeric NFRs, Data Contracts/Signatures (names, inputs, outputs, exceptions), and Given/When/Then Acceptance Criteria. NEVER write 'as per the blueprint' or 'see epic' — an agent that never saw the Blueprint must implement this with zero further questions. For the mandatory baseline ticket TASK-00 (repository preparation, business tickets start at TASK-01), embed the FULL literal contents inline: the exact .gitignore patterns tailored to environment_id, the README.md structure (Project Goal, Tech Stack, Local Setup/Execution Commands), and the complete MIT LICENSE text (year 2026, copyright holder set to the repository author). These files may already exist: instruct the executor to verify their presence and currency and update/merge them idempotently (add missing patterns/sections, refresh stale content, preserve existing content) rather than blindly overwrite.")
+    environment_id: str = Field(description="The supported Paved-Road platform id this ticket runs on, copied from the Blueprint.")
+    description: str = Field(description="The full, self-contained ticket body following the PER-TICKET STRUCTURE in the system prompt (and, for TASK-00, the repository-preparation spec).")
 
     @field_validator("environment_id")
     @classmethod

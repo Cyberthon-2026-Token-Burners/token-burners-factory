@@ -147,6 +147,21 @@ class StripFencesTests(unittest.TestCase):
         self.assertEqual(qa._strip_fences("```\nplain\n```"), "plain")
 
 
+class EnvironmentProfileBlockTests(unittest.TestCase):
+    """The TARGET ENVIRONMENT PROFILE block is PURE DATA — behavioral instructions live in qa.md."""
+
+    def test_block_carries_registry_data_only(self) -> None:
+        from src.shared.core.environments import get_qa_profile
+        out = qa._environment_profile_block("python-3.12-core", get_qa_profile("python-3.12-core"))
+        self.assertIn("=== TARGET ENVIRONMENT PROFILE ===", out)
+        self.assertIn("environment_id: python-3.12-core", out)
+        self.assertIn("language: python", out)
+        self.assertIn("layout: separate", out)
+        # No behavioral instructions may leak into the data block (those belong in qa.md/skills).
+        for instruction in ("Generate tests using ONLY", "Write each test", "Return the COMPLETE", "overwrite_existing"):
+            self.assertNotIn(instruction, out, instruction)
+
+
 class AssembleSuiteTests(unittest.TestCase):
     """One language-neutral whole-file assembly path: join header+code, honor the empty-delta safety
     net. No per-language parsing/rewriting — correctness is the agent's job (skills + compile gate)."""

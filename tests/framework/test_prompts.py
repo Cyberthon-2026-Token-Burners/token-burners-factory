@@ -61,6 +61,13 @@ class GetSystemPromptTests(unittest.TestCase):
         self.assertIn("TEST-FILE IDENTITY FIDELITY", result)
         self.assertIn("Thin / untestable module", result)
 
+    def test_qa_prompt_carries_target_environment_instruction(self) -> None:
+        # The native-framework/placement directive lives in the prompt (not hardcoded in qa.py),
+        # and references the data block by name.
+        result = get_system_prompt("qa")
+        self.assertIn("TARGET ENVIRONMENT PROFILE", result)
+        self.assertIn("native testing framework", result)
+
     def test_qa_prompt_has_whole_file_assembly(self) -> None:
         # Unified, language-neutral assembly — no delta/AST language remains.
         result = get_system_prompt("qa")
