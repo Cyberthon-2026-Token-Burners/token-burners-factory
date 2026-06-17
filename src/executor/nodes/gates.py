@@ -139,6 +139,40 @@ async def run_build_gate(environment_id: str, repo_root: str) -> tuple[bool, lis
     return returncode == 0, log_lines
 
 
+async def run_test_compile_gate(environment_id: str, repo_root: str) -> tuple[bool, list[str]]:
+    """Pre-Reviewer COMPILE-ONLY gate over the QA-generated tests: restore deps (network ON) then run
+    the env's `test_compile_cmd` (network OFF), which builds the test code but runs NO test bodies.
+    Surfaces test compile errors (unused imports, undefined symbols) deterministically so the runner
+    can fast-fail-reroute them to the QA channel without spending the Reviewer. Compile-only (not
+    `go test`) on purpose: a real assertion failure references the test file too, so running tests here
+    would misroute production bugs to QA. Returns ``(ok, log_lines)``; a no-op pass when the env has no
+    `test_compile_cmd` or no test files are present."""
+    spec = SUPPORTED_ENVIRONMENTS[environment_id]
+    test_compile_cmd = spec.get("test_compile_cmd")
+    if not test_compile_cmd:
+        return True, []
+    if not _has_test_files(environment_id, repo_root):
+        log.debug(f"No test files present for [{environment_id}] — QA test-compile gate is a no-op pass.")
+        return True, []
+
+    setup_cmd = spec.get("setup_cmd")
+    if setup_cmd:
+        log.debug(f"Restoring dependencies for test-compile [{environment_id}] (network ON): {setup_cmd}")
+        rc, out, err = await execute_in_sandbox(environment_id, setup_cmd, repo_root, network="bridge")
+        restore_out = (out + "\n" + err).strip()
+        if rc != 0:
+            log.debug(f"Dependency restore (test-compile) failed with exit code: {rc}")
+            return False, ["🚨 Dependency restore failed:"] + restore_out.splitlines()
+        if restore_out:
+            log.debug(f"Dependency restore output: {restore_out}")
+
+    log.debug(f"Executing QA test-compile gate [{environment_id}] (network OFF): {test_compile_cmd}")
+    returncode, stdout, stderr = await execute_in_sandbox(environment_id, test_compile_cmd, repo_root, network="none")
+    log_lines = (stdout + "\n" + stderr).strip().splitlines()
+    log.debug(f"QA test-compile gate completed with exit code: {returncode}")
+    return returncode == 0, log_lines
+
+
 async def run_format_pass(environment_id: str, repo_root: str) -> None:
     """Deterministic cleanup run over the workspace right after QA writes test files, before the
     compile gate. Its main job is stripping unused imports (a HARD compile error in Go) so generated

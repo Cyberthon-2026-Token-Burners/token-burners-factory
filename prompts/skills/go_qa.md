@@ -41,6 +41,14 @@ func TestConvert(t *testing.T) { /* table-driven cases */ }
   of anonymous structs — iterated with `t.Run(tt.name, func(t *testing.T){ ... })` so each case is
   isolated and independently reported. Prefer one table-driven test over many near-duplicate funcs.
 
+- FLAG PARSING (CRITICAL): NEVER exercise the global `flag.CommandLine` / `flag.Parse` / package-level
+  `flag.String` from a test. Registering the same flag twice in one process PANICS with
+  `flag redefined: <name>` — so a table-driven test that parses flags per case crashes the whole
+  binary. Construct a FRESH `flag.NewFlagSet(tt.name, flag.ContinueOnError)` inside each case and parse
+  against it. If the production parser only reads global flags it is untestable: assert that via the
+  contract's signature (it should accept a `*flag.FlagSet` or an args slice) rather than invoking the
+  global parser.
+
 ## Errors (NOT exceptions)
 - Go has no exceptions. Assert error CONDITIONS only: check `if err != nil` for the no-error path, and
   `errors.Is(err, ExpectedSentinel)` for an expected sentinel/typed error declared in the contract.

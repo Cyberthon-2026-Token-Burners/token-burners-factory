@@ -22,7 +22,7 @@ from src.executor.agents.qa import run_qa_agent_node
 from src.executor.agents.developer import run_developer_node
 from src.executor.agents.reviewer import run_reviewer_node
 from src.executor.agents.techwriter import run_techwriter_node
-from src.executor.nodes.gates import run_qa_unit_tests, run_security_scan, run_build_gate, build_failure_is_test_only, build_failure_is_environmental
+from src.executor.nodes.gates import run_qa_unit_tests, run_security_scan, run_build_gate, run_test_compile_gate, build_failure_is_test_only, build_failure_is_environmental
 
 # ==========================================
 # CLI ARGUMENT PARSER
@@ -323,6 +323,7 @@ def build_production_snapshot(ctx: GlobalPipelineContext) -> None:
 # ==========================================
 GUARDRAIL_TOP_LINES = 15        # top-of-file window scanned for a justification
 GUARDRAIL_MAX_REROUTES = 2      # local guardrail_retries cap: free reroutes before a Hard Halt
+QA_GATE_MAX_REROUTES = 2        # free QA regenerations on a test-compile failure (Reviewer bypassed)
 
 
 def _missing_contract_files(ctx: GlobalPipelineContext) -> list[str]:
@@ -782,6 +783,40 @@ async def main():
 
         # Developer is the dominant token drain — enforce the budget before spending on gates.
         enforce_financial_circuit_breaker(ctx)
+
+        # 3.5 QA test-compile gate: production code now exists (Developer ran, or it was pre-approved on
+        #     a DAG-bypass test-only cycle), so the QA tests can be COMPILE-checked. A test-side compile
+        #     failure (unused import, undefined symbol — the class that otherwise burns a whole Reviewer
+        #     cycle) fast-fail-reroutes to the QA channel and regenerates the suite, with NO Reviewer
+        #     spend and NO functional-retry consumed — mirroring the Developer's compile gate. Anything
+        #     not clearly test-only (env/network, or a production-referencing failure) falls through to
+        #     the Reviewer unchanged, so real production bugs are never misrouted to QA.
+        for qa_gate_retries in range(QA_GATE_MAX_REROUTES + 1):
+            tc_ok, tc_lines = await run_test_compile_gate(
+                ctx.contract.environment_id, str(ctx.workspace_paths.repo_dir)
+            )
+            if tc_ok:
+                break
+            if build_failure_is_environmental(ctx.contract.environment_id, tc_lines):
+                log.warning("🔶 QA test-compile gate failed on a NETWORK/restore error — handing to the Reviewer (not a QA defect).")
+                break
+            if not build_failure_is_test_only(ctx.contract.environment_id, tc_lines):
+                log.warning("🔶 QA test-compile gate failed but the error references production code — handing to the Reviewer (not auto-routed to QA).")
+                break
+            if qa_gate_retries == QA_GATE_MAX_REROUTES:
+                log.warning("🔶 QA test-compile gate still failing after in-loop regenerations — handing to the Reviewer.")
+                break
+            log.warning(
+                f"🔶 QA test-compile gate failed on TEST files only — fast-fail regeneration "
+                f"{qa_gate_retries + 1}/{QA_GATE_MAX_REROUTES} to QA (no budget spent), Reviewer bypassed."
+            )
+            ctx.qa_error_trace = _cap_text(
+                "The generated test suite does not compile. Fix ONLY the test files.\n\n"
+                + "\n".join(tc_lines)
+            )
+            await run_qa_agent_node(ctx, ctx.qa_error_trace)  # its format pass re-runs over the new tests
+            enforce_financial_circuit_breaker(ctx)
+        ctx.qa_error_trace = ""  # consumed by the rebound loop; don't leak into the Reviewer's channels
 
         # 4. Automated Validation Phase (Runtime gates).
         #    DUMB PIPE: the orchestrator never inspects the test exit code to alter FSM state — no test

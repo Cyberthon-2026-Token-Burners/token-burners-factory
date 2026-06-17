@@ -9,7 +9,7 @@ from unittest import mock
 from unittest.mock import AsyncMock, call
 
 from src.executor.nodes.gates import (
-    run_qa_unit_tests, run_security_scan, run_build_gate, run_format_pass,
+    run_qa_unit_tests, run_security_scan, run_build_gate, run_format_pass, run_test_compile_gate,
     build_failure_is_test_only, build_failure_is_environmental, _has_test_files,
 )
 from src.shared.core.environments import SUPPORTED_ENVIRONMENTS, SAST_IMAGE, SAST_CMD
@@ -19,6 +19,7 @@ _REPO = "/abs/repo/root"
 _SETUP = SUPPORTED_ENVIRONMENTS[_ENV]["setup_cmd"]
 _TEST = SUPPORTED_ENVIRONMENTS[_ENV]["test_cmd"]
 _BUILD = SUPPORTED_ENVIRONMENTS[_ENV]["build_cmd"]
+_TCOMPILE = SUPPORTED_ENVIRONMENTS[_ENV]["test_compile_cmd"]
 
 
 class RunQaUnitTestsTests(unittest.IsolatedAsyncioTestCase):
@@ -179,6 +180,50 @@ class RunBuildGateTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertFalse(ok)
         mock_sandbox.assert_awaited_once_with(_ENV, _SETUP, _REPO, network="bridge")  # build never reached
+
+
+class RunTestCompileGateTests(unittest.IsolatedAsyncioTestCase):
+    """The pre-Reviewer QA test-compile gate: restore (network ON) → compile-only tests (network OFF),
+    with no-op passes when there's no `test_compile_cmd` or no test files."""
+
+    @mock.patch("src.executor.nodes.gates._has_test_files", return_value=True)
+    @mock.patch("src.executor.nodes.gates.execute_in_sandbox", new_callable=AsyncMock)
+    async def test_restore_then_compile_with_network_phasing(self, mock_sandbox: AsyncMock, _has: mock.Mock) -> None:
+        mock_sandbox.side_effect = [(0, "restored", ""), (0, "collected 3 items", "")]
+
+        ok, log_lines = await run_test_compile_gate(environment_id=_ENV, repo_root=_REPO)
+
+        self.assertTrue(ok)
+        self.assertEqual(mock_sandbox.await_args_list, [
+            call(_ENV, _SETUP, _REPO, network="bridge"),
+            call(_ENV, _TCOMPILE, _REPO, network="none"),
+        ])
+
+    @mock.patch("src.executor.nodes.gates._has_test_files", return_value=True)
+    @mock.patch("src.executor.nodes.gates.execute_in_sandbox", new_callable=AsyncMock)
+    async def test_compile_failure_reports_lines(self, mock_sandbox: AsyncMock, _has: mock.Mock) -> None:
+        mock_sandbox.side_effect = [(0, "", ""), (1, "", "test_x.py:2: ImportError: no module")]
+
+        ok, log_lines = await run_test_compile_gate(environment_id=_ENV, repo_root=_REPO)
+
+        self.assertFalse(ok)
+        self.assertIn("test_x.py:2: ImportError: no module", log_lines)
+
+    @mock.patch("src.executor.nodes.gates._has_test_files", return_value=False)
+    @mock.patch("src.executor.nodes.gates.execute_in_sandbox", new_callable=AsyncMock)
+    async def test_noop_when_no_test_files(self, mock_sandbox: AsyncMock, _has: mock.Mock) -> None:
+        ok, log_lines = await run_test_compile_gate(environment_id=_ENV, repo_root=_REPO)
+        self.assertTrue(ok)
+        mock_sandbox.assert_not_awaited()
+
+    @mock.patch("src.executor.nodes.gates._has_test_files", return_value=True)
+    @mock.patch("src.executor.nodes.gates.execute_in_sandbox", new_callable=AsyncMock)
+    async def test_noop_when_env_has_no_test_compile_cmd(self, mock_sandbox: AsyncMock, _has: mock.Mock) -> None:
+        env_id = "no-tc-env"
+        with mock.patch.dict(SUPPORTED_ENVIRONMENTS, {env_id: {"image": "x"}}, clear=False):
+            ok, log_lines = await run_test_compile_gate(environment_id=env_id, repo_root=_REPO)
+        self.assertTrue(ok)
+        mock_sandbox.assert_not_awaited()
 
 
 class RunSecurityScanTests(unittest.IsolatedAsyncioTestCase):

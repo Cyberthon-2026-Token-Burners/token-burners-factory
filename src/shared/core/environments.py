@@ -12,6 +12,8 @@
 #   test_cmd     the functional-test command (network-OFF).
 #   format_cmd   OPTIONAL deterministic cleanup run over freshly generated test files (network-OFF),
 #                primarily to strip unused imports before the compile gate. Best-effort/non-fatal.
+#   test_compile_cmd  OPTIONAL compile-ONLY check of the QA tests (network-OFF) — builds the test
+#                code but runs no test bodies; drives the pre-Reviewer QA test-compile gate.
 
 # SAST is generic across all stacks — one Semgrep image (SAST_IMAGE/SAST_CMD), never per-language.
 
@@ -24,6 +26,9 @@ SUPPORTED_ENVIRONMENTS = {
         # the repo-root `src` package (PEP 420 namespace; no __init__.py needed). The bare script would
         # insert only the test file's own dir, breaking cross-package imports. See BACKLOG #15.
         "test_cmd": "python -m pytest",
+        # Compile-only check of the QA-generated tests (imports/collects, runs NOTHING) — surfaces
+        # ImportError/SyntaxError before the Reviewer. Drives the pre-Reviewer QA test-compile gate.
+        "test_compile_cmd": "python -m pytest --collect-only -q",
         "setup_cmd": "pip install -r requirements.txt 2>/dev/null || true",
         # format_cmd: deterministic post-QA cleanup pass — strips unused imports (the #1 cause of a
         # compile-gate bounce on freshly generated tests). ruff --fix is autofix-only; non-fatal.
@@ -36,6 +41,11 @@ SUPPORTED_ENVIRONMENTS = {
         "image": "sdlc-sandbox/go:latest",
         "build_cmd": "go build ./...",
         "test_cmd": "go test ./...",
+        # Compile-only check: `go test -run=^$` builds every package INCLUDING `_test.go` (which
+        # `go build ./...` skips) but runs ZERO tests — so QA's compile errors (unused imports,
+        # undefined symbols) surface deterministically without executing/asserting. Drives the
+        # pre-Reviewer QA test-compile gate.
+        "test_compile_cmd": "go test -run=^$ ./...",
         "setup_cmd": "go mod download",
         # goimports (NOT gofmt) removes unused imports — Go treats those as a HARD compile error, the
         # exact failure that bounced QA's tests through an extra Reviewer cycle. Baked into the image

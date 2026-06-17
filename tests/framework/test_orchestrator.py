@@ -810,6 +810,65 @@ class HasStagedChangesTests(unittest.IsolatedAsyncioTestCase):
             await self._run(128, b"fatal: not a git repo")
 
 
+class QaTestCompileGateTests(unittest.IsolatedAsyncioTestCase):
+    """The pre-Reviewer QA test-compile gate fast-fail-reroutes a TEST-ONLY compile failure to QA
+    (regenerating the suite) without invoking the Reviewer, then proceeds once it compiles."""
+
+    def _ctx(self, base: Path) -> GlobalPipelineContext:
+        paths = WorkspacePaths(logs_dir=base / "logs", reports_dir=base / "reports", repo_dir=base)
+        ctx = GlobalPipelineContext(pr_description="gate run", workspace_paths=paths,
+                                    test_code_snapshot="tests")  # top-of-cycle QA skipped
+        ctx.contract = TechLeadContract(
+            files_to_modify=["src/core/models.py"], instruction="noop", function_signatures="noop",
+            strict_type_validation_rules="noop", techlead_reasoning="noop", topology_contract=[],
+            environment_id="python-3.12-core",
+        )
+        return ctx
+
+    async def test_test_only_compile_failure_reroutes_to_qa_then_proceeds(self) -> None:
+        with TemporaryDirectory() as td:
+            ctx = self._ctx(Path(td))
+
+            async def _set_approved_review(*_a, **_k) -> None:
+                ctx.review_report = ReviewReport(
+                    code_quality_analysis="ok", test_integrity_analysis="ok", log_verification_analysis="ok",
+                    code_quality_approved=True, test_integrity_approved=True, dev_diagnostic_payload="",
+                )
+
+            with (
+                mock.patch.object(orchestrator, "check_environment"),
+                mock.patch.object(orchestrator, "reconfigure_logging"),
+                mock.patch.object(orchestrator, "build_production_snapshot"),
+                mock.patch.object(orchestrator, "run_build_gate", new=AsyncMock(return_value=(True, []))),
+                mock.patch.object(orchestrator, "_missing_contract_files", return_value=[]),
+                mock.patch.object(orchestrator, "parse_args", return_value=orchestrator.RunConfig(
+                    description=None, base_branch="main", resume=Path("cp.json"), reset_attempts=False)),
+                mock.patch.object(GlobalPipelineContext, "load_checkpoint", return_value=ctx),
+                mock.patch.object(orchestrator, "run_qa_agent_node", new_callable=AsyncMock) as qa,
+                mock.patch.object(orchestrator, "run_developer_node", new_callable=AsyncMock),
+                # First call: test-only compile failure; second call (after QA regen): clean.
+                mock.patch.object(orchestrator, "run_test_compile_gate",
+                                  new=AsyncMock(side_effect=[(False, ["m_test.py:2: unused import"]), (True, [])])) as gate,
+                mock.patch.object(orchestrator, "build_failure_is_test_only", return_value=True),
+                mock.patch.object(orchestrator, "build_failure_is_environmental", return_value=False),
+                mock.patch.object(orchestrator, "run_reviewer_node", new=AsyncMock(side_effect=_set_approved_review)) as reviewer,
+                mock.patch.object(orchestrator, "run_qa_unit_tests", new=AsyncMock(return_value=(True, []))),
+                mock.patch.object(orchestrator, "run_security_scan", new=AsyncMock(return_value=(True, []))),
+                mock.patch.object(orchestrator, "finalize_transaction", new_callable=AsyncMock),
+                mock.patch.object(orchestrator, "run_techwriter_node", new_callable=AsyncMock),
+                mock.patch.object(GlobalPipelineContext, "save_checkpoint", autospec=True),
+            ):
+                await orchestrator.main()
+
+            # The gate ran twice (fail → regen → pass); QA regenerated exactly once on the rebound;
+            # the Reviewer ran only AFTER the tests compiled (not on the bounced attempt).
+            self.assertEqual(gate.await_count, 2)
+            qa.assert_awaited_once()
+            reviewer.assert_awaited_once()
+            # Rebound feedback is consumed, not leaked into the Reviewer's channels.
+            self.assertEqual(ctx.qa_error_trace, "")
+
+
 class FinalizeTransactionTests(unittest.IsolatedAsyncioTestCase):
     """The success transaction commits the staged delta atomically (and optionally pushes)."""
 

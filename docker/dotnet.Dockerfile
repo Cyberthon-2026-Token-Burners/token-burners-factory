@@ -1,6 +1,12 @@
 # Sandbox image for the dotnet-10-sdk environment. `dotnet test`/`dotnet restore` are built into the
 # base; SAST is the generic Semgrep image. Writable HOME + NuGet/CLI caches for the non-root --user run.
 FROM mcr.microsoft.com/dotnet/sdk:10.0-alpine
+
+# Corporate root CA (see go.Dockerfile): trust it BEFORE the NuGet prewarm restore below so it works
+# behind a TLS-intercepting proxy. Safe no-op when no cert is staged (dir present via certs/.gitkeep).
+COPY certs/ /usr/local/share/ca-certificates/
+RUN command -v update-ca-certificates >/dev/null && update-ca-certificates || true
+
 ENV HOME=/tmp \
     DOTNET_CLI_HOME=/tmp \
     NUGET_PACKAGES=/tmp/nuget \

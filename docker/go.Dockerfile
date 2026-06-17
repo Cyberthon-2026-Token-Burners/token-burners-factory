@@ -3,15 +3,24 @@
 # `mkdir /.cache: permission denied`.
 FROM golang:1.23-alpine
 
+# Corporate root CA: behind a TLS-intercepting proxy the container trust store lacks the corp root,
+# so any HTTPS fetch (go install / go mod download) fails `x509: certificate signed by unknown
+# authority`. Stage it in BEFORE any network step. Copying the directory (always present via
+# certs/.gitkeep) makes this a safe no-op when no cert is staged — the build never breaks.
+COPY certs/ /usr/local/share/ca-certificates/
+RUN command -v update-ca-certificates >/dev/null && update-ca-certificates || true
+
 # goimports powers the post-QA format pass (format_cmd): it removes unused imports — a HARD compile
 # error in Go — so generated tests clear the compile gate without a Reviewer bounce. Install it onto
 # the system PATH (runtime GOPATH=/tmp/go is an ephemeral tmpfs, so a $GOPATH/bin install would
-# vanish). NON-FATAL: behind a TLS-intercepting corporate proxy the module fetch can't verify the
-# proxy cert; rather than break the whole image build (build_sandbox_images.sh runs `set -e`), we
-# warn and carry on — format_cmd falls back to the always-present `gofmt` when goimports is absent.
-RUN GOPATH=/root/go GOBIN=/usr/local/bin go install golang.org/x/tools/cmd/goimports@latest \
+# vanish). With the corp CA trusted above this fetch succeeds. Pin to the last x/tools release that
+# builds on this base's Go (newer `@latest` requires a toolchain upgrade; GOTOOLCHAIN=local forbids
+# it). Bump this in lockstep with the base `golang:` tag. Kept NON-FATAL so a future proxy/CA/version
+# hiccup can't break the image build (build_sandbox_images.sh runs `set -e`) — format_cmd falls back
+# to the always-present `gofmt` when goimports is absent.
+RUN GOPATH=/root/go GOBIN=/usr/local/bin go install golang.org/x/tools/cmd/goimports@v0.28.0 \
     && rm -rf /root/go \
-    || echo "WARN: goimports unavailable at build (offline/proxy) — format pass falls back to gofmt"
+    || echo "WARN: goimports unavailable at build (offline/proxy/version) — format pass falls back to gofmt"
 
 ENV HOME=/tmp \
     GOCACHE=/tmp/.cache/go-build \

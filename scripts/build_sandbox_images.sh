@@ -10,6 +10,21 @@ TAG="${SDLC_SANDBOX_TAG:-latest}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DOCKER_DIR="$HERE/docker"
 
+# Stage the corporate root CA into the build context so each image trusts the TLS-intercepting proxy
+# (lets `go install` / dependency restores succeed at build time). The cert is gitignored — provisioned
+# from the host here. Override the source path with CORP_CA_PATH. Absent → warn and continue: the
+# Dockerfiles COPY the (always-present) certs/ dir, so update-ca-certificates is just a no-op.
+CORP_CA_PATH="${CORP_CA_PATH:-/usr/local/share/ca-certificates/corporate/company_root.crt}"
+mkdir -p "$DOCKER_DIR/certs"
+if [ -f "$CORP_CA_PATH" ]; then
+  # `install` overwrites and forces a writable+world-readable mode — the host source is often
+  # root-owned read-only (r-xr-xr-x), which a plain `cp` cannot overwrite on a re-run.
+  install -m 0644 "$CORP_CA_PATH" "$DOCKER_DIR/certs/company_root.crt"
+  echo "🔐 Staged corporate CA from $CORP_CA_PATH into the build context."
+else
+  echo "⚠️  No corporate CA at $CORP_CA_PATH — building without it (set CORP_CA_PATH to override)."
+fi
+
 # env-key -> Dockerfile (one image per language; multiple env_ids may share a language image).
 declare -A IMAGES=(
   ["sdlc-sandbox/python"]="python.Dockerfile"
