@@ -101,8 +101,6 @@ class WorkspacePathsTests(unittest.TestCase):
     @staticmethod
     def _explicit(base: Path) -> dict[str, Path]:
         return {
-            "code_dir": base / "code",
-            "tests_dir": base / "tests",
             "logs_dir": base / "logs",
             "reports_dir": base / "reports",
             "repo_dir": base,
@@ -128,10 +126,9 @@ class WorkspacePathsTests(unittest.TestCase):
             fields = self._explicit(Path(td))
             # Act
             paths = WorkspacePaths(**fields)
-            # Assert — paths are stored verbatim and the work dirs materialise on disk.
-            self.assertEqual(paths.code_dir, fields["code_dir"])
+            # Assert — paths are stored verbatim and the meta dirs materialise on disk.
             self.assertEqual(paths.repo_dir, fields["repo_dir"])
-            for d in (paths.code_dir, paths.tests_dir, paths.logs_dir, paths.reports_dir):
+            for d in (paths.logs_dir, paths.reports_dir):
                 self.assertTrue(d.is_dir())
 
 
@@ -144,35 +141,18 @@ class WorkspacePathsForRunTests(unittest.TestCase):
         repo_dir.mkdir(parents=True)
         return run_dir, repo_dir
 
-    def test_maps_code_tests_inside_repo_and_meta_state_outside(self) -> None:
+    def test_maps_repo_root_and_meta_state_outside_clone(self) -> None:
         # Arrange
         with TemporaryDirectory() as td:
             run_dir, repo_dir = self._make_run(Path(td))
             # Act
-            paths = WorkspacePaths.for_run(run_dir, repo_dir, "src/", "tests/")
-            # Assert — code/tests anchor in the clone; logs/reports stay outside it.
-            self.assertEqual(paths.code_dir, (repo_dir / "src").resolve())
-            self.assertEqual(paths.tests_dir, (repo_dir / "tests").resolve())
+            paths = WorkspacePaths.for_run(run_dir, repo_dir)
+            # Assert — repo root is the clone; logs/reports stay outside it. Source/test layout is
+            # no longer fixed here (contract-/profile-driven), so no code_dir/tests_dir to map.
+            self.assertEqual(paths.repo_dir, repo_dir.resolve())
             self.assertEqual(paths.logs_dir, (run_dir / "logs").resolve())
             self.assertEqual(paths.reports_dir, (run_dir / "reports").resolve())
-            self.assertTrue(paths.code_dir.is_relative_to(repo_dir.resolve()))
             self.assertFalse(paths.logs_dir.is_relative_to(repo_dir.resolve()))
-
-    def test_rejects_dotdot_traversal_in_src_dir(self) -> None:
-        # Arrange
-        with TemporaryDirectory() as td:
-            run_dir, repo_dir = self._make_run(Path(td))
-            # Act / Assert
-            with self.assertRaises(ValueError):
-                WorkspacePaths.for_run(run_dir, repo_dir, "../../etc", "tests/")
-
-    def test_rejects_absolute_path_injection_in_tests_dir(self) -> None:
-        # Arrange
-        with TemporaryDirectory() as td:
-            run_dir, repo_dir = self._make_run(Path(td))
-            # Act / Assert — an absolute operand would otherwise escape the repo root.
-            with self.assertRaises(ValueError):
-                WorkspacePaths.for_run(run_dir, repo_dir, "src/", "/etc")
 
 
 class ContractModelTests(unittest.TestCase):
@@ -398,8 +378,6 @@ class GlobalContextCheckpointTests(unittest.TestCase):
         with TemporaryDirectory() as td:
             base = Path(td)
             paths = WorkspacePaths(
-                code_dir=base / "code",
-                tests_dir=base / "tests",
                 logs_dir=base / "logs",
                 reports_dir=base / "reports",
                 repo_dir=base,
@@ -429,8 +407,6 @@ class GlobalContextCheckpointTests(unittest.TestCase):
         with TemporaryDirectory() as td:
             base = Path(td)
             paths = WorkspacePaths(
-                code_dir=base / "code",
-                tests_dir=base / "tests",
                 logs_dir=base / "logs",
                 reports_dir=base / "reports",
                 repo_dir=base,
@@ -442,8 +418,7 @@ class GlobalContextCheckpointTests(unittest.TestCase):
             loaded = GlobalPipelineContext.load_checkpoint(checkpoint)
 
             # Assert
-            self.assertIsInstance(loaded.workspace_paths.code_dir, Path)
-            self.assertIsInstance(loaded.workspace_paths.tests_dir, Path)
+            self.assertIsInstance(loaded.workspace_paths.repo_dir, Path)
             self.assertIsInstance(loaded.workspace_paths.logs_dir, Path)
             self.assertIsInstance(loaded.workspace_paths.reports_dir, Path)
 

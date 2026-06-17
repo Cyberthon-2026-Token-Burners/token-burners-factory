@@ -21,6 +21,40 @@ def build_failure_is_test_only(environment_id: str, log_lines: list[str]) -> boo
     return all(is_test_file(environment_id, p) for p in referenced)
 
 
+# Signatures of an ENVIRONMENTAL build/restore failure — the sandbox could not reach the package
+# feed (NuGet/npm/Go/PyPI) or DNS/proxy dropped the connection. These are NOT code defects: the
+# Developer cannot fix the network, so rerouting it just wastes budget and corrupts the contract
+# (it drops mandated dependencies to "compile offline"). Matched case-insensitively. Kept to strong
+# network/restore signatures only, so a real compiler error is never misread as environmental.
+_ENV_BUILD_FAILURE_MARKERS = (
+    "nu1301",                              # NuGet: unable to load the service index for source
+    "unable to load the service index",
+    "resource temporarily unavailable",    # EAGAIN — socket blocked (antivirus/proxy under burst)
+    "temporary failure in name resolution",
+    "could not resolve host",
+    "name or service not known",
+    "network is unreachable",
+    "connection timed out",
+    "connection refused",
+    "could not connect to",
+    "failed to connect to",
+    "tls handshake timeout",
+    "proxyerror",
+    "etimedout", "enotfound", "eai_again", "econnreset",   # npm/node network errno
+    "dial tcp",                            # go module fetch
+    "🚨 dependency restore failed",         # our own restore-phase failure banner (gates setup_cmd)
+)
+
+
+def build_failure_is_environmental(environment_id: str, log_lines: list[str]) -> bool:
+    """True iff the build/restore output bears a network/feed-unreachable signature (and is therefore
+    NOT a code defect). Used by the runner to fail FAST with a clear environment incident instead of
+    rerouting the Developer to "fix" an unreachable package feed. Conservative: requires an explicit
+    network/restore marker, so genuine compiler errors fall through to the normal compile-gate reroute."""
+    blob = "\n".join(log_lines).lower()
+    return any(marker in blob for marker in _ENV_BUILD_FAILURE_MARKERS)
+
+
 def _has_test_files(environment_id: str, repo_root: str) -> bool:
     """True if the workspace holds ≥1 test file for the target stack (language-aware, via the
     is_test_file SSOT). Runner-agnostic empty-suite detection: rather than special-casing each

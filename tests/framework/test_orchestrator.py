@@ -63,8 +63,6 @@ class ParseArgsFreshRunTests(unittest.TestCase):
         self.assertEqual(cfg.repo, "git@host:proj.git")
         self.assertEqual(cfg.ticket, "DEMO-1")
         self.assertEqual(cfg.description, "DEMO-1")
-        self.assertEqual(cfg.src_dir, "src/")
-        self.assertEqual(cfg.tests_dir, "tests/")
         self.assertIsNone(cfg.resume)
 
     def test_inline_description_overrides_ticket_fallback(self) -> None:
@@ -75,16 +73,6 @@ class ParseArgsFreshRunTests(unittest.TestCase):
             cfg = orchestrator.parse_args()
         # Assert
         self.assertEqual(cfg.description, "build the X")
-
-    def test_src_and_tests_dir_overrides_are_captured(self) -> None:
-        # Arrange
-        argv = ["orchestrator.py", "--repo", "r", "--ticket", "T", "--src-dir", "app/", "--tests-dir", "spec/"]
-        # Act
-        with mock.patch.object(sys, "argv", argv):
-            cfg = orchestrator.parse_args()
-        # Assert
-        self.assertEqual(cfg.src_dir, "app/")
-        self.assertEqual(cfg.tests_dir, "spec/")
 
     def test_push_flag_defaults_false_and_opts_in(self) -> None:
         # Arrange / Act — default off.
@@ -103,8 +91,6 @@ class MainResumeSkipFlowTests(unittest.IsolatedAsyncioTestCase):
         with TemporaryDirectory() as td:
             base = Path(td)
             paths = WorkspacePaths(
-                code_dir=base / "code",
-                tests_dir=base / "tests",
                 logs_dir=base / "logs",
                 reports_dir=base / "reports",
                 repo_dir=base,
@@ -184,8 +170,6 @@ class MainCheckpointWritePointsTests(unittest.IsolatedAsyncioTestCase):
         with TemporaryDirectory() as td:
             base = Path(td)
             paths = WorkspacePaths(
-                code_dir=base / "code",
-                tests_dir=base / "tests",
                 logs_dir=base / "logs",
                 reports_dir=base / "reports",
                 repo_dir=base,
@@ -251,8 +235,6 @@ class MainCheckpointWritePointsTests(unittest.IsolatedAsyncioTestCase):
         with TemporaryDirectory() as td:
             base = Path(td)
             paths = WorkspacePaths(
-                code_dir=base / "code",
-                tests_dir=base / "tests",
                 logs_dir=base / "logs",
                 reports_dir=base / "reports",
                 repo_dir=base,
@@ -315,8 +297,6 @@ class MainCheckpointWritePointsTests(unittest.IsolatedAsyncioTestCase):
         with TemporaryDirectory() as td:
             base = Path(td)
             paths = WorkspacePaths(
-                code_dir=base / "code",
-                tests_dir=base / "tests",
                 logs_dir=base / "logs",
                 reports_dir=base / "reports",
                 repo_dir=base,
@@ -402,8 +382,6 @@ class ResumeFsmRecoveryTests(unittest.IsolatedAsyncioTestCase):
         with TemporaryDirectory() as td:
             base = Path(td)
             paths = WorkspacePaths(
-                code_dir=base / "code",
-                tests_dir=base / "tests",
                 logs_dir=base / "logs",
                 reports_dir=base / "reports",
                 repo_dir=base,
@@ -474,8 +452,6 @@ class ResumeFsmRecoveryTests(unittest.IsolatedAsyncioTestCase):
         with TemporaryDirectory() as td:
             base = Path(td)
             paths = WorkspacePaths(
-                code_dir=base / "code",
-                tests_dir=base / "tests",
                 logs_dir=base / "logs",
                 reports_dir=base / "reports",
                 repo_dir=base,
@@ -546,8 +522,6 @@ class ResumeFsmRecoveryTests(unittest.IsolatedAsyncioTestCase):
         with TemporaryDirectory() as td:
             base = Path(td)
             paths = WorkspacePaths(
-                code_dir=base / "code",
-                tests_dir=base / "tests",
                 logs_dir=base / "logs",
                 reports_dir=base / "reports",
                 repo_dir=base,
@@ -602,8 +576,6 @@ class ResumeFsmRecoveryTests(unittest.IsolatedAsyncioTestCase):
         with TemporaryDirectory() as td:
             base = Path(td)
             paths = WorkspacePaths(
-                code_dir=base / "code",
-                tests_dir=base / "tests",
                 logs_dir=base / "logs",
                 reports_dir=base / "reports",
                 repo_dir=base,
@@ -681,7 +653,6 @@ class DeadlockGuardTests(unittest.IsolatedAsyncioTestCase):
         with TemporaryDirectory() as td:
             base = Path(td)
             paths = WorkspacePaths(
-                code_dir=base / "code", tests_dir=base / "tests",
                 logs_dir=base / "logs", reports_dir=base / "reports", repo_dir=base,
             )
             ctx = GlobalPipelineContext(
@@ -741,8 +712,7 @@ class BootstrapSessionTests(unittest.IsolatedAsyncioTestCase):
         with TemporaryDirectory() as td:
             cfg = orchestrator.RunConfig(
                 description="d", base_branch="main", resume=None, reset_attempts=False,
-                repo="some-repo", ticket="DEMO-1", src_dir="src/", tests_dir="tests/",
-            )
+                repo="some-repo", ticket="DEMO-1",            )
             run_dir = Path(td) / "run_test"
             proc = mock.MagicMock()
             proc.returncode = 0
@@ -766,8 +736,7 @@ class BootstrapSessionTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("fetch", fetch_args)
             self.assertIn("main:main", fetch_args)
             # Assert — workspace anchored under the caller's run_dir; meta-state (logs/reports) outside the clone.
-            self.assertEqual(paths.code_dir.name, "src")
-            self.assertEqual(paths.tests_dir.name, "tests")
+            self.assertEqual(paths.repo_dir.name, "repo")
             self.assertEqual(paths.logs_dir, (run_dir / "logs").resolve())
             self.assertEqual(paths.reports_dir, (run_dir / "reports").resolve())
 
@@ -776,8 +745,7 @@ class BootstrapSessionTests(unittest.IsolatedAsyncioTestCase):
         with TemporaryDirectory() as td:
             cfg = orchestrator.RunConfig(
                 description="d", base_branch="main", resume=None, reset_attempts=False,
-                repo="bad-repo", ticket="T", src_dir="src/", tests_dir="tests/",
-            )
+                repo="bad-repo", ticket="T",            )
             proc = mock.MagicMock()
             proc.returncode = 128
             proc.communicate = AsyncMock(return_value=(b"", b"fatal: repository not found"))
@@ -801,8 +769,7 @@ class BootstrapSessionTests(unittest.IsolatedAsyncioTestCase):
         with TemporaryDirectory() as td:
             cfg = orchestrator.RunConfig(
                 description="d", base_branch="main", resume=None, reset_attempts=False,
-                repo="slow-repo", ticket="T", src_dir="src/", tests_dir="tests/",
-            )
+                repo="slow-repo", ticket="T",            )
             proc = mock.MagicMock()
             proc.kill = mock.MagicMock()
             proc.wait = AsyncMock()
@@ -848,7 +815,6 @@ class FinalizeTransactionTests(unittest.IsolatedAsyncioTestCase):
 
     def _ctx(self, base: Path) -> GlobalPipelineContext:
         paths = WorkspacePaths(
-            code_dir=base / "code", tests_dir=base / "tests",
             logs_dir=base / "logs", reports_dir=base / "reports", repo_dir=base,
         )
         return GlobalPipelineContext(
@@ -978,9 +944,11 @@ class EnforceDocumentationGuardrailTests(unittest.IsolatedAsyncioTestCase):
     @staticmethod
     def _ctx(repo: Path, files_to_modify: list[str], snapshot_keys: list[str]) -> GlobalPipelineContext:
         paths = WorkspacePaths(
-            code_dir=repo / "src", tests_dir=repo / "tests",
             logs_dir=repo / "logs", reports_dir=repo / "reports", repo_dir=repo,
         )
+        # The source dir is no longer pre-created by WorkspacePaths (layout is contract-driven); the
+        # real Developer CLI mkdir's as it writes, so these tests create the tree they write into.
+        (repo / "src").mkdir(parents=True, exist_ok=True)
         ctx = GlobalPipelineContext(pr_description="t", base_branch="main", workspace_paths=paths)
         ctx.contract = TechLeadContract(
             files_to_modify=files_to_modify, instruction="i", function_signatures="s",
@@ -1079,7 +1047,6 @@ class DocumentationGuardrailLoopTests(unittest.IsolatedAsyncioTestCase):
     @staticmethod
     def _resume_ctx(base: Path) -> GlobalPipelineContext:
         paths = WorkspacePaths(
-            code_dir=base / "code", tests_dir=base / "tests",
             logs_dir=base / "logs", reports_dir=base / "reports", repo_dir=base,
         )
         ctx = GlobalPipelineContext(
@@ -1175,6 +1142,80 @@ class DocumentationGuardrailLoopTests(unittest.IsolatedAsyncioTestCase):
             reviewer.assert_awaited_once()                    # Reviewer reached only after a clean build
             self.assertEqual(ctx.current_attempt, 2)          # exactly ONE functional cycle consumed
             self.assertIn("undefined: Foo", developer.await_args_list[1].args[1])  # build errors fed back
+
+    async def test_environmental_build_failure_retries_then_proceeds_without_rerouting(self) -> None:
+        # Arrange — the compile gate fails with a NETWORK/restore error (NU1301) once, then the cheap
+        # retry succeeds. The Developer must NOT be rerouted (a feed blip is not a code defect) and the
+        # run proceeds to the Reviewer on the same functional cycle.
+        with TemporaryDirectory() as td:
+            ctx = self._resume_ctx(Path(td))
+
+            async def _approve(*_a, **_k) -> None:
+                ctx.review_report = ReviewReport(
+                    code_quality_analysis="ok", test_integrity_analysis="ok", log_verification_analysis="ok",
+                    code_quality_approved=True, test_integrity_approved=True, dev_diagnostic_payload="",
+                )
+
+            nu1301 = ["/workspace/x.csproj : error NU1301: Unable to load the service index for source https://api.nuget.org/v3/index.json"]
+            with (
+                mock.patch.object(orchestrator, "check_environment"),
+                mock.patch.object(orchestrator, "reconfigure_logging"),
+                mock.patch.object(orchestrator, "build_production_snapshot"),
+                mock.patch.object(orchestrator, "run_build_gate",
+                                  new=AsyncMock(side_effect=[(False, nu1301), (True, [])])),
+                mock.patch.object(orchestrator, "_missing_contract_files", return_value=[]),
+                mock.patch.object(orchestrator, "parse_args", return_value=orchestrator.RunConfig(
+                    description=None, base_branch="main", resume=Path("cp.json"), reset_attempts=False)),
+                mock.patch.object(GlobalPipelineContext, "load_checkpoint", return_value=ctx),
+                mock.patch.object(orchestrator, "run_techlead_node", new_callable=AsyncMock),
+                mock.patch.object(orchestrator, "run_qa_agent_node", new_callable=AsyncMock),
+                mock.patch.object(orchestrator, "run_developer_node", new_callable=AsyncMock) as developer,
+                mock.patch.object(orchestrator, "enforce_documentation_guardrail", new=AsyncMock(return_value=None)),
+                mock.patch.object(orchestrator, "run_reviewer_node", new=AsyncMock(side_effect=_approve)) as reviewer,
+                mock.patch.object(orchestrator, "run_qa_unit_tests", new=AsyncMock(return_value=(True, []))),
+                mock.patch.object(orchestrator, "run_security_scan", new=AsyncMock(return_value=(True, []))),
+                mock.patch.object(orchestrator, "finalize_transaction", new_callable=AsyncMock),
+                mock.patch.object(orchestrator, "run_techwriter_node", new_callable=AsyncMock),
+            ):
+                await orchestrator.main()
+
+            developer.assert_awaited_once()                   # NO reroute — the network blip is not the Developer's fault
+            reviewer.assert_awaited_once()                    # retry passed → proceed normally
+            self.assertEqual(ctx.current_attempt, 2)          # exactly ONE functional cycle consumed (1 → 2)
+
+    async def test_persistent_environmental_build_failure_halts_without_rerouting(self) -> None:
+        # Arrange — the compile gate keeps failing with NU1301 (feed unreachable for the whole run).
+        # The retry can't fix a real outage, so the run must FAIL FAST via an environment incident —
+        # never rerouting the Developer (which would corrupt the contract) and never reaching the Reviewer.
+        with TemporaryDirectory() as td:
+            ctx = self._resume_ctx(Path(td))
+            nu1301 = ["error NU1301:   Resource temporarily unavailable (api.nuget.org:443)"]
+            with (
+                mock.patch.object(orchestrator, "check_environment"),
+                mock.patch.object(orchestrator, "reconfigure_logging"),
+                mock.patch.object(orchestrator, "build_production_snapshot"),
+                mock.patch.object(orchestrator, "run_build_gate", new=AsyncMock(return_value=(False, nu1301))),
+                mock.patch.object(orchestrator, "_missing_contract_files", return_value=[]),
+                mock.patch.object(orchestrator, "_abort_with_incident", side_effect=SystemExit(1)) as abort,
+                mock.patch.object(orchestrator, "parse_args", return_value=orchestrator.RunConfig(
+                    description=None, base_branch="main", resume=Path("cp.json"), reset_attempts=False)),
+                mock.patch.object(GlobalPipelineContext, "load_checkpoint", return_value=ctx),
+                mock.patch.object(orchestrator, "run_techlead_node", new_callable=AsyncMock),
+                mock.patch.object(orchestrator, "run_qa_agent_node", new_callable=AsyncMock),
+                mock.patch.object(orchestrator, "run_developer_node", new_callable=AsyncMock) as developer,
+                mock.patch.object(orchestrator, "enforce_documentation_guardrail", new=AsyncMock(return_value=None)),
+                mock.patch.object(orchestrator, "run_reviewer_node", new=AsyncMock()) as reviewer,
+                mock.patch.object(orchestrator, "run_qa_unit_tests", new=AsyncMock(return_value=(True, []))),
+                mock.patch.object(orchestrator, "run_security_scan", new=AsyncMock(return_value=(True, []))),
+                mock.patch.object(orchestrator, "finalize_transaction", new_callable=AsyncMock),
+                mock.patch.object(orchestrator, "run_techwriter_node", new_callable=AsyncMock),
+            ):
+                with self.assertRaises(SystemExit):
+                    await orchestrator.main()
+
+            abort.assert_called_once()                        # fail-fast environment incident
+            developer.assert_awaited_once()                   # initial pass only — NEVER rerouted to "fix" the network
+            reviewer.assert_not_awaited()                     # never reached → no code_quality rejection loop / breaker
 
     async def test_missing_contracted_file_reroutes_developer_for_free(self) -> None:
         # Arrange — a contracted file (LICENSE) is missing on the first dev pass, present on the second.
@@ -1292,7 +1333,6 @@ class FinancialCircuitBreakerTests(unittest.TestCase):
 
     def _ctx(self, base: Path) -> GlobalPipelineContext:
         paths = WorkspacePaths(
-            code_dir=base / "code", tests_dir=base / "tests",
             logs_dir=base / "logs", reports_dir=base / "reports", repo_dir=base,
         )
         return GlobalPipelineContext(pr_description="finops run", workspace_paths=paths)
@@ -1361,7 +1401,6 @@ class TestCollectionTriageRoutingTests(unittest.IsolatedAsyncioTestCase):
 
     def _ctx(self, base: Path) -> GlobalPipelineContext:
         paths = WorkspacePaths(
-            code_dir=base / "code", tests_dir=base / "tests",
             logs_dir=base / "logs", reports_dir=base / "reports", repo_dir=base,
         )
         ctx = GlobalPipelineContext(
@@ -1379,7 +1418,7 @@ class TestCollectionTriageRoutingTests(unittest.IsolatedAsyncioTestCase):
         with TemporaryDirectory() as td:
             base = Path(td)
             ctx = self._ctx(base)
-            stale = ctx.workspace_paths.tests_dir / "test_stale.py"
+            stale = ctx.workspace_paths.repo_dir / "tests" / "test_stale.py"  # python separate-layout root
             stale.parent.mkdir(parents=True, exist_ok=True)
             stale.write_text("import does.not.exist", encoding="utf-8")
 
@@ -1437,7 +1476,6 @@ class FinOpsReportTests(unittest.TestCase):
 
     def _ctx(self, base: Path) -> GlobalPipelineContext:
         paths = WorkspacePaths(
-            code_dir=base / "code", tests_dir=base / "tests",
             logs_dir=base / "logs", reports_dir=base / "reports", repo_dir=base,
         )
         ctx = GlobalPipelineContext(pr_description="finops", workspace_paths=paths)
@@ -1473,8 +1511,7 @@ class MissingContractFilesTests(unittest.TestCase):
             repo = Path(td)
             (repo / "main.go").write_text("package main\n", encoding="utf-8")  # present
             paths = WorkspacePaths(
-                code_dir=repo, tests_dir=repo / "tests",
-                logs_dir=repo / "logs", reports_dir=repo / "reports", repo_dir=repo,
+                    logs_dir=repo / "logs", reports_dir=repo / "reports", repo_dir=repo,
             )
             contract = TechLeadContract(
                 files_to_modify=["main.go", ".gitignore", "LICENSE", "main_test.go"],
@@ -1505,7 +1542,6 @@ class BuildProductionSnapshotTests(unittest.TestCase):
 
     def _ctx(self, repo: Path) -> GlobalPipelineContext:
         paths = WorkspacePaths(
-            code_dir=repo / "src", tests_dir=repo / "tests",
             logs_dir=repo / "logs", reports_dir=repo / "reports", repo_dir=repo,
         )
         contract = TechLeadContract(

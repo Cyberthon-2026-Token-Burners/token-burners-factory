@@ -25,7 +25,6 @@ class RunTechwriterNodeTests(unittest.IsolatedAsyncioTestCase):
     @staticmethod
     def _ctx(repo: Path) -> GlobalPipelineContext:
         paths = WorkspacePaths(
-            code_dir=repo / "src", tests_dir=repo / "tests",
             logs_dir=repo / "logs", reports_dir=repo / "reports", repo_dir=repo,
         )
         ctx = GlobalPipelineContext(pr_description="add streaming export", base_branch="main", workspace_paths=paths)

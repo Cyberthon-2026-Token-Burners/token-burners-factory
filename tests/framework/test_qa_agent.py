@@ -10,7 +10,7 @@ os.environ.setdefault("GEMINI_API_KEY", "test-key")
 
 from src.executor.agents import qa
 from src.shared.core.models import QATestSuite
-from src.shared.core.environments import is_testable_source, derive_test_target, is_test_file
+from src.shared.core.environments import is_testable_source, derive_test_target, is_test_file, get_qa_profile
 
 # The Python test-name predicate, now supplied explicitly by callers (the engine default was removed).
 _PY_TEST_NAME = qa._test_name_predicate("python-3.12-core")
@@ -136,6 +136,22 @@ class DeriveTestTargetTests(unittest.TestCase):
     def test_dotnet_colocated_tests_suffix(self) -> None:
         path, _ = derive_test_target("dotnet-10-sdk", "src/Converter.cs")
         self.assertEqual(path, "src/ConverterTests.cs")
+
+
+class TestRootProfileTests(unittest.TestCase):
+    """The QA language profile is the SSOT for the test root (replacing the removed --tests-dir flag):
+    separate-layout (python) places tests under repo/<test_root>; colocated stacks have no root."""
+
+    def test_python_separate_layout_has_tests_root(self) -> None:
+        prof = get_qa_profile("python-3.12-core")
+        self.assertEqual(prof["layout"], "separate")
+        self.assertEqual(prof["test_root"], "tests")
+
+    def test_colocated_stacks_have_no_test_root(self) -> None:
+        for env in ("go-1.23-cli", "node-20-web", "dotnet-10-sdk"):
+            prof = get_qa_profile(env)
+            self.assertEqual(prof["layout"], "colocated")
+            self.assertIsNone(prof["test_root"])
 
 
 class StripFencesTests(unittest.TestCase):

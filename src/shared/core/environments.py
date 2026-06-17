@@ -80,6 +80,7 @@ SAST_CMD = "semgrep scan --error --metrics off --config /opt/semgrep-rules /work
 QA_LANGUAGE_PROFILES = {
     "python": {
         "layout": "separate",
+        "test_root": "tests",   # separate-layout: tests live under repo/<test_root>/ (SSOT for placement)
         "source_exts": (".py",),
         "test_prefix": "test_",
         "test_suffix": ".py",
@@ -89,6 +90,7 @@ QA_LANGUAGE_PROFILES = {
     },
     "go": {
         "layout": "colocated",
+        "test_root": None,      # colocated: tests sit next to source, no separate root
         "source_exts": (".go",),
         "test_prefix": "",
         "test_suffix": "_test.go",
@@ -98,6 +100,7 @@ QA_LANGUAGE_PROFILES = {
     },
     "node": {
         "layout": "colocated",
+        "test_root": None,      # colocated: tests sit next to source, no separate root
         "source_exts": (".ts", ".tsx", ".js", ".jsx"),
         "test_prefix": "",
         "test_suffix": ".test",   # extension is appended from the source file (.test.ts / .test.js)
@@ -107,6 +110,7 @@ QA_LANGUAGE_PROFILES = {
     },
     "dotnet": {
         "layout": "colocated",
+        "test_root": None,      # colocated: tests sit next to source, no separate root
         "source_exts": (".cs",),
         "test_prefix": "",
         "test_suffix": "Tests.cs",

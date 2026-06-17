@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from src.shared.core.observability import log, reconfigure_logging
 from src.shared.core.config import check_environment, PIPELINE_BUDGET_TOKENS, PIPELINE_BUDGET_USD
 from src.shared.core.models import GlobalPipelineContext, WorkspacePaths, RUNS_BASE
-from src.shared.core.environments import is_test_file
+from src.shared.core.environments import is_test_file, get_qa_profile
 from src.shared.utils.git_helpers import get_git_root, get_pipeline_snapshot_files
 from src.shared.utils.redaction import redact
 from src.executor.agents.techlead import run_techlead_node
@@ -21,7 +21,7 @@ from src.executor.agents.qa import run_qa_agent_node
 from src.executor.agents.developer import run_developer_node
 from src.executor.agents.reviewer import run_reviewer_node
 from src.executor.agents.techwriter import run_techwriter_node
-from src.executor.nodes.gates import run_qa_unit_tests, run_security_scan, run_build_gate, build_failure_is_test_only
+from src.executor.nodes.gates import run_qa_unit_tests, run_security_scan, run_build_gate, build_failure_is_test_only, build_failure_is_environmental
 
 # ==========================================
 # CLI ARGUMENT PARSER
@@ -35,8 +35,6 @@ class RunConfig:
     reset_attempts: bool
     repo: str | None = None
     ticket: str | None = None
-    src_dir: str = "src/"
-    tests_dir: str = "tests/"
     push: bool = False
     idea: str | None = None  # Nexus Control Plane PoC: raw idea string (bypasses the executor entirely).
     file: str | None = None  # ticket file path; used to locate the sibling blueprint.md at runtime
@@ -51,8 +49,6 @@ def parse_args() -> RunConfig:
     group.add_argument("-f", "--file", help="Path to a file containing the task description.")
     parser.add_argument("--repo", help="Git URL or local path to the target repository (required unless --resume).")
     parser.add_argument("--ticket", help="Ticket ID or feature name; names the session and feat/ticket-<id> branch (required unless --resume).")
-    parser.add_argument("--src-dir", default="src/", help="Source code path inside the repo (default: src/).")
-    parser.add_argument("--tests-dir", default="tests/", help="Tests path inside the repo (default: tests/).")
     parser.add_argument("--base-branch", default="main", help="Base branch of the repository.")
     parser.add_argument("--resume", type=Path, help="Path to a checkpoint JSON file.")
     parser.add_argument("--reset-attempts", action="store_true", help="Reset circuit breaker counter on resume.")
@@ -78,8 +74,6 @@ def parse_args() -> RunConfig:
             base_branch=args.base_branch,
             resume=args.resume,
             reset_attempts=args.reset_attempts,
-            src_dir=args.src_dir,
-            tests_dir=args.tests_dir,
             push=args.push,
         )
 
@@ -107,8 +101,6 @@ def parse_args() -> RunConfig:
         reset_attempts=args.reset_attempts,
         repo=args.repo,
         ticket=args.ticket,
-        src_dir=args.src_dir,
-        tests_dir=args.tests_dir,
         push=args.push,
         file=args.file,
     )
@@ -172,13 +164,7 @@ async def bootstrap_session(cfg: RunConfig, run_dir: Path) -> WorkspacePaths:
     )
     log.info(f"   [GIT] Shallow-cloned {redact(cfg.repo)} -> {repo_dir} (branch: {branch})")
 
-    try:
-        paths = WorkspacePaths.for_run(run_dir, repo_dir, cfg.src_dir, cfg.tests_dir)
-    except ValueError as exc:
-        log.error(f"🚨 {exc}")
-        sys.exit(1)
-
-    return paths
+    return WorkspacePaths.for_run(run_dir, repo_dir)
 
 
 # ==========================================
@@ -211,7 +197,7 @@ async def finalize_transaction(ctx: GlobalPipelineContext, push: bool = False) -
     Agents only stage into the index across cycles; this is the single transactional commit so the
     ``feat/ticket-<id>`` branch never accrues intermediate self-healing commits.
     """
-    repo_root = await get_git_root(str(ctx.workspace_paths.code_dir))
+    repo_root = await get_git_root(str(ctx.workspace_paths.repo_dir))
 
     if not await _has_staged_changes(repo_root):
         log.warning("🟡 No staged changes in the index — skipping final commit.")
@@ -271,16 +257,14 @@ def build_production_snapshot(ctx: GlobalPipelineContext) -> None:
     treating untouched legacy lines in modified files as new code.
     """
     repo_dir = ctx.workspace_paths.repo_dir
-    # Derive the test-dir prefix dynamically (honours --tests-dir, e.g. spec/) — never hardcode "tests/".
-    # .as_posix() is required: git emits forward-slash paths, so the prefix must match on Windows too.
-    # A tests_dir outside the repo can't collide with repo-relative paths, so no prefix is needed.
-    try:
-        test_prefix = f"{ctx.workspace_paths.tests_dir.relative_to(repo_dir).as_posix()}/"
-    except ValueError:
-        test_prefix = None  # tests_dir lives outside the repo root → no prefix collision possible
     # The ticket's environment_id drives the language-aware test-file predicate so COLOCATED tests
     # (Go `*_test.go`, Node `*.test.ts`, .NET `*Tests.cs`) are excluded too — not just Python `test_*.py`.
     env_id = ctx.contract.environment_id if ctx.contract else None
+    # Separate-layout stacks (python) keep tests under the profile's `test_root` (e.g. `tests/`); that
+    # prefix is excluded from the production snapshot. Colocated stacks have no root (test_root=None) —
+    # their tests are excluded by the language-aware is_test_file predicate instead.
+    test_root = get_qa_profile(env_id).get("test_root") if env_id else None
+    test_prefix = f"{test_root}/" if test_root else None
 
     # 1. Stage every mutation so the index reflects the complete working-tree state across ALL cycles.
     subprocess.run(["git", "add", "-A"], cwd=str(repo_dir), check=True)  # nosec B603 B607 — fixed git argv, no shell
@@ -733,6 +717,28 @@ async def main():
                 )
                 if build_ok:
                     break  # documented + compiles → proceed to gates/Reviewer
+                # An ENVIRONMENTAL failure (package feed/DNS/proxy unreachable — e.g. NuGet NU1301) is
+                # NOT a code defect: the Developer cannot fix the network, and rerouting it just burns
+                # budget AND corrupts the contract (it drops mandated deps to "compile offline", which
+                # the Reviewer then rejects → deadlock → circuit breaker). One cheap retry absorbs a
+                # transient blip; a persistent outage fails FAST with a precise, retry-later incident.
+                if build_failure_is_environmental(ctx.contract.environment_id, build_lines):
+                    log.warning("🔶 Compile gate failed on a NETWORK/restore error (not a code defect) — retrying the build once before judging.")
+                    build_ok, build_lines = await run_build_gate(
+                        ctx.contract.environment_id, str(ctx.workspace_paths.repo_dir)
+                    )
+                    if build_ok:
+                        break
+                    if build_failure_is_environmental(ctx.contract.environment_id, build_lines):
+                        ctx.error_trace = _cap_text("\n".join(build_lines))
+                        _abort_with_incident(
+                            ctx,
+                            "\n🚨 ENVIRONMENT/NETWORK HALT: dependency restore could not reach the package "
+                            "feed (e.g. NuGet NU1301 / connection dropped). This is NOT a code defect — the "
+                            "Developer is NOT rerouted and the contract is left intact. Re-run when network "
+                            "access to the package source is restored.",
+                        )
+                    # retry surfaced a REAL compiler error instead → fall through to normal handling
                 # A build failure caused SOLELY by test files (e.g. Go's package loader parsing a
                 # colocated `*_test.go`) is QA-owned — never reroute the Developer for it. Fall through
                 # to the gates/Reviewer, which routes test issues to the QA channel.

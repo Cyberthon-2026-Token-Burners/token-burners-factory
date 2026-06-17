@@ -21,8 +21,6 @@ async def run_techlead_node(ctx: GlobalPipelineContext) -> None:
     model_name = TECHLEAD_MODEL
     log.info(f"🔷 [ROLE] Technical Lead Agent | [MODEL] {model_name}")
 
-    code_prefix = ctx.workspace_paths.code_dir.relative_to(ctx.workspace_paths.repo_dir).as_posix()
-
     if not ctx.repository_map:
         ctx.repository_map = generate_repo_map(ctx.workspace_paths.repo_dir)
 
@@ -37,7 +35,7 @@ async def run_techlead_node(ctx: GlobalPipelineContext) -> None:
             if re.search(re.escape(ext) + r"(?![A-Za-z0-9])", ctx.repository_map)
         })
     sys_prompt = get_system_prompt("techlead") + "\n\n" + await build_agent_context(
-        "techlead", ctx, topology_kwargs={"code_prefix": code_prefix}, inferred_tags=early_tags
+        "techlead", ctx, inferred_tags=early_tags
     )
 
     contract, raw_response = await run_structured_llm(

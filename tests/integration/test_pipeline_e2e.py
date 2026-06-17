@@ -106,6 +106,9 @@ async def _fake_claude_cli(prompt, files, allowed_root, model=None, effort=None,
     dict mirrors a parsed ``--output-format json`` envelope so telemetry recording is exercised.
     """
     for f in files:
+        # The real Claude CLI creates any missing parent dirs as it writes; mirror that here (the
+        # workspace no longer pre-creates a src/ tree — layout is contract-driven).
+        Path(f).parent.mkdir(parents=True, exist_ok=True)
         Path(f).write_text(_PROD_CODE, encoding="utf-8")
     return 0, {
         "input_tokens": 100,
@@ -163,7 +166,6 @@ class PipelineEndToEndTests(unittest.IsolatedAsyncioTestCase):
                     return_value=orchestrator.RunConfig(
                         description="add two ints", base_branch="main", resume=None,
                         reset_attempts=False, repo=str(source), ticket="DEMO-1",
-                        src_dir="src/", tests_dir="tests/",
                     ),
                 ),
                 mock.patch("src.shared.utils.llm.instructor_client", client),

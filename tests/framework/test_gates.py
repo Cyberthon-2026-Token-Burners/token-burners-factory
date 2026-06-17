@@ -9,7 +9,8 @@ from unittest import mock
 from unittest.mock import AsyncMock, call
 
 from src.executor.nodes.gates import (
-    run_qa_unit_tests, run_security_scan, run_build_gate, build_failure_is_test_only, _has_test_files,
+    run_qa_unit_tests, run_security_scan, run_build_gate, build_failure_is_test_only,
+    build_failure_is_environmental, _has_test_files,
 )
 from src.shared.core.environments import SUPPORTED_ENVIRONMENTS, SAST_IMAGE, SAST_CMD
 
@@ -194,6 +195,33 @@ class BuildFailureClassifierTests(unittest.TestCase):
 
     def test_no_file_refs_is_false(self) -> None:
         self.assertFalse(build_failure_is_test_only(self._GO, ["go: some toolchain error", ""]))
+
+
+class EnvironmentalBuildFailureTests(unittest.TestCase):
+    """`build_failure_is_environmental` flags feed/DNS/proxy-unreachable failures (NOT code defects)."""
+
+    _DOTNET = "dotnet-10-sdk"
+
+    def test_nuget_service_index_unreachable_is_environmental(self) -> None:
+        lines = ["/workspace/src/x.csproj : error NU1301: Unable to load the service index for source https://api.nuget.org/v3/index.json"]
+        self.assertTrue(build_failure_is_environmental(self._DOTNET, lines))
+
+    def test_resource_temporarily_unavailable_is_environmental(self) -> None:
+        lines = ["error NU1301:   Resource temporarily unavailable (api.nuget.org:443)"]
+        self.assertTrue(build_failure_is_environmental(self._DOTNET, lines))
+
+    def test_dns_and_npm_errno_are_environmental(self) -> None:
+        self.assertTrue(build_failure_is_environmental("node-20-web", ["npm error code EAI_AGAIN", "getaddrinfo EAI_AGAIN registry.npmjs.org"]))
+        self.assertTrue(build_failure_is_environmental("go-1.23-cli", ["dial tcp: lookup proxy.golang.org: Temporary failure in name resolution"]))
+
+    def test_restore_failed_banner_is_environmental(self) -> None:
+        # The gates' own restore-phase failure banner must be recognised.
+        self.assertTrue(build_failure_is_environmental(self._DOTNET, ["🚨 Dependency restore failed:", "some output"]))
+
+    def test_real_compiler_error_is_not_environmental(self) -> None:
+        # A genuine code defect must fall through to the normal compile-gate reroute.
+        self.assertFalse(build_failure_is_environmental(self._DOTNET, ["Program.cs(12,9): error CS0103: The name 'Foo' does not exist"]))
+        self.assertFalse(build_failure_is_environmental("go-1.23-cli", ["internal/converter/processor.go:10:2: undefined: Foo"]))
 
 
 if __name__ == "__main__":

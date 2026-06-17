@@ -269,7 +269,6 @@ class BuildAgentContextADRTests(unittest.IsolatedAsyncioTestCase):
     @staticmethod
     def _ctx(repo: Path) -> GlobalPipelineContext:
         paths = WorkspacePaths(
-            code_dir=repo / "src", tests_dir=repo / "tests",
             logs_dir=repo / "logs", reports_dir=repo / "reports", repo_dir=repo,
         )
         return GlobalPipelineContext(pr_description="t", base_branch="main", workspace_paths=paths)
@@ -308,7 +307,7 @@ class PerLanguageCoreRoutingTests(unittest.IsolatedAsyncioTestCase):
         "python": "LANGUAGE TARGET: Python",
     }
     # Topology skills targeting a node are `.format()`-ed, so supply their placeholders.
-    _TOPO = {"techlead": {"code_prefix": "src"}, "developer": {"code_dir": "/repo"}, "reviewer": {}}
+    _TOPO = {"techlead": {}, "developer": {"code_dir": "/repo"}, "reviewer": {}}
 
     def setUp(self) -> None:
         get_skill.cache_clear()

@@ -15,41 +15,31 @@ RUNS_BASE = Path(os.environ.get("PIPELINE_RUNS_BASE", "runs"))
 
 class WorkspacePaths(BaseModel):
     # All paths are required — production resolves them via `for_run` (git-anchored under
-    # RUNS_BASE); there is no implicit fallback tree.
-    code_dir: Path
-    tests_dir: Path
+    # RUNS_BASE); there is no implicit fallback tree. The source/test layout INSIDE the clone is
+    # NOT fixed here: the Developer writes by the contract's full repo-relative paths and the QA
+    # node places tests via its language profile, so only the repo root + run meta-dirs are tracked.
     logs_dir: Path
     reports_dir: Path
     repo_dir: Path  # git working-tree root; the snapshot builder runs `git ls-files` here
 
     def model_post_init(self, __context) -> None:
-        for d in (self.code_dir, self.tests_dir, self.logs_dir, self.reports_dir):
+        # Only the run meta-dirs are pre-created — NEVER source/test dirs inside the clone (their
+        # layout is contract-/profile-driven, so pre-creating `src/`/`tests/` just leaves empties).
+        for d in (self.logs_dir, self.reports_dir):
             d.mkdir(parents=True, exist_ok=True)
 
     @classmethod
-    def for_run(cls, run_dir: Path, repo_dir: Path, src_dir: str, tests_dir: str) -> "WorkspacePaths":
+    def for_run(cls, run_dir: Path, repo_dir: Path) -> "WorkspacePaths":
         """Maps a git-anchored run onto absolute workspace paths.
 
-        ``code_dir``/``tests_dir`` resolve inside the cloned repo; ``logs_dir``/``reports_dir``
-        live under the run root (OUTSIDE the clone) to keep meta-state out of the target tree.
-
-        A containment guard (analogous to ``_assert_within_root``) rejects any ``--src-dir`` /
-        ``--tests-dir`` that escapes the repo via ``..`` traversal, so a hostile or fat-fingered
-        argument cannot map the workspace onto the filesystem root.
+        ``logs_dir``/``reports_dir`` live under the run root (OUTSIDE the clone) to keep meta-state
+        out of the target tree; ``repo_dir`` is the clone's working-tree root.
         """
-        repo_root = repo_dir.resolve()
-        code_dir = (repo_root / src_dir).resolve()
-        tests_dir_abs = (repo_root / tests_dir).resolve()
-        for label, p in (("--src-dir", code_dir), ("--tests-dir", tests_dir_abs)):
-            if p != repo_root and not p.is_relative_to(repo_root):
-                raise ValueError(f"Path traversal blocked: {label} resolves outside repo ({p}).")
         run_root = run_dir.resolve()
         return cls(
-            code_dir=code_dir,
-            tests_dir=tests_dir_abs,
             logs_dir=run_root / "logs",
             reports_dir=run_root / "reports",
-            repo_dir=repo_root,
+            repo_dir=repo_dir.resolve(),
         )
 
 # ==========================================

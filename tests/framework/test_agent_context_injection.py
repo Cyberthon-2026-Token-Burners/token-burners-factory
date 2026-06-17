@@ -25,7 +25,6 @@ _GOAL = "A CLI tool that converts JSON files to CSV."
 
 def _paths(root: Path) -> WorkspacePaths:
     return WorkspacePaths(
-        code_dir=root / "src", tests_dir=root / "tests",
         logs_dir=root / "logs", reports_dir=root / "reports", repo_dir=root,
     )
 

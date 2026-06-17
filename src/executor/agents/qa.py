@@ -112,10 +112,11 @@ async def run_qa_agent_node(ctx: GlobalPipelineContext, error_trace: str = "") -
     env_id = ctx.contract.environment_id
     profile = get_qa_profile(env_id)
     repo_dir = ctx.workspace_paths.repo_dir
-    tests_dir = ctx.workspace_paths.tests_dir
     # Colocated stacks (go/node/.NET) write tests next to source under the repo root; the separate
-    # layout (python) keeps them in tests_dir. The zombie disposer is rooted accordingly.
-    zombie_root = tests_dir if profile["layout"] == "separate" else repo_dir
+    # layout (python) keeps them under repo/<test_root> (the profile owns the convention). The zombie
+    # disposer is rooted accordingly.
+    test_root = (repo_dir / profile["test_root"]) if profile["layout"] == "separate" else repo_dir
+    zombie_root = test_root
     test_name_ok = _test_name_predicate(env_id)
 
     # Structured zombie disposal: the Reviewer names obsolete test files directly (typed array),
@@ -179,7 +180,7 @@ async def run_qa_agent_node(ctx: GlobalPipelineContext, error_trace: str = "") -
     async def _generate(module_file: str) -> tuple[Path, str, object, object]:
         # environment_id decides the test file name, extension, and placement (colocated vs separate).
         rel_test_path, module_ref = derive_test_target(env_id, module_file)
-        test_path = (repo_dir / rel_test_path) if profile["layout"] == "colocated" else (tests_dir / rel_test_path)
+        test_path = test_root / rel_test_path  # colocated → repo root; separate → repo/<test_root>
         test_path.parent.mkdir(parents=True, exist_ok=True)
         # Surface the current on-disk suite as the agent's WORKING DRAFT so it returns the complete
         # corrected file (preserve valid cases, fix flagged ones). Read once; reused for the empty-delta

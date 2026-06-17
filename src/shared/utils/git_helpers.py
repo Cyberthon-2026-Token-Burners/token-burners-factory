@@ -16,7 +16,7 @@ async def get_git_root(path: str) -> str:
     """Resolves the root of the git working tree containing ``path``.
 
     Built on ``git rev-parse --show-toplevel`` so callers never guess the root via ``.parent`` —
-    this stays correct for nested source layouts (e.g. ``--src-dir backend/app/src``).
+    this stays correct for nested source layouts (e.g. a ``backend/app/src`` tree).
     """
     returncode, output = await _run_git(["rev-parse", "--show-toplevel"], cwd=path)
     if returncode != 0:

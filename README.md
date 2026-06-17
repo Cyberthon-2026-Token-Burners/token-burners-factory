@@ -119,9 +119,10 @@ Run the main orchestrator loop to initiate the autonomous code-generation and te
 python3 main.py --repo https://github.com/acme/widgets.git --ticket WID-42 \
     "Implement is_prime(num: int) -> bool"
 
-# Task body from a file, with custom source/tests paths inside the repo and a base-branch anchor.
+# Task body from a file, with a base-branch anchor. Source/test layout is contract-/profile-driven
+# (the blueprint topology decides source paths; the QA language profile decides test placement).
 python3 main.py --repo /path/to/local/repo --ticket WID-43 \
-    -f tickets/003_multi_file_geometry.md --src-dir src/ --tests-dir tests/ --base-branch main
+    -f tickets/003_multi_file_geometry.md --base-branch main
 
 # Push the feature branch (feat/ticket-<ticket>) to origin after the atomic success commit.
 python3 main.py --repo git@github.com:acme/widgets.git --ticket WID-44 "..." --push
