@@ -45,8 +45,33 @@ class WorkspacePaths(BaseModel):
 # ==========================================
 # CONTRACTS & PIPELINE STATE
 # ==========================================
+def normalize_repo_rel_path(raw: str) -> str:
+    """Coerce a contract/topology path to a clean, repo-root-relative POSIX path.
+
+    The SA/TPM blueprint topology writes paths with a LEADING SLASH (e.g. `/cmd/app/main.go`,
+    `/.gitignore`), so the TechLead copies them into the contract verbatim. `repo_dir / "/.gitignore"`
+    is ABSOLUTE under pathlib semantics — the leading slash discards the repo root — which both
+    escapes the write sandbox (`_assert_within_root` blocks it) and makes the file read as perpetually
+    "missing" (`(repo_dir / f).exists()` checks `/.gitignore`). Stripping the anchor here, at the
+    contract boundary, fixes every downstream consumer at once. Backslashes are POSIX-normalised and
+    genuine `..` traversal is rejected (a contract must never point outside the clone).
+    """
+    p = raw.replace("\\", "/").strip()
+    parts = [seg for seg in p.lstrip("/").split("/") if seg not in ("", ".")]
+    if ".." in parts:
+        raise ValueError(f"Contract path escapes the repo sandbox: {raw!r}")
+    if not parts:
+        raise ValueError(f"Empty contract path: {raw!r}")
+    return "/".join(parts)
+
+
 class TopologyNode(BaseModel):
     file_path: str = Field(description="Repo-root-relative path of the source file.")
+
+    @field_validator("file_path")
+    @classmethod
+    def _normalize_path(cls, v: str) -> str:
+        return normalize_repo_rel_path(v)
     exports: list[str] = Field(description="Symbols (functions/classes) this file publicly exports.")
     depends_on: list[str] = Field(
         default_factory=list,
@@ -79,6 +104,14 @@ class TechLeadContract(BaseModel):
     techlead_reasoning: str = Field(description="Justification for the chosen design.")
     domain_tags: list[str] = Field(description="Up to 5 lowercase tags for the target tech stack/language AND business domain — e.g. 'python', 'dotnet', 'typescript', 'math', 'database'. The language tag acts as the dynamic skill router and MUST be declared first.", default_factory=list)
     environment_id: str = Field(..., description="The Paved-Road platform id (e.g. 'python-3.12-core') this ticket executes on, copied verbatim from the ticket/blueprint. MUST be one of the strictly supported environments.")
+
+    @field_validator("files_to_modify")
+    @classmethod
+    def _normalize_files_to_modify(cls, v: list[str]) -> list[str]:
+        # Strip blueprint-style leading slashes so `repo_dir / f` stays INSIDE the clone — see
+        # normalize_repo_rel_path. Without this, `/.gitignore` escapes the write sandbox AND reads as
+        # perpetually missing, looping the Developer reroute into the circuit breaker.
+        return [normalize_repo_rel_path(f) for f in v]
 
     @field_validator("environment_id")
     @classmethod

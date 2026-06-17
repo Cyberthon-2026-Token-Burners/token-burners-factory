@@ -195,6 +195,44 @@ class ContractModelTests(unittest.TestCase):
         contract = TechLeadContract(**payload)
         self.assertEqual(contract.shared_context, "A CLI tool that reports whether a number is prime.")
 
+    def test_leading_slash_paths_are_normalized_to_repo_relative(self) -> None:
+        # Regression: blueprint topology uses leading slashes (`/.gitignore`, `/cmd/app/main.go`).
+        # Joined onto repo_dir they go ABSOLUTE and escape the write sandbox / read as missing.
+        payload = {
+            "files_to_modify": ["/.gitignore", "/cmd/app/main.go", "go.mod", ".\\nested\\x.go"],
+            "topology_contract": [
+                {"file_path": "/cmd/app/main.go", "exports": ["main"], "depends_on": []}
+            ],
+            "instruction": "noop",
+            "function_signatures": "func main()",
+            "strict_type_validation_rules": "noop",
+            "techlead_reasoning": "noop",
+            "environment_id": "go-1.23-cli",
+        }
+        contract = TechLeadContract(**payload)
+        self.assertEqual(
+            contract.files_to_modify,
+            [".gitignore", "cmd/app/main.go", "go.mod", "nested/x.go"],
+        )
+        # Joining the normalized path onto a root now stays INSIDE the root.
+        self.assertFalse(str(Path("/repo") / contract.files_to_modify[0]).endswith(":/.gitignore"))
+        self.assertEqual(contract.topology_contract[0].file_path, "cmd/app/main.go")
+
+    def test_traversal_path_is_rejected(self) -> None:
+        payload = {
+            "files_to_modify": ["../../etc/passwd"],
+            "topology_contract": [
+                {"file_path": "src/x.py", "exports": [], "depends_on": []}
+            ],
+            "instruction": "noop",
+            "function_signatures": "noop",
+            "strict_type_validation_rules": "noop",
+            "techlead_reasoning": "noop",
+            "environment_id": "python-3.12-core",
+        }
+        with self.assertRaises(ValidationError):
+            TechLeadContract(**payload)
+
     def test_topology_contract_is_required(self) -> None:
         # Omitting the language-neutral dependency graph must fail validation (strict SSOT).
         payload = {
