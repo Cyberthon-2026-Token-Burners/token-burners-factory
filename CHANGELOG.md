@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Each release maps to a completed SDLC iteration; the corresponding Architecture
 Decision Record (ADR) is linked from the version heading.
 
+## [Unreleased] — Fold Repository Preparation into TASK-01 (Drop the Extra Infra Iteration)
+
+### Changed
+- **Repository preparation is no longer a standalone `TASK-00` iteration.** `prompts/system/tpm.md` now folds the mandatory baseline setup (`.gitignore`/`README.md`/`LICENSE`, idempotent verify-or-reconcile) into `TASK-01` as a clearly-delimited `## Repository Preparation (MANDATORY — do this FIRST)` block that leads the first business ticket before its feature work. There is no standalone `TASK-00`; tickets start at `TASK-01`, and `TASK-02+` remain pure business work that may not carry baseline files. This removes a full extra orchestrator iteration (clone → TechLead → Developer → QA → Reviewer → commit) per project, since the executor runs one ticket per invocation. The env-tailored `.gitignore` still keeps later business snapshots clean. `src/nexus/tpm.py` schema docstrings updated to match (`ticket_id` example, `TASK-01` prep-block note); the atomicity rule gains a narrow `TASK-01`-only exception.
+
 ## [v0.14.0] - 2026-06-17 — Language-Neutral QA: Skills-Driven Test Correctness & De-Hardcoded Agent
 
 ADR: [0014-language-neutral-qa-whole-file-assembly](./docs/adr/0014-language-neutral-qa-whole-file-assembly.md)

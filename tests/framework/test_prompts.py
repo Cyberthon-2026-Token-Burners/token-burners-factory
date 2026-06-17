@@ -37,13 +37,17 @@ class GetSystemPromptTests(unittest.TestCase):
         self.assertNotIn("validation.py", result)      # no Python-specific example paths
         self.assertNotIn('"Circle"', result)
 
-    def test_tpm_reserves_task00_repo_prep_business_starts_task01(self) -> None:
-        # Repo baseline is a dedicated FIRST task (TASK-00); all other tickets are business-only.
+    def test_tpm_folds_repo_prep_into_task01_no_standalone_task00(self) -> None:
+        # Repo baseline is folded into TASK-01 as a mandatory leading block (no standalone TASK-00);
+        # TASK-02+ are business-only. This removes the extra repo-prep iteration.
         result = get_system_prompt("tpm")
         self.assertIn("MANDATORY REPOSITORY PREPARATION RULE", result)
-        self.assertIn("`TASK-00` is RESERVED", result)
-        self.assertIn("BUSINESS TICKETS START AT `TASK-01`", result)
         self.assertIn("PRESENCE AND CURRENCY", result)
+        self.assertIn("Repository Preparation (MANDATORY — do this FIRST)", result)
+        self.assertIn("there is NO standalone `TASK-00`", result)
+        # The old reserved-TASK-00 contract must be gone.
+        self.assertNotIn("`TASK-00` is RESERVED", result)
+        self.assertNotIn("BUSINESS TICKETS START AT `TASK-01`", result)
 
     def test_sa_prompt_honors_user_mandated_stack(self) -> None:
         # An explicitly user-mandated language/platform must not be overridden by the architect.

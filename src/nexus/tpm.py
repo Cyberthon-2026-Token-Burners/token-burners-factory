@@ -8,10 +8,10 @@ from src.shared.utils.llm import run_structured_llm
 
 
 class TaskTicket(BaseModel):
-    ticket_id: str = Field(description="Stable ticket id (e.g. TASK-00, TASK-01); numbering/ordering rules in the system prompt.")
+    ticket_id: str = Field(description="Stable ticket id (e.g. TASK-01, TASK-02); numbering/ordering rules in the system prompt.")
     title: str = Field(description="Short imperative title for the task.")
     environment_id: str = Field(description="The supported Paved-Road platform id this ticket runs on, copied from the Blueprint.")
-    description: str = Field(description="The full, self-contained ticket body following the PER-TICKET STRUCTURE in the system prompt (and, for TASK-00, the repository-preparation spec).")
+    description: str = Field(description="The full, self-contained ticket body following the PER-TICKET STRUCTURE in the system prompt (and, for TASK-01, a leading repository-preparation block).")
 
     @field_validator("environment_id")
     @classmethod
