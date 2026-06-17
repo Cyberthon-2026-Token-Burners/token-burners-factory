@@ -24,9 +24,9 @@ for name in "${!IMAGES[@]}"; do
   docker build -t "${name}:${TAG}" -f "${DOCKER_DIR}/${dockerfile}" "${DOCKER_DIR}"
 done
 
-# Generic SAST scanner (one tool for every language). Keep the pin in sync with environments.py.
-SEMGREP_IMAGE="${SDLC_SEMGREP_IMAGE:-semgrep/semgrep:1.92.0}"
-echo "🐳 Pulling generic SAST image ${SEMGREP_IMAGE}"
-docker pull "${SEMGREP_IMAGE}"
+# Generic SAST scanner (one tool for every language) with rules VENDORED for fully-offline scans.
+# Tag must match SAST_IMAGE in src/shared/core/environments.py.
+echo "🐳 Building sdlc-sandbox/semgrep:${TAG} from docker/semgrep.Dockerfile (vendored rules, offline)"
+docker build -t "sdlc-sandbox/semgrep:${TAG}" -f "${DOCKER_DIR}/semgrep.Dockerfile" "${DOCKER_DIR}"
 
 echo "✅ Sandbox images ready."

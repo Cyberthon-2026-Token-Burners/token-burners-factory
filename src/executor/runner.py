@@ -20,7 +20,7 @@ from src.executor.agents.qa import run_qa_agent_node
 from src.executor.agents.developer import run_developer_node
 from src.executor.agents.reviewer import run_reviewer_node
 from src.executor.agents.techwriter import run_techwriter_node
-from src.executor.nodes.gates import run_qa_unit_tests, run_security_scan, run_build_gate
+from src.executor.nodes.gates import run_qa_unit_tests, run_security_scan, run_build_gate, build_failure_is_test_only
 
 # ==========================================
 # CLI ARGUMENT PARSER
@@ -682,6 +682,12 @@ async def main():
                 )
                 if build_ok:
                     break  # documented + compiles → proceed to gates/Reviewer
+                # A build failure caused SOLELY by test files (e.g. Go's package loader parsing a
+                # colocated `*_test.go`) is QA-owned — never reroute the Developer for it. Fall through
+                # to the gates/Reviewer, which routes test issues to the QA channel.
+                if build_failure_is_test_only(ctx.contract.environment_id, build_lines):
+                    log.warning("🔶 Compile gate failed on TEST files only — routing to the QA channel (Developer not rerouted).")
+                    break
                 if guardrail_retries == GUARDRAIL_MAX_REROUTES:
                     # Persistent compile failure: soft fall-through (NOT a hard halt). The QA gate +
                     # Reviewer diagnose it with the full retry budget rather than aborting the run.

@@ -1091,6 +1091,43 @@ class DocumentationGuardrailLoopTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(ctx.current_attempt, 2)          # exactly ONE functional cycle consumed
             self.assertIn("undefined: Foo", developer.await_args_list[1].args[1])  # build errors fed back
 
+    async def test_compile_gate_test_only_failure_does_not_reroute_developer(self) -> None:
+        # Arrange — compile gate fails but ONLY on test files (Go package loader parsing `*_test.go`).
+        # The Developer must NOT be rerouted (tests are QA-owned); the run falls through to the gates.
+        with TemporaryDirectory() as td:
+            ctx = self._resume_ctx(Path(td))
+            ctx.contract.environment_id = "go-1.23-cli"   # classifier keys off the env's test pattern
+
+            async def _approve(*_a, **_k) -> None:
+                ctx.review_report = ReviewReport(
+                    code_quality_analysis="ok", test_integrity_analysis="ok", log_verification_analysis="ok",
+                    code_quality_approved=True, test_integrity_approved=True, dev_diagnostic_payload="",
+                )
+
+            with (
+                mock.patch.object(orchestrator, "check_environment"),
+                mock.patch.object(orchestrator, "reconfigure_logging"),
+                mock.patch.object(orchestrator, "build_production_snapshot"),
+                mock.patch.object(orchestrator, "run_build_gate", new=AsyncMock(
+                    return_value=(False, ["internal/converter/processor_test.go:1:1: expected 'package', found 'import'"]))),
+                mock.patch.object(orchestrator, "parse_args", return_value=orchestrator.RunConfig(
+                    description=None, base_branch="main", resume=Path("cp.json"), reset_attempts=False)),
+                mock.patch.object(GlobalPipelineContext, "load_checkpoint", return_value=ctx),
+                mock.patch.object(orchestrator, "run_techlead_node", new_callable=AsyncMock),
+                mock.patch.object(orchestrator, "run_qa_agent_node", new_callable=AsyncMock),
+                mock.patch.object(orchestrator, "run_developer_node", new_callable=AsyncMock) as developer,
+                mock.patch.object(orchestrator, "enforce_documentation_guardrail", new=AsyncMock(return_value=None)),
+                mock.patch.object(orchestrator, "run_reviewer_node", new=AsyncMock(side_effect=_approve)) as reviewer,
+                mock.patch.object(orchestrator, "run_qa_unit_tests", new=AsyncMock(return_value=(True, []))),
+                mock.patch.object(orchestrator, "run_security_scan", new=AsyncMock(return_value=(True, []))),
+                mock.patch.object(orchestrator, "finalize_transaction", new_callable=AsyncMock),
+                mock.patch.object(orchestrator, "run_techwriter_node", new_callable=AsyncMock),
+            ):
+                await orchestrator.main()
+
+            developer.assert_awaited_once()   # NOT rerouted for a test-only build failure
+            reviewer.assert_awaited_once()    # fell through to the gates/Reviewer
+
     async def test_cap_exhausted_triggers_hard_halt(self) -> None:
         # Arrange — guardrail keeps missing; after 2 free reroutes the run must hard-halt.
         with TemporaryDirectory() as td:

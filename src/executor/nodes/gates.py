@@ -1,6 +1,23 @@
+import re
+
 from src.shared.core.observability import log
-from src.shared.core.environments import SUPPORTED_ENVIRONMENTS, SAST_IMAGE, SAST_CMD
+from src.shared.core.environments import SUPPORTED_ENVIRONMENTS, SAST_IMAGE, SAST_CMD, is_test_file
 from src.shared.core.docker_adapter import execute_in_sandbox, run_in_image
+
+# Compiler/diagnostic lines reference a source file as `path/to/file.ext:line[:col]:`.
+_FILE_REF_RE = re.compile(r"^\s*([\w./\\-]+\.(?:go|cs|ts|tsx|js|jsx|py)):\d+")
+
+
+def build_failure_is_test_only(environment_id: str, log_lines: list[str]) -> bool:
+    """True iff the build output references ≥1 source file AND every referenced file is a TEST file.
+
+    The Go compile gate's `go build ./...` parses colocated `*_test.go` during package loading, so a
+    broken test file can fail the build — but those are QA-owned and the Developer must NOT be rerouted
+    for them. Returns False when no file references parse (never mask a real production failure)."""
+    referenced = [m.group(1) for ln in log_lines if (m := _FILE_REF_RE.match(ln))]
+    if not referenced:
+        return False
+    return all(is_test_file(environment_id, p) for p in referenced)
 
 # ==========================================
 # PARALLEL RUNTIME GATES (Sandboxed execution)
@@ -58,10 +75,11 @@ async def run_build_gate(environment_id: str, repo_root: str) -> tuple[bool, lis
 
 
 async def run_security_scan(environment_id: str, repo_root: str) -> tuple[bool, list[str]]:
-    """Generic SAST gate: one Semgrep image scans every language. Network ON only to fetch rulesets —
-    Semgrep analyses source, it does not execute the project code."""
+    """Generic SAST gate: one Semgrep image scans every language. Runs fully OFFLINE — the image
+    vendors its rules, so no semgrep.dev call (which fails behind a corporate TLS proxy) and no
+    network window. Semgrep analyses source; it never executes the project code."""
     log.debug(f"Executing SAST security gate [{environment_id}] via {SAST_IMAGE}: {SAST_CMD}")
-    returncode, stdout, stderr = await run_in_image(SAST_IMAGE, SAST_CMD, repo_root, network="bridge")
+    returncode, stdout, stderr = await run_in_image(SAST_IMAGE, SAST_CMD, repo_root, network="none")
     log_lines = (stdout + "\n" + stderr).strip().splitlines()
     if returncode == 0 and not log_lines:
         log_lines = ["SAST execution passed. Zero vulnerabilities identified."]

@@ -84,9 +84,10 @@ caches baked in) plus a generic Semgrep image for SAST. Build them once (re-run 
 bash scripts/build_sandbox_images.sh
 ```
 
-This builds `sdlc-sandbox/{python,go,node,dotnet}:latest` and pulls the pinned `semgrep/semgrep`
-image. The tags must match `SUPPORTED_ENVIRONMENTS[...]["image"]` and `SAST_IMAGE` in
-`src/shared/core/environments.py`.
+This builds `sdlc-sandbox/{python,go,node,dotnet}:latest` plus `sdlc-sandbox/semgrep:latest` (the
+generic SAST scanner with rules **vendored** so it runs fully offline — no `semgrep.dev` call, which
+fails behind a corporate TLS proxy). The tags must match `SUPPORTED_ENVIRONMENTS[...]["image"]` and
+`SAST_IMAGE` in `src/shared/core/environments.py`.
 
 ## 7. Claude CLI (native Linux build)
 

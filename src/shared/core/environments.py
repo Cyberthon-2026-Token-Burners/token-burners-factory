@@ -52,10 +52,12 @@ SUPPORTED_ENVIRONMENTS = {
 }
 
 # Generic SAST — ONE scanner for every language (replaces per-stack bandit/gosec/npm-audit). Runs in
-# its own pinned image over /workspace; scanning does not execute the code. Keep the pin in sync with
-# scripts/build_sandbox_images.sh. `--error` makes findings a non-zero (gate-failing) exit.
-SAST_IMAGE = "semgrep/semgrep:1.92.0"
-SAST_CMD = "semgrep scan --error --config auto /workspace"
+# its own image over /workspace; scanning does not execute the code. The image VENDORS its rules
+# (docker/semgrep.Dockerfile) so the scan runs fully OFFLINE (`--network none`) — `--config auto` would
+# call semgrep.dev and fail behind a corporate TLS proxy. `--metrics off` suppresses the telemetry
+# call; `--error` makes findings a non-zero (gate-failing) exit. Keep tag in sync with the build script.
+SAST_IMAGE = "sdlc-sandbox/semgrep:latest"
+SAST_CMD = "semgrep scan --error --metrics off --config /opt/semgrep-rules /workspace"
 
 
 # ==========================================================================================

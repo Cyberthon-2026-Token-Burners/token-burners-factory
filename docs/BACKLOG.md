@@ -21,10 +21,11 @@ carrying the test runner + writable `HOME`/cache; a generic **Semgrep** SAST ima
 `--cap-drop ALL` + tmpfs; and a network-ON dependency-restore phase (`setup_cmd`) before the
 network-OFF test phase in `gates.py`.
 
-## 4. Restrict egress during the dependency-restore / SAST phases
-**Why:** the restore phase (`setup_cmd`) and Semgrep rule-fetch run with `--network bridge`. Package
-managers execute install hooks (e.g. npm `postinstall`) → an exfiltration surface for LLM-authored
-code. Test execution stays `--network none`, so the window is narrow but real.
+## 4. Restrict egress during the dependency-restore phase
+**Why:** the dependency-restore phase (`setup_cmd`) runs with `--network bridge`. Package managers
+execute install hooks (e.g. npm `postinstall`) → an exfiltration surface for LLM-authored code. Test
+execution and SAST both stay `--network none` (SAST is now offline — see #6), so only restore keeps a
+network window.
 **Fix direction:** route restore through an egress-restricted proxy (allowlist package registries),
 or vendor dependencies offline, so no phase has unrestricted network.
 
@@ -39,45 +40,33 @@ New items from `run_bb7a268aad844656910343c081e44f3e` (Go `json2csv`, `CIRCUIT B
 cycles — both gates red EVERY cycle). The surfaced line (`go: no module dependencies to download`) was
 a red herring; the real causes are below.
 
-## 5. [P0] QA emits SYNTACTICALLY INVALID Go test files (no `package` clause) — actual failure cause
-**Symptom:** every cycle, both the compile gate and the functional gate failed with:
-`internal/converter/processor_test.go:1:1: expected 'package', found 'import'` (×3 files). The QA
-test files start with `import (...)` and have NO `package <name>` first line — invalid Go, won't
-parse. QA regenerated the same broken shape each cycle → 3 cycles → breaker.
-**Root cause:** the non-Python whole-file assembly (`_assemble_suite_text`) concatenates
-`new_imports` + `new_test_code` verbatim; the model emitted imports with no leading `package` clause,
-and nothing enforces/repairs it. `go_qa.md` doesn't hard-require a `package` declaration as line 1.
-**Fix direction (why it matters: this is THE blocker):**
-- `go_qa.md`: mandate that every Go test file's FIRST line is `package <pkg>` (same package as the
-  unit under test), before any import.
-- `_assemble_suite_text` (or a per-language post-assembly check): for Go/.NET/Node, validate the
-  emitted file has the required leading declaration (`package`/namespace); if missing, fail QA
-  generation loudly (route to QA channel) instead of writing an un-parseable file the gates choke on.
-- Consider a cheap structural lint on generated test files per language before they hit the gate.
+## 5. [P0] QA emits SYNTACTICALLY INVALID Go test files (no `package` clause) — ✅ RESOLVED
+**Was:** every cycle both gates failed with `processor_test.go:1:1: expected 'package', found 'import'`
+— QA test files started with `import (...)` and had no `package <name>` first line; QA regenerated the
+same broken shape each cycle → breaker.
+**Fixed by:** `go_qa.md` now hard-requires `package <pkg>` as the file's first line (with a shape
+example + Assembly Contract placement); and a deterministic guard in `qa.py`
+(`_ensure_go_package_clause` / `_derive_go_package`) prepends/hoists the `package` clause for Go test
+files — package derived exactly from the colocated production sibling in the snapshot, else a
+convention heuristic (`main` for `cmd/`, else dir basename). Guarantees parseable Go regardless of the
+model's delta shaping.
 
-## 6. [P1] Semgrep `--config auto` fails behind a corporate TLS proxy AND needs network
-**Symptom:** SAST gate fails every cycle: `HTTPSConnectionPool(host='semgrep.dev', port=443) … SSL:
-CERTIFICATE_VERIFY_FAILED: unable to get local issuer certificate`. `--config auto` fetches rulesets
-from `semgrep.dev`; the corporate MITM proxy presents a cert the Semgrep container's CA store doesn't
-trust → SAST can NEVER pass here. (Same corporate-CA class as docs/docker-on-windows.md §cert.)
-**Fix direction:**
-- Bundle a ruleset INTO a custom Semgrep image and run `--config <local-dir>` with `--network none`
-  (offline) — removes both the SSL dependency AND the network-on SAST window (folds into #4).
-- OR inject the corporate CA bundle into the Semgrep image / `REQUESTS_CA_BUNDLE`, and/or
-  `--metrics=off` to avoid the telemetry call.
+## 6. [P1] Semgrep `--config auto` fails behind a corporate TLS proxy AND needs network — ✅ RESOLVED
+**Was:** SAST failed every cycle with `semgrep.dev … CERTIFICATE_VERIFY_FAILED` — `--config auto`
+fetched rulesets over a corporate MITM proxy whose CA the Semgrep container didn't trust.
+**Fixed by:** a custom `sdlc-sandbox/semgrep` image (`docker/semgrep.Dockerfile`) with rules VENDORED
+at build time; `SAST_CMD = semgrep scan --error --metrics off --config /opt/semgrep-rules /workspace`
+run with `--network none`. Fully offline → no `semgrep.dev` call, no CA dependency, and the SAST
+network window is closed (see #4).
 
-## 7. [P1] Go compile gate parses colocated `_test.go` → leaks test errors to the Developer (who can't fix tests)
-**Symptom:** `go build ./...` failed on the malformed `*_test.go` (`expected 'package'`), so the
-compile gate (option B) rerouted the **Developer** with TEST-file parse errors — but the Developer is
-hard-forbidden from touching tests, so the reroutes are unfixable and just burn out before
-fall-through.
-**Root cause:** Go's package loader parses ALL `.go` files (incl. `_test.go`) when building a package,
-so `go build ./...` is NOT actually test-isolated — contradicting the "build never touches tests"
-assumption behind the compile gate.
-**Fix direction:** make the compile gate test-agnostic — e.g. build only non-test files / a synthetic
-build that excludes `_test.go`, or classify "test-file syntax" failures as a QA-channel issue (route
-to QA, not the Developer). At minimum, a build failure caused solely by `*_test.go` must NOT reroute
-the Developer.
+## 7. [P1] Go compile gate parses colocated `_test.go` → leaks test errors to the Developer — ✅ RESOLVED
+**Was:** `go build ./...` parses colocated `*_test.go` during package loading, so a broken test file
+failed the compile gate and rerouted the Developer with test errors it's forbidden to fix.
+**Fixed by:** `build_failure_is_test_only(environment_id, log_lines)` in `gates.py` (parses the
+build output's `path:line` refs; True iff every referenced file is a test file per `is_test_file`).
+The compile-gate branch in `runner.py` now breaks (falls through to the gates → Reviewer → QA channel)
+on a test-only build failure instead of rerouting the Developer. Combined with #5 (parseable test
+files), well-formed tests no longer fail the build at all.
 
 ## 8. [P2] Misleading gate failure surface buries the real error
 **Symptom:** `[GATE][FUNCTIONAL-TESTS] Failure raw output:` showed only
