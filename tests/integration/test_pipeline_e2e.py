@@ -7,12 +7,15 @@ OS-specific path/CRLF handling are all exercised — including the new git-ancho
 which performs a **real shallow clone** of a programmatically-created source repo. Only the
 model boundaries are mocked:
 
-* Gemini  -> ``src.shared.utils.llm.instructor_client`` (structured output for techlead/qa/reviewer)
+* Gemini  -> ``src.shared.utils.llm.instructor_client`` (structured output for techlead/qa/reviewer
+  AND the per-skill ``SkillRelevance`` gate — every ``response_model`` must be handled or the call
+  raises, ``with_api_retry`` swallows it after 2+4s backoff per attempt, and the run crawls)
 * Claude  -> ``src.executor.agents.developer.run_claude_cli`` (file mutation)
-* docker QA gate -> ``orchestrator.run_qa_unit_tests`` (docker cannot be assumed portable)
+* docker gates -> ``run_build_gate`` / ``run_qa_unit_tests`` / ``run_security_scan`` are all stubbed
+  (docker cannot be assumed portable in a hermetic test)
 
-The bandit SAST gate runs for real (pure-Python, portable). ``reconfigure_logging`` is stubbed
-so the per-session log handler never pins an open file inside the auto-cleaned temp tree.
+``reconfigure_logging`` is stubbed so the per-session log handler never pins an open file inside the
+auto-cleaned temp tree.
 """
 import os
 import json
@@ -34,6 +37,7 @@ from src.shared.core.models import (
     QATestSuite,
     ReviewReport,
     ArchitectureUpdate,
+    SkillRelevance,
 )
 
 # Deterministic production code the (mocked) Claude developer "writes", and a trivial but
@@ -86,6 +90,12 @@ def _fake_structured_llm(*, model, response_model, messages):
         )
     if response_model is ArchitectureUpdate:
         return ArchitectureUpdate(updated_architecture_document=_ADR_DOC), raw
+    if response_model is SkillRelevance:
+        # Per-node/per-skill relevance gate (prompts.py: score > 0.7 ⇒ inject). 0.0 keeps every
+        # domain skill OUT of the hermetic run. WITHOUT this branch the call raises, with_api_retry
+        # swallows it after 3 attempts of 2+4s backoff, and ~20 such gated calls add ~120s — the
+        # entire reason this e2e took ~125s instead of ~2s.
+        return SkillRelevance(score=0.0), raw
     raise AssertionError(f"Unexpected response_model: {response_model!r}")
 
 
