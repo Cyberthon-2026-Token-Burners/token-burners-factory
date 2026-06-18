@@ -11,3 +11,6 @@
 - [Repo Module Map](repo_module_map.md) — Where things live: plane/module topology, entrypoint, and per-module SSOTs.
 - [Run Layout & CLI](run_layout_and_cli.md) — Project-umbrella run dirs (runs/<project>/<NNN>_<plane>_…) + the --idea/--run/--resume verbs and resume routing.
 - [Agent Provider/Model Map](agent_provider_model_map.md) — Gemini (structured-LLM) for all roles except the Developer (agentic Claude CLI); FinOps split.
+- [Pipeline FSM & Loops](pipeline_fsm_loops.md) — Executor cycle phase order, the five loops (which consume retry budget), the two isolated feedback channels, and every termination state.
+- [Agent Contracts & environment_id Chain](agent_contracts.md) — Each agent's Pydantic output model, behavior-driving vs observability fields, and the SA→TPM→TechLead environment_id validation chain.
+- [Prompt Suite Conventions](prompt_suite_conventions.md) — House style + shared vocabulary every prompts/system/*.md follows; which cross-agent invariants are prompt-only (not code-enforced).
