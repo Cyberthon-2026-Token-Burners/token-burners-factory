@@ -193,8 +193,9 @@ class PipelineEndToEndTests(unittest.IsolatedAsyncioTestCase):
                 # QA/SAST Docker gates are stubbed (no docker dependency in the hermetic test).
                 await orchestrator.main()
 
-            # Assert — exactly one session was bootstrapped with a real clone.
-            repos = list(runs_base.glob("run_*/repo"))
+            # Assert — exactly one session was bootstrapped with a real clone. New layout groups runs
+            # under a project slug: runs/<slug>/NNN_exec_<ticket>_<ts>_<uid>/repo.
+            repos = list(runs_base.glob("*/*_exec_*/repo"))
             self.assertEqual(len(repos), 1, "expected one cloned session repo")
             repo_dir = repos[0]
             run_dir = repo_dir.parent

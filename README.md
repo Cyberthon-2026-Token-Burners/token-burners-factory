@@ -59,12 +59,16 @@ async-agentic-sdlc/
 │   └── skills/                 # Reusable prompt fragments injected into agents (engineering_guide, strict_validation, deterministic_mutation)
 ├── tickets/                    # Sample requirement tickets consumed via -f / --file
 ├── runs/                       # Volatile per-run sessions (created dynamically, ignored by git)
-│   └── run_<uuid>/             # One isolated session per orchestrator run
-│       ├── repo/               # Shallow clone of the target repo on branch feat/ticket-<ticket>
-│       │   ├── <src-dir>/      # Production source the Developer agent mutates (default src/)
-│       │   └── <tests-dir>/    # Tests the QA agent generates (default tests/)
-│       ├── logs/               # Per-session audit log (sdlc_audit.log)
-│       └── reports/            # Checkpoint + incident json states (kept OUTSIDE the clone)
+│   └── <project>/              # One umbrella per idea (Nexus) or ticket (direct executor run)
+│       ├── project.json        # Umbrella manifest (idea, target repo, base branch) reused by every run
+│       ├── 001_nexus_plan_<ts>_<uid>/      # Numbered, human-readable run dir (plane + label + time)
+│       │   ├── artifacts/      # Generated control-plane output (epic.md, blueprint.md, TASK-*.md)
+│       │   ├── logs/           # Per-run audit log (sdlc_audit.log)
+│       │   └── reports/        # checkpoint.json (resume) + finops/incident json
+│       └── 002_exec_TASK-01_<ts>_<uid>/    # Executor run for a ticket of this project
+│           ├── repo/           # Shallow clone of the target repo on branch feat/ticket-<ticket>
+│           ├── logs/           # Per-run audit log
+│           └── reports/        # checkpoint + finops + incident json (kept OUTSIDE the clone)
 ├── docs/
 │   ├── adr/                                    # Architecture Decision Records (MADR)
 │   │   ├── 0000-cloud-infra-fsm-research.md    # Cloud Infra & FSM Architecture Research
@@ -92,9 +96,11 @@ async-agentic-sdlc/
 ```
 
 **Separation of concerns:** `src/` holds the committed engine source code, while each
-`runs/run_<uuid>/` holds one volatile, git-anchored session — the cloned target repo plus its
-own logs/reports. The engine repo root stays clean because `.gitignore` excludes `runs/`, so you
-keep local session history without polluting `git status`.
+`runs/<project>/` groups one idea/ticket — its `project.json` plus numbered, human-readable run dirs
+(`NNN_<plane>_<label>_<timestamp>_<uid>`) so a glance tells you the task, the plane (`nexus`/`exec`),
+and the order. Every run is its own dir (the `uid` suffix guarantees no overwrite). The engine repo
+root stays clean because `.gitignore` excludes `runs/`, so you keep local session history without
+polluting `git status`.
 
 ---
 
@@ -127,16 +133,29 @@ python3 main.py --repo /path/to/local/repo --ticket WID-43 \
 # Push the feature branch (feat/ticket-<ticket>) to origin after the atomic success commit.
 python3 main.py --repo git@github.com:acme/widgets.git --ticket WID-44 "..." --push
 
-# Resume from a persisted checkpoint after a crash or process restart (path is run-scoped).
-python3 main.py --resume runs/run_<uuid>/reports/checkpoint.json
-
-# Resume but reset the Circuit Breaker retry budget (e.g. after fixing an agent prompt).
-python3 main.py --resume runs/run_<uuid>/reports/checkpoint.json --reset-attempts
+# Resume from a persisted checkpoint after a crash or restart — by project + run number…
+python3 main.py --resume widgets-is-prime 002
+# …a bare project slug continues the latest Nexus planning run…
+python3 main.py --resume widgets-is-prime
+# …or the legacy explicit checkpoint path (also resets the retry budget here).
+python3 main.py --resume runs/<project>/002_exec_WID-42_<ts>_<uid>/reports/checkpoint.json --reset-attempts
 ```
 
-Each run is isolated under `runs/run_<uuid>/`: the target repo is shallow-cloned into `repo/` on a
-`feat/ticket-<ticket>` branch, and a single rolling `runs/run_<uuid>/reports/checkpoint.json` is written
-after every critical FSM node (TechLead approval, QA approval, end of each self-heal cycle). On `--resume`,
+### Nexus control plane (idea → plan → per-ticket execution)
+
+```bash
+# Start a NEW project: expand an idea into Epic + Blueprint + tickets. --repo (optional) is captured
+# into the project so the ticket runs below reuse it.
+python3 main.py --idea "CLI that converts JSON to CSV with a selectable delimiter" --repo git@github.com:acme/widgets.git
+
+# Execute one generated ticket; it runs under the SAME project umbrella, repo taken from project.json.
+python3 main.py --run cli-that-converts-json-to-csv -f TASK-01
+```
+
+Each run is isolated under `runs/<project>/<NNN>_<plane>_<label>_<ts>_<uid>/`: an executor run
+shallow-clones the target repo into `repo/` on a `feat/ticket-<ticket>` branch, and a single rolling
+`reports/checkpoint.json` is written after every critical FSM node (TechLead approval, QA approval,
+end of each self-heal cycle). On `--resume`,
 nodes whose outputs are already present in the restored context are bypassed, and the Circuit Breaker
 counter (`current_attempt`) is honoured exactly as it was persisted. When all gates pass, the verified work
 is committed atomically to the feature branch.

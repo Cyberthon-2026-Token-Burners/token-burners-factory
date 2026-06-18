@@ -1,5 +1,7 @@
-# Nexus Control Plane orchestrator. Drives the PO -> SA -> TPM trio for a raw idea and
-# materialises the Epic, Blueprint, and per-task tickets under tickets/generated/ for observability.
+# Nexus Control Plane orchestrator. Drives the PO -> SA -> TPM trio for a raw idea inside a per-run,
+# isolated session (runs/run_<uuid>/) that mirrors the executor's contract: logs/, reports/ (checkpoint
+# + finops + incident), and artifacts/ (the generated Epic, Blueprint, and per-task tickets). Each
+# phase checkpoints so a terminal failure can be resumed from reports/checkpoint.json.
 import os
 import re
 import sys
@@ -9,13 +11,11 @@ from pathlib import Path
 from src.shared.core.config import PIPELINE_BUDGET_USD, PIPELINE_BUDGET_TOKENS
 from src.shared.core.models import PipelineTelemetry
 from src.shared.core.observability import log, log_finops_summary, describe_finish_reason
+from src.shared.utils.redaction import redact
+from src.nexus.state import NexusState
 from src.nexus.po import run_po
 from src.nexus.sa import run_sa
 from src.nexus.tpm import run_tpm
-
-# Default output dir for generated control-plane artifacts. Env-overridable so tests/parallel
-# runs can relocate it off the repo tree.
-OUTPUT_DIR = Path(os.environ.get("NEXUS_OUTPUT_DIR", "tickets/generated"))
 
 # Filesystem-safe ticket id (used verbatim in the TASK-XX.md filename).
 _SLUG_RE = re.compile(r"[^A-Za-z0-9._-]+")
@@ -27,11 +27,14 @@ def _safe_ticket_id(ticket_id: str, index: int) -> str:
     return slug or f"TASK-{index:02d}"
 
 
-async def run_nexus(raw_idea: str, output_dir: Path | None = None) -> Path:
-    """Run the full Nexus pipeline for one raw idea and write all artifacts; returns the output dir.
+async def run_nexus(
+    raw_idea: str | None = None, *, run_dir: Path | None = None, resume: Path | None = None,
+) -> Path:
+    """Run (or resume) the full Nexus pipeline for one raw idea inside a git-anchored run dir.
 
-    Flow: raw_idea -> PO (Epic) -> SA (Blueprint) -> TPM (tasks). The Epic and Blueprint are
-    persisted for observability, and every planned task becomes a discrete Markdown ticket.
+    Flow: raw_idea -> PO (Epic) -> SA (Blueprint) -> TPM (tasks). Each phase persists its artifact to
+    ``artifacts/`` and checkpoints to ``reports/checkpoint.json``; a ``--resume`` reloads that
+    checkpoint and skips the already-finished phases. Returns the run dir.
     """
     # Lightweight env guard: the control plane only needs Gemini (instructor client). The executor's
     # full check_environment() additionally demands docker/claude/bandit, which this PoC does not use.
@@ -39,63 +42,92 @@ async def run_nexus(raw_idea: str, output_dir: Path | None = None) -> Path:
         log.error("🚨 CRITICAL: GEMINI_API_KEY is not set — the Nexus pipeline cannot reach the LLM.")
         sys.exit(1)
 
-    out_dir = Path(output_dir) if output_dir is not None else OUTPUT_DIR
-    out_dir.mkdir(parents=True, exist_ok=True)
-    log.info(f"🧭 [NEXUS] Control Plane PoC starting → {out_dir}")
+    if resume is not None:
+        state = NexusState.load_checkpoint(resume)
+        state.ensure_dirs()
+        log.info(f"▶️ [NEXUS] RESUMING from {resume} (last completed phase: {state.completed_phase or 'none'})")
+    else:
+        if not raw_idea:
+            log.error("🚨 CRITICAL: run_nexus requires a raw idea (or a --resume checkpoint).")
+            sys.exit(1)
+        state = NexusState.new(raw_idea, run_dir)
+        state.ensure_dirs()
+        log.info(f"🧭 [NEXUS] Control Plane starting → {state.run_dir}")
 
-    # Telemetry mirrors the executor: each agent records tokens/cost, and the run ends with the same
-    # 📊 [FINOPS] GRAND TOTAL block + a persisted finops_report.json. Always surfaced (success OR halt).
-    telemetry = PipelineTelemetry()
     phase = "PO"
     try:
-        epic_text = await run_po(raw_idea, telemetry)
-        (out_dir / "epic.md").write_text(epic_text, encoding="utf-8")
-        log.info("   [NEXUS] Phase 1/3 complete — Epic persisted.")
+        # Phase 1 — Product Owner → Epic. Skipped on resume if already finished (epic_text reused).
+        if not state.is_done("PO"):
+            state.epic_text = await run_po(state.raw_idea, state.telemetry)
+            (state.artifacts_dir / "epic.md").write_text(state.epic_text, encoding="utf-8")
+            state.mark_done("PO")
+            state.save_checkpoint()
+            log.info("   [NEXUS] Phase 1/3 complete — Epic persisted + checkpointed.")
 
-        # Pass the verbatim raw idea so the SA honors any stack the USER explicitly mandated (the Epic
-        # is deliberately language-neutral and would otherwise drop it before the stack-decider sees it).
+        # Phase 2 — Solution Architect → Blueprint. Pass the verbatim raw idea so the SA honors any
+        # stack the USER explicitly mandated (the Epic is language-neutral and would otherwise drop it).
         phase = "SA"
-        blueprint_text = await run_sa(epic_text, raw_idea, telemetry)
-        (out_dir / "blueprint.md").write_text(blueprint_text, encoding="utf-8")
-        log.info("   [NEXUS] Phase 2/3 complete — Blueprint persisted.")
+        if not state.is_done("SA"):
+            state.blueprint_text = await run_sa(state.epic_text, state.raw_idea, state.telemetry)
+            (state.artifacts_dir / "blueprint.md").write_text(state.blueprint_text, encoding="utf-8")
+            state.mark_done("SA")
+            state.save_checkpoint()
+            log.info("   [NEXUS] Phase 2/3 complete — Blueprint persisted + checkpointed.")
 
+        # Phase 3 — TPM → task plan.
         phase = "TPM"
-        tasks = await run_tpm(epic_text, blueprint_text, telemetry)
-        log.info("   [NEXUS] Phase 3/3 complete — task plan returned.")
+        if not state.is_done("TPM"):
+            state.tasks = await run_tpm(state.epic_text, state.blueprint_text, state.telemetry)
+            state.mark_done("TPM")
+            state.save_checkpoint()
+            log.info("   [NEXUS] Phase 3/3 complete — task plan returned + checkpointed.")
     except SystemExit:
         raise  # an inner guard (e.g. quota) already logged + chose the exit code
     except Exception as exc:
         # Terminal LLM failure (e.g. Gemini RECITATION → empty completion → pydantic ValidationError).
-        # Surface the ROOT cause in one line instead of a raw 60-line traceback, then fail cleanly.
+        # Surface the ROOT cause in one line + a redacted incident report instead of a raw traceback.
         reason = describe_finish_reason(exc) or f"{type(exc).__name__}: {exc}"
         log.error(f"🚨 CRITICAL: Nexus halted at the {phase} phase — {reason}")
-        _write_finops_report(out_dir, telemetry)
-        log_finops_summary(telemetry, PIPELINE_BUDGET_USD, PIPELINE_BUDGET_TOKENS)
+        _write_incident_report(state)
+        _write_finops_report(state)
+        log_finops_summary(state.telemetry, PIPELINE_BUDGET_USD, PIPELINE_BUDGET_TOKENS)
         sys.exit(1)
 
+    # Materialise every planned task as a discrete Markdown ticket under artifacts/.
     written = []
-    for i, task in enumerate(tasks, start=1):
+    for i, task in enumerate(state.tasks, start=1):
         ticket_id = _safe_ticket_id(task.get("ticket_id", ""), i)
         title = task.get("title", "").strip() or ticket_id
         description = task.get("description", "").strip()
-        ticket_path = out_dir / f"{ticket_id}.md"
+        ticket_path = state.artifacts_dir / f"{ticket_id}.md"
         ticket_path.write_text(f"# {title}\n\n{description}\n", encoding="utf-8")
         written.append(ticket_path.name)
 
     log.info(f"✅ [NEXUS] Wrote epic.md, blueprint.md, and {len(written)} ticket(s): {written}")
-    _write_finops_report(out_dir, telemetry)
-    log_finops_summary(telemetry, PIPELINE_BUDGET_USD, PIPELINE_BUDGET_TOKENS)
-    return out_dir
+    _write_finops_report(state)
+    log_finops_summary(state.telemetry, PIPELINE_BUDGET_USD, PIPELINE_BUDGET_TOKENS)
+    return state.run_dir
 
 
-def _write_finops_report(out_dir: Path, telemetry: PipelineTelemetry) -> None:
-    """Persist the cumulative FinOps breakdown to ``<out_dir>/finops_report.json`` (executor parity).
+def _write_finops_report(state: NexusState) -> None:
+    """Persist the cumulative FinOps breakdown to ``reports/finops_report.json`` (executor parity).
     Non-fatal: a reporting hiccup must never mask the real run outcome."""
     try:
-        report = telemetry.finops_report(PIPELINE_BUDGET_TOKENS, PIPELINE_BUDGET_USD)
+        report = state.telemetry.finops_report(PIPELINE_BUDGET_TOKENS, PIPELINE_BUDGET_USD)
         # default=str serialises Decimal money as exact strings (json can't encode Decimal natively).
-        (out_dir / "finops_report.json").write_text(
+        (state.reports_dir / "finops_report.json").write_text(
             json.dumps(report, indent=2, default=str), encoding="utf-8"
         )
     except Exception as e:
         log.debug(f"Failed to write Nexus finops_report.json: {e}")
+
+
+def _write_incident_report(state: NexusState) -> None:
+    """Persist the redacted run state to ``reports/incident_report.json`` on a terminal halt (mirrors
+    the executor's _abort_with_incident). Non-fatal."""
+    try:
+        incident_file = state.reports_dir / "incident_report.json"
+        incident_file.write_text(redact(state.model_dump_json(indent=2)), encoding="utf-8")
+        log.error(f"  └── Incident report written to {incident_file}")
+    except Exception as e:
+        log.debug(f"Failed to write Nexus incident_report.json: {e}")

@@ -83,6 +83,45 @@ class ParseArgsFreshRunTests(unittest.TestCase):
             self.assertTrue(orchestrator.parse_args().push)
 
 
+class ParseArgsProjectVerbsTests(unittest.TestCase):
+    """The project-umbrella CLI: --idea (new project), --run <project> -f <ticket>, and
+    --resume <project> [N] vs --resume <path>."""
+
+    def _parse(self, *argv):
+        with mock.patch.object(sys, "argv", ["orchestrator.py", *argv]):
+            return orchestrator.parse_args()
+
+    def test_idea_optionally_captures_repo(self) -> None:
+        cfg = self._parse("--idea", "json to csv", "--repo", "git@h:r.git")
+        self.assertEqual(cfg.idea, "json to csv")
+        self.assertEqual(cfg.repo, "git@h:r.git")
+
+    def test_run_project_requires_ticket(self) -> None:
+        with self.assertRaises(SystemExit) as ctx:
+            self._parse("--run", "my-proj")            # missing -f
+        self.assertEqual(ctx.exception.code, 2)
+
+    def test_run_project_maps_ticket_from_dash_f(self) -> None:
+        cfg = self._parse("--run", "my-proj", "-f", "TASK-01")
+        self.assertEqual((cfg.run_project, cfg.ticket), ("my-proj", "TASK-01"))
+        self.assertIsNone(cfg.resume)
+
+    def test_resume_project_without_number(self) -> None:
+        cfg = self._parse("--resume", "my-proj")
+        self.assertEqual(cfg.resume_project, "my-proj")
+        self.assertIsNone(cfg.resume_number)
+        self.assertIsNone(cfg.resume)                  # not a path
+
+    def test_resume_project_with_number(self) -> None:
+        cfg = self._parse("--resume", "my-proj", "002")
+        self.assertEqual((cfg.resume_project, cfg.resume_number), ("my-proj", "002"))
+
+    def test_resume_path_form_still_works(self) -> None:
+        cfg = self._parse("--resume", "runs/x/reports/checkpoint.json")
+        self.assertEqual(cfg.resume, Path("runs/x/reports/checkpoint.json"))
+        self.assertIsNone(cfg.resume_project)
+
+
 class MainResumeSkipFlowTests(unittest.IsolatedAsyncioTestCase):
     """Resume flow must bypass completed FSM nodes and still checkpoint each cycle."""
 
@@ -191,6 +230,7 @@ class MainCheckpointWritePointsTests(unittest.IsolatedAsyncioTestCase):
                 mock.patch.object(orchestrator, "build_production_snapshot"),
                 mock.patch.object(orchestrator, "run_build_gate", new=AsyncMock(return_value=(True, []))),
                 mock.patch.object(orchestrator, "_missing_contract_files", return_value=[]),
+                mock.patch.object(orchestrator, "RUNS_BASE", base),
                 mock.patch.object(orchestrator, "parse_args", return_value=orchestrator.RunConfig(
                     description="fresh run", base_branch="main", resume=None, reset_attempts=False,
                     repo="dummy-repo", ticket="DEMO-1")),
@@ -331,6 +371,7 @@ class MainCheckpointWritePointsTests(unittest.IsolatedAsyncioTestCase):
                 mock.patch.object(orchestrator, "build_production_snapshot"),
                 mock.patch.object(orchestrator, "run_build_gate", new=AsyncMock(return_value=(True, []))),
                 mock.patch.object(orchestrator, "_missing_contract_files", return_value=[]),
+                mock.patch.object(orchestrator, "RUNS_BASE", base),
                 mock.patch.object(orchestrator, "parse_args", return_value=orchestrator.RunConfig(
                     description="fresh run", base_branch="main", resume=None, reset_attempts=False,
                     repo="dummy-repo", ticket="DEMO-1")),

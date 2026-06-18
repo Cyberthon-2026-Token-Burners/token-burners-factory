@@ -15,6 +15,7 @@ from src.shared.core.observability import log, reconfigure_logging
 from src.shared.core.observability import log_finops_summary as _render_finops_summary
 from src.shared.core.config import check_environment, PIPELINE_BUDGET_TOKENS, PIPELINE_BUDGET_USD
 from src.shared.core.models import GlobalPipelineContext, WorkspacePaths, RUNS_BASE
+from src.shared.core.runs import Projects
 from src.shared.core.environments import is_test_file, get_qa_profile
 from src.shared.core.prompts import generate_repo_map
 from src.shared.utils.git_helpers import get_git_root, get_pipeline_snapshot_files
@@ -39,8 +40,11 @@ class RunConfig:
     repo: str | None = None
     ticket: str | None = None
     push: bool = False
-    idea: str | None = None  # Nexus Control Plane PoC: raw idea string (bypasses the executor entirely).
+    idea: str | None = None  # Nexus Control Plane: raw idea string → starts a new project (planning run).
     file: str | None = None  # ticket file path; used to locate the sibling blueprint.md at runtime
+    run_project: str | None = None    # --run <project>: execute a ticket under an existing project
+    resume_project: str | None = None  # --resume <project> [N]: resume by project (+ optional run number)
+    resume_number: str | None = None   # the optional NNN for --resume <project> <N>
 
 
 def parse_args() -> RunConfig:
@@ -50,37 +54,54 @@ def parse_args() -> RunConfig:
     group = parser.add_mutually_exclusive_group()
     group.add_argument("description", nargs="?", help="Inline task description string.")
     group.add_argument("-f", "--file", help="Path to a file containing the task description.")
-    parser.add_argument("--repo", help="Git URL or local path to the target repository (required unless --resume).")
-    parser.add_argument("--ticket", help="Ticket ID or feature name; names the session and feat/ticket-<id> branch (required unless --resume).")
+    parser.add_argument("--repo", help="Git URL or local path to the target repository (required for a fresh direct run / first --run of a project).")
+    parser.add_argument("--ticket", help="Ticket ID or feature name; names the session and feat/ticket-<id> branch (direct run).")
     parser.add_argument("--base-branch", default="main", help="Base branch of the repository.")
-    parser.add_argument("--resume", type=Path, help="Path to a checkpoint JSON file.")
+    parser.add_argument("--run", dest="run_project", metavar="PROJECT",
+                        help="Execute a ticket under an existing project: --run <project> -f <ticket> (e.g. -f TASK-01).")
+    parser.add_argument("--resume", nargs="+", metavar="TARGET",
+                        help="Resume: a checkpoint JSON path, OR a project slug, OR a project slug + run number "
+                             "(e.g. --resume my-proj 002). Project slug alone continues the latest Nexus run.")
     parser.add_argument("--reset-attempts", action="store_true", help="Reset circuit breaker counter on resume.")
     parser.add_argument("--push", action="store_true", help="Push the feature branch to origin after the atomic success commit.")
-    parser.add_argument("--idea", help="Raw idea to feed the Nexus pipeline (Control Plane PoC; does not run the executor).")
+    parser.add_argument("--idea", help="Raw idea → start a NEW project and run the Nexus planning pipeline.")
 
     args = parser.parse_args()
 
-    # Nexus Control Plane PoC: when an idea is given, short-circuit before the executor's
-    # repo/ticket requirements — the control plane neither clones a repo nor runs the worker plane.
+    # Nexus Control Plane: an idea starts a new project (planning run). --repo (optional) is captured
+    # into the project so later `--run` ticket executions reuse it.
     if args.idea:
         return RunConfig(
-            description=None,
-            base_branch=args.base_branch,
-            resume=None,
-            reset_attempts=False,
-            idea=args.idea,
+            description=None, base_branch=args.base_branch, resume=None, reset_attempts=False,
+            idea=args.idea, repo=args.repo,
         )
 
-    if args.resume:
+    # Execute a ticket under an existing project: --run <project> -f <ticket>.
+    if args.run_project:
+        if not args.file:
+            parser.error("--run requires -f <ticket> (the ticket id to execute, e.g. --run my-proj -f TASK-01)")
         return RunConfig(
-            description=None,
-            base_branch=args.base_branch,
-            resume=args.resume,
-            reset_attempts=args.reset_attempts,
-            push=args.push,
+            description=None, base_branch=args.base_branch, resume=None,
+            reset_attempts=args.reset_attempts, push=args.push,
+            run_project=args.run_project, ticket=args.file, repo=args.repo,
         )
 
-    # Fresh run: a target repo and ticket are mandatory for git-anchored bootstrapping.
+    # Resume: either an explicit checkpoint PATH (legacy, incl. old run_<uuid>), or a project slug
+    # (+ optional run number). A token ending in .json or pointing at an existing file is a path.
+    if args.resume:
+        first = args.resume[0]
+        if first.endswith(".json") or Path(first).exists():
+            return RunConfig(
+                description=None, base_branch=args.base_branch, resume=Path(first),
+                reset_attempts=args.reset_attempts, push=args.push,
+            )
+        return RunConfig(
+            description=None, base_branch=args.base_branch, resume=None,
+            reset_attempts=args.reset_attempts, push=args.push,
+            resume_project=first, resume_number=(args.resume[1] if len(args.resume) > 1 else None),
+        )
+
+    # Fresh DIRECT run: a target repo and ticket are mandatory for git-anchored bootstrapping.
     missing = [name for name, val in (("--repo", args.repo), ("--ticket", args.ticket)) if not val]
     if missing:
         parser.error(f"the following arguments are required for a fresh run: {', '.join(missing)}")
@@ -614,45 +635,121 @@ def _abort_with_incident(ctx: GlobalPipelineContext, header: str) -> NoReturn:
 # ==========================================
 # MAIN ORCHESTRATOR
 # ==========================================
+def _run_dir_from_checkpoint(checkpoint: Path) -> Path:
+    """Map a checkpoint path back to its run dir. Canonical layout is
+    runs/run_<uuid>/reports/checkpoint.json, so the run dir is the checkpoint's grandparent; fall back
+    to the checkpoint's own dir for a non-canonical path (so logs/ never escape ABOVE the repo)."""
+    ckpt = checkpoint.resolve()
+    return ckpt.parent.parent if ckpt.parent.name == "reports" else ckpt.parent
+
+
+def _checkpoint_kind(checkpoint: Path) -> str | None:
+    """Peek a checkpoint's ``kind`` discriminator to route --resume to the right plane. Nexus
+    checkpoints carry ``kind="nexus"``; the executor's have none → returns None (→ executor path).
+    Never raises — a missing/garbage file just routes to the executor."""
+    try:
+        return json.loads(checkpoint.read_text(encoding="utf-8")).get("kind")
+    except Exception:
+        return None
+
+
+def _resolve_ticket_file(projects: Projects, slug: str, ticket: str) -> Path | None:
+    """Locate a ticket's markdown in the project's LATEST Nexus run artifacts (accepts ``TASK-01`` or
+    ``TASK-01.md``). Returns None if the project has no planning run or the ticket isn't there."""
+    nexus_run = projects.latest_run(slug, plane="nexus")
+    if nexus_run is None:
+        return None
+    name = ticket if ticket.endswith(".md") else f"{ticket}.md"
+    cand = nexus_run / "artifacts" / name
+    return cand if cand.exists() else None
+
+
 async def main():
     cfg = parse_args()
+    projects = Projects(RUNS_BASE)
 
-    # Nexus Control Plane PoC: an --idea run never touches the worker plane (no clone, no git
-    # bootstrap, no executor nodes). Branch BEFORE check_environment so the lightweight control
-    # plane isn't blocked by the executor's docker/claude/bandit requirements.
+    # ---- Nexus planning: a fresh idea starts a NEW project (its --repo, if any, is captured for the
+    # later --run ticket executions). Branch BEFORE check_environment so the docker/claude/bandit
+    # requirements never block the lightweight control plane. ----
     if cfg.idea:
         from src.nexus.nexus_runner import run_nexus
-        out = await run_nexus(cfg.idea)
-        log.info(f"✅ Nexus PoC complete. Tickets generated at: {out.resolve()}")
+        project = projects.create(cfg.idea, idea=cfg.idea, repo=cfg.repo, base_branch=cfg.base_branch)
+        run_dir = projects.allocate(project.slug, "nexus", "plan")
+        reconfigure_logging(run_dir / "logs")
+        log.info(f"🗂️  Project '{project.slug}' (new) → {run_dir.name}")
+        out = await run_nexus(cfg.idea, run_dir=run_dir)
+        log.info(f"✅ Nexus complete → {out.resolve()}")
         return
 
-    check_environment()
+    # ---- Resolve a resume target → (run_dir, checkpoint). Either a project slug (+ optional run
+    # number; bare slug continues the latest Nexus run) or an explicit checkpoint path (legacy). ----
+    resume_checkpoint: Path | None = None
+    run_dir: Path | None = None
+    if cfg.resume_project:
+        if not projects.exists(cfg.resume_project):
+            log.error(f"🚨 Unknown project '{cfg.resume_project}' (no runs/{cfg.resume_project}/project.json).")
+            sys.exit(1)
+        if cfg.resume_number:
+            run_dir = projects.run_by_number(cfg.resume_project, cfg.resume_number)
+            if run_dir is None:
+                log.error(f"🚨 Project '{cfg.resume_project}' has no run #{cfg.resume_number}.")
+                sys.exit(1)
+        else:
+            run_dir = projects.latest_run(cfg.resume_project, plane="nexus")
+            if run_dir is None:
+                log.error(f"🚨 Project '{cfg.resume_project}' has no Nexus run to continue.")
+                sys.exit(1)
+        resume_checkpoint = run_dir / "reports" / "checkpoint.json"
+    elif cfg.resume:
+        resume_checkpoint = cfg.resume
+        run_dir = _run_dir_from_checkpoint(resume_checkpoint)
 
-    # Bind the run id ONCE, up front (before any logging), so the audit trail is anchored to the
-    # correct run dir from the very first line — fixing the late-binding bug. On resume we reuse
-    # the original run dir derived from the checkpoint path; a fresh run mints a new one.
-    if cfg.resume:
-        # Canonical layout is runs/run_<uuid>/reports/checkpoint.json, so the run dir is the
-        # checkpoint's grandparent. Guard the assumption: a non-canonical path (e.g. a bare
-        # `cp.json`) made `.parent.parent` walk ABOVE the repo and dump logs/ into its parent
-        # (C:\code\logs). Fall back to the checkpoint's own dir when it isn't under reports/.
-        ckpt = cfg.resume.resolve()
-        run_dir = ckpt.parent.parent if ckpt.parent.name == "reports" else ckpt.parent
-    else:
-        run_id = uuid.uuid4().hex
-        run_dir = RUNS_BASE / f"run_{run_id}"
+    # ---- A Nexus-kind checkpoint resumes the control plane, not the executor ----
+    if resume_checkpoint is not None and _checkpoint_kind(resume_checkpoint) == "nexus":
+        from src.nexus.nexus_runner import run_nexus
+        reconfigure_logging(run_dir / "logs")
+        out = await run_nexus(resume=resume_checkpoint)
+        log.info(f"✅ Nexus complete → {out.resolve()}")
+        return
+
+    # ---- Executor: a fresh run allocates a numbered dir under its project; resume reuses run_dir. ----
+    if resume_checkpoint is None:
+        if cfg.run_project:
+            if not projects.exists(cfg.run_project):
+                log.error(f"🚨 Unknown project '{cfg.run_project}' — run --idea first to create it.")
+                sys.exit(1)
+            project = projects.load(cfg.run_project)
+            cfg.repo = cfg.repo or project.repo
+            cfg.base_branch = project.base_branch
+            if not cfg.repo:
+                log.error(f"🚨 Project '{project.slug}' has no repo recorded — pass --repo once on a --run.")
+                sys.exit(1)
+            ticket_file = _resolve_ticket_file(projects, project.slug, cfg.ticket)
+            if ticket_file is None:
+                log.error(f"🚨 Ticket '{cfg.ticket}' not found in project '{project.slug}' Nexus artifacts.")
+                sys.exit(1)
+            # Feed the ticket BODY as the task description (like a normal -f run) and keep cfg.file so the
+            # sibling blueprint.md (same artifacts/ dir) is routed into the TechLead brief below.
+            cfg.file = str(ticket_file)
+            cfg.description = ticket_file.read_text(encoding="utf-8")
+            run_dir = projects.allocate(project.slug, "exec", cfg.ticket)
+        else:
+            # Fresh DIRECT run: group it under a project keyed by the ticket slug (reused on re-runs).
+            project = projects.get_or_create(cfg.ticket, repo=cfg.repo, base_branch=cfg.base_branch)
+            run_dir = projects.allocate(project.slug, "exec", cfg.ticket)
 
     # Re-anchor the audit trail to THIS run's logs/ dir before any other log line is emitted.
     # Append mode keeps a resumed run's timeline linear in the SAME file instead of splitting it.
     reconfigure_logging(run_dir / "logs")
+    check_environment()
 
-    if cfg.resume:
-        log.info(f"▶️ RESUMING FSM EXECUTION FROM CHECKPOINT: {cfg.resume}")
+    if resume_checkpoint is not None:
+        log.info(f"▶️ RESUMING FSM EXECUTION FROM CHECKPOINT: {resume_checkpoint}")
         try:
-            ctx = GlobalPipelineContext.load_checkpoint(cfg.resume)
-            log.info(f"Loaded checkpoint from {cfg.resume}")
+            ctx = GlobalPipelineContext.load_checkpoint(resume_checkpoint)
+            log.info(f"Loaded checkpoint from {resume_checkpoint}")
         except Exception as exc:
-            log.error(f"🚨 Failed to load checkpoint '{cfg.resume}': {exc}")
+            log.error(f"🚨 Failed to load checkpoint '{resume_checkpoint}': {exc}")
             sys.exit(1)
         if cfg.reset_attempts:
             ctx.current_attempt = 1
