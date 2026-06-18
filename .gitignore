@@ -83,3 +83,4 @@ Thumbs.db
 # ==========================================
 *.log
 logs/
+docker/certs/company_root.crt
