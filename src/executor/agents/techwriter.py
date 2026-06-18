@@ -49,7 +49,7 @@ async def run_techwriter_node(ctx: GlobalPipelineContext) -> None:
             {"role": "user", "content": user_content},
         ],
     )
-    log_token_usage(ctx, "Technical Writer", raw_response, TECHWRITER_MODEL)
+    log_token_usage(ctx.telemetry, "Technical Writer", raw_response, TECHWRITER_MODEL)
 
     adr_path.parent.mkdir(parents=True, exist_ok=True)
     adr_path.write_text(result.updated_architecture_document, encoding="utf-8")

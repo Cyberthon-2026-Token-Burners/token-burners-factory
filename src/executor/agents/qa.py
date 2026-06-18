@@ -211,7 +211,7 @@ async def run_qa_agent_node(ctx: GlobalPipelineContext, error_trace: str = "") -
     written_paths = []
     assembled = []
     for test_path, existing_source, suite, raw_response in results:
-        log_token_usage(ctx, "QA Agent", raw_response, QA_MODEL)
+        log_token_usage(ctx.telemetry, "QA Agent", raw_response, QA_MODEL)
         # One language-neutral assembly path: the model returns the complete file (header + tests);
         # correct package/namespace/placement is enforced by the skills + the compile-gate→QA loop,
         # not by any per-language post-processing here.

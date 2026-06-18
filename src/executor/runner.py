@@ -12,6 +12,7 @@ from typing import NoReturn
 from dataclasses import dataclass
 
 from src.shared.core.observability import log, reconfigure_logging
+from src.shared.core.observability import log_finops_summary as _render_finops_summary
 from src.shared.core.config import check_environment, PIPELINE_BUDGET_TOKENS, PIPELINE_BUDGET_USD
 from src.shared.core.models import GlobalPipelineContext, WorkspacePaths, RUNS_BASE
 from src.shared.core.environments import is_test_file, get_qa_profile
@@ -591,25 +592,9 @@ def write_finops_report(ctx: GlobalPipelineContext) -> None:
 
 
 def log_finops_summary(ctx: GlobalPipelineContext) -> None:
-    """Print the end-of-run GRAND TOTAL block: per-agent, per-provider, and budget utilisation."""
-    tel = ctx.telemetry
-    log.info("📊 [FINOPS] GRAND TOTAL")
-    for name, u in tel.by_agent.items():
-        log.info(f"   ├─ {name} ({u.provider}) | {u.total_tokens}t | ${u.cost_usd:.4f} | calls: {u.calls}")
-    for prov, agg in tel.by_provider().items():
-        label = "Gemini (est.)" if prov == "gemini" else "Claude (actual)"
-        log.info(f"   ├─ Σ {label} | {int(agg['tokens'])}t | ${agg['cost_usd']:.4f}")
-    if tel.total_cache_read_tokens or tel.total_cache_write_tokens:
-        log.info(
-            f"   ├─ cache (not budgeted) | read {tel.total_cache_read_tokens}t "
-            f"| write {tel.total_cache_write_tokens}t"
-        )
-    used_pct_usd = (100.0 * float(tel.total_cost_usd) / float(PIPELINE_BUDGET_USD)) if PIPELINE_BUDGET_USD else 0.0
-    used_pct = (100.0 * tel.total_tokens / PIPELINE_BUDGET_TOKENS) if PIPELINE_BUDGET_TOKENS else 0.0
-    log.info(
-        f"   └─ TOTAL | ${tel.total_cost_usd:.4f} / ${PIPELINE_BUDGET_USD:.2f} budget ({used_pct_usd:.1f}%) "
-        f"| {tel.total_tokens}t / {PIPELINE_BUDGET_TOKENS}t ({used_pct:.1f}%, cache-excluded)"
-    )
+    """Print the end-of-run GRAND TOTAL block against the pipeline budgets. Thin wrapper over the
+    shared telemetry-first renderer (also used by the Nexus control plane) so the block is identical."""
+    _render_finops_summary(ctx.telemetry, PIPELINE_BUDGET_USD, PIPELINE_BUDGET_TOKENS)
 
 
 def _abort_with_incident(ctx: GlobalPipelineContext, header: str) -> NoReturn:

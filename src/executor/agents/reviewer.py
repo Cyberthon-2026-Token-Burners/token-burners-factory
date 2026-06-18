@@ -39,7 +39,7 @@ async def run_reviewer_node(ctx: GlobalPipelineContext, qa_success: bool, qa_log
         ],
     )
     ctx.review_report = report
-    log_token_usage(ctx, "Reviewer Agent", raw_response, REVIEWER_MODEL)
+    log_token_usage(ctx.telemetry, "Reviewer Agent", raw_response, REVIEWER_MODEL)
 
     log.info(f"   [THOUGHT] Multi-angle review processed:")
     log.info(f"     ├─ [CODE AUDIT] {ctx.review_report.code_quality_analysis}")

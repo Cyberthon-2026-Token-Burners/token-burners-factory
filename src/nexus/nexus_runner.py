@@ -3,9 +3,12 @@
 import os
 import re
 import sys
+import json
 from pathlib import Path
 
-from src.shared.core.observability import log
+from src.shared.core.config import PIPELINE_BUDGET_USD, PIPELINE_BUDGET_TOKENS
+from src.shared.core.models import PipelineTelemetry
+from src.shared.core.observability import log, log_finops_summary, describe_finish_reason
 from src.nexus.po import run_po
 from src.nexus.sa import run_sa
 from src.nexus.tpm import run_tpm
@@ -40,15 +43,35 @@ async def run_nexus(raw_idea: str, output_dir: Path | None = None) -> Path:
     out_dir.mkdir(parents=True, exist_ok=True)
     log.info(f"🧭 [NEXUS] Control Plane PoC starting → {out_dir}")
 
-    epic_text = await run_po(raw_idea)
-    (out_dir / "epic.md").write_text(epic_text, encoding="utf-8")
+    # Telemetry mirrors the executor: each agent records tokens/cost, and the run ends with the same
+    # 📊 [FINOPS] GRAND TOTAL block + a persisted finops_report.json. Always surfaced (success OR halt).
+    telemetry = PipelineTelemetry()
+    phase = "PO"
+    try:
+        epic_text = await run_po(raw_idea, telemetry)
+        (out_dir / "epic.md").write_text(epic_text, encoding="utf-8")
+        log.info("   [NEXUS] Phase 1/3 complete — Epic persisted.")
 
-    # Pass the verbatim raw idea so the SA honors any stack the USER explicitly mandated (the Epic is
-    # deliberately language-neutral and would otherwise drop it before the stack-decider sees it).
-    blueprint_text = await run_sa(epic_text, raw_idea)
-    (out_dir / "blueprint.md").write_text(blueprint_text, encoding="utf-8")
+        # Pass the verbatim raw idea so the SA honors any stack the USER explicitly mandated (the Epic
+        # is deliberately language-neutral and would otherwise drop it before the stack-decider sees it).
+        phase = "SA"
+        blueprint_text = await run_sa(epic_text, raw_idea, telemetry)
+        (out_dir / "blueprint.md").write_text(blueprint_text, encoding="utf-8")
+        log.info("   [NEXUS] Phase 2/3 complete — Blueprint persisted.")
 
-    tasks = await run_tpm(epic_text, blueprint_text)
+        phase = "TPM"
+        tasks = await run_tpm(epic_text, blueprint_text, telemetry)
+        log.info("   [NEXUS] Phase 3/3 complete — task plan returned.")
+    except SystemExit:
+        raise  # an inner guard (e.g. quota) already logged + chose the exit code
+    except Exception as exc:
+        # Terminal LLM failure (e.g. Gemini RECITATION → empty completion → pydantic ValidationError).
+        # Surface the ROOT cause in one line instead of a raw 60-line traceback, then fail cleanly.
+        reason = describe_finish_reason(exc) or f"{type(exc).__name__}: {exc}"
+        log.error(f"🚨 CRITICAL: Nexus halted at the {phase} phase — {reason}")
+        _write_finops_report(out_dir, telemetry)
+        log_finops_summary(telemetry, PIPELINE_BUDGET_USD, PIPELINE_BUDGET_TOKENS)
+        sys.exit(1)
 
     written = []
     for i, task in enumerate(tasks, start=1):
@@ -60,4 +83,19 @@ async def run_nexus(raw_idea: str, output_dir: Path | None = None) -> Path:
         written.append(ticket_path.name)
 
     log.info(f"✅ [NEXUS] Wrote epic.md, blueprint.md, and {len(written)} ticket(s): {written}")
+    _write_finops_report(out_dir, telemetry)
+    log_finops_summary(telemetry, PIPELINE_BUDGET_USD, PIPELINE_BUDGET_TOKENS)
     return out_dir
+
+
+def _write_finops_report(out_dir: Path, telemetry: PipelineTelemetry) -> None:
+    """Persist the cumulative FinOps breakdown to ``<out_dir>/finops_report.json`` (executor parity).
+    Non-fatal: a reporting hiccup must never mask the real run outcome."""
+    try:
+        report = telemetry.finops_report(PIPELINE_BUDGET_TOKENS, PIPELINE_BUDGET_USD)
+        # default=str serialises Decimal money as exact strings (json can't encode Decimal natively).
+        (out_dir / "finops_report.json").write_text(
+            json.dumps(report, indent=2, default=str), encoding="utf-8"
+        )
+    except Exception as e:
+        log.debug(f"Failed to write Nexus finops_report.json: {e}")

@@ -2,6 +2,7 @@
 in the raw idea reaches the SA (the Epic is language-neutral and would otherwise drop it)."""
 import os
 import unittest
+from types import SimpleNamespace
 from unittest import mock
 from unittest.mock import AsyncMock
 
@@ -9,6 +10,7 @@ os.environ.setdefault("GEMINI_API_KEY", "test-key")
 
 from src.nexus import sa as sa_mod
 from src.nexus.sa import run_sa, Blueprint
+from src.shared.core.models import PipelineTelemetry
 
 
 def _result() -> Blueprint:
@@ -36,6 +38,22 @@ class RunSaRawIdeaTests(unittest.IsolatedAsyncioTestCase):
 
         user_content = mocked.await_args.args[2][1]["content"]
         self.assertEqual(user_content, "EPIC ONLY")        # backward-compatible: no wrapper when absent
+
+    async def test_token_usage_recorded_into_passed_telemetry(self) -> None:
+        # Executor-parity observability: when a telemetry object is threaded in, the agent records
+        # its Gemini token usage into it (the data behind the [TOKENS] line + FinOps total).
+        raw = SimpleNamespace(usage_metadata=SimpleNamespace(
+            prompt_token_count=1000, candidates_token_count=200,
+            cached_content_token_count=0, prompt_tokens_details=None,
+        ))
+        telemetry = PipelineTelemetry()
+        with mock.patch.object(
+            sa_mod, "run_structured_llm", new=AsyncMock(return_value=(_result(), raw))
+        ):
+            await run_sa("EPIC ONLY", telemetry=telemetry)
+
+        self.assertIn("Solution Architect Agent", telemetry.by_agent)
+        self.assertEqual(telemetry.total_tokens, 1200)     # fresh 1000 + output 200
 
 
 if __name__ == "__main__":

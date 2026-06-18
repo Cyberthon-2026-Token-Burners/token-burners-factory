@@ -76,13 +76,15 @@ def reconfigure_logging(new_log_dir: Path) -> None:
 # ==========================================
 # TOKEN OBSERVABILITY HELPER
 # ==========================================
-def log_token_usage(ctx: Any, agent_name: str, raw_response: Any, model_name: str | None = None):
+def log_token_usage(telemetry: Any, agent_name: str, raw_response: Any, model_name: str | None = None):
     """Extracts Gemini token usage, records it (with estimated cost) into telemetry, and logs it.
 
-    Records into ``ctx.telemetry`` so the cumulative total feeds the Financial Circuit Breaker.
-    When ``model_name`` is given, the call's USD cost is estimated (cache-aware + tiered) and
-    accumulated. The ``usage_metadata`` guard keeps mocked responses (tests) safe — they record
-    nothing; ``model_name=None`` keeps the cost at 0.
+    Records into ``telemetry`` (a ``PipelineTelemetry``) so the cumulative total feeds the Financial
+    Circuit Breaker. Telemetry-first (not ``ctx``) so any caller with a bare telemetry object — the
+    executor (``ctx.telemetry``) AND the Nexus control plane — uses the identical logger. When
+    ``model_name`` is given, the call's USD cost is estimated (cache-aware + tiered) and accumulated.
+    The ``usage_metadata`` guard keeps mocked responses (tests) safe — they record nothing;
+    ``model_name=None`` keeps the cost at 0.
     """
     try:
         if hasattr(raw_response, 'usage_metadata') and raw_response.usage_metadata:
@@ -97,7 +99,7 @@ def log_token_usage(ctx: Any, agent_name: str, raw_response: Any, model_name: st
             if model_name:
                 from src.shared.core.config import estimate_gemini_cost_usd  # lazy: avoid config↔observability cycle
                 cost_usd = estimate_gemini_cost_usd(model_name, usage)
-            ctx.telemetry.record(
+            telemetry.record(
                 agent_name, fresh_in, out_tokens, cost_usd, provider="gemini",
                 cache_read_tokens=cached,  # Gemini implicit caching reports no separate write count
             )
@@ -105,8 +107,80 @@ def log_token_usage(ctx: Any, agent_name: str, raw_response: Any, model_name: st
             log.info(
                 f"   [TOKENS] {agent_name} | Input(fresh): {fresh_in} | {cache_part}"
                 f"Output: {out_tokens} | Budgeted: {fresh_in + out_tokens} | "
-                f"Cost: ${cost_usd:.4f} | Cumulative: {ctx.telemetry.total_tokens}t / "
-                f"${ctx.telemetry.total_cost_usd:.4f}"
+                f"Cost: ${cost_usd:.4f} | Cumulative: {telemetry.total_tokens}t / "
+                f"${telemetry.total_cost_usd:.4f}"
             )
     except Exception as e:
         log.debug(f"Failed to parse token usage for {agent_name}: {e}")
+
+
+def log_finops_summary(telemetry: Any, budget_usd: Any, budget_tokens: int) -> None:
+    """Print the end-of-run ``📊 [FINOPS] GRAND TOTAL`` block: per-agent, per-provider, and budget
+    utilisation. Telemetry-first + explicit budgets so the executor and the Nexus control plane render
+    the identical block from the same code (no ``GlobalPipelineContext`` / module-constant coupling).
+    """
+    tel = telemetry
+    log.info("📊 [FINOPS] GRAND TOTAL")
+    for name, u in tel.by_agent.items():
+        log.info(f"   ├─ {name} ({u.provider}) | {u.total_tokens}t | ${u.cost_usd:.4f} | calls: {u.calls}")
+    for prov, agg in tel.by_provider().items():
+        label = "Gemini (est.)" if prov == "gemini" else "Claude (actual)"
+        log.info(f"   ├─ Σ {label} | {int(agg['tokens'])}t | ${agg['cost_usd']:.4f}")
+    if tel.total_cache_read_tokens or tel.total_cache_write_tokens:
+        log.info(
+            f"   ├─ cache (not budgeted) | read {tel.total_cache_read_tokens}t "
+            f"| write {tel.total_cache_write_tokens}t"
+        )
+    used_pct_usd = (100.0 * float(tel.total_cost_usd) / float(budget_usd)) if budget_usd else 0.0
+    used_pct = (100.0 * tel.total_tokens / budget_tokens) if budget_tokens else 0.0
+    log.info(
+        f"   └─ TOTAL | ${tel.total_cost_usd:.4f} / ${budget_usd:.2f} budget ({used_pct_usd:.1f}%) "
+        f"| {tel.total_tokens}t / {budget_tokens}t ({used_pct:.1f}%, cache-excluded)"
+    )
+
+
+# Genai finish-reason → operator hint. The content-filter reasons are DETERMINISTIC (a retry produces
+# the same block), so the hint says so. Keys are matched case-insensitively against the reason name.
+_FINISH_REASON_HINTS = {
+    "RECITATION": "Gemini blocked the output (recitation filter — generated text matched training "
+                  "data). Retrying won't help; rephrase the idea/prompt or reduce verbatim quoting.",
+    "SAFETY": "Gemini blocked the output (safety filter). Retrying won't help; rephrase the request.",
+    "BLOCKLIST": "Gemini blocked the output (term blocklist). Retrying won't help; rephrase the request.",
+    "PROHIBITED_CONTENT": "Gemini blocked the output (prohibited content). Retrying won't help; rephrase.",
+    "SPII": "Gemini blocked the output (sensitive personal info). Retrying won't help; rephrase.",
+    "MAX_TOKENS": "Gemini hit the output token cap before finishing — the response was truncated.",
+}
+
+
+def describe_finish_reason(obj: Any) -> str | None:
+    """Best-effort, never-raising extraction of a genai ``finish_reason`` (+ a hint) from either a raw
+    response or an ``instructor`` exception, for logging WHY a structured call failed.
+
+    Accepts: a genai ``GenerateContentResponse`` (``.candidates[0].finish_reason``) or an
+    ``InstructorRetryException`` (``.last_completion`` / the last of ``.failed_attempts``). Returns a
+    string like ``"RECITATION — <hint>"`` when a non-trivial reason is found, else ``None``.
+    """
+    try:
+        candidates = getattr(obj, "candidates", None)
+        if candidates is None:
+            # instructor exception: dig out the underlying completion it carried.
+            completion = getattr(obj, "last_completion", None)
+            if completion is None:
+                attempts = getattr(obj, "failed_attempts", None) or []
+                if attempts:
+                    completion = getattr(attempts[-1], "completion", None)
+            candidates = getattr(completion, "candidates", None)
+        if not candidates:
+            return None
+        reason = getattr(candidates[0], "finish_reason", None)
+        if reason is None:
+            return None
+        # FinishReason may be an enum (``FinishReason.RECITATION``) or a string.
+        name = getattr(reason, "name", None) or str(reason).rsplit(".", 1)[-1]
+        name = name.upper()
+        if name in ("STOP", ""):  # normal completion — nothing to report
+            return None
+        hint = _FINISH_REASON_HINTS.get(name)
+        return f"{name} — {hint}" if hint else name
+    except Exception:
+        return None

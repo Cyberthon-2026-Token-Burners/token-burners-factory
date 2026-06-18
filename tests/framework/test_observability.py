@@ -14,8 +14,8 @@ from logging.handlers import RotatingFileHandler
 
 import io
 
-from src.shared.core.models import GlobalPipelineContext
-from src.shared.core.observability import reconfigure_logging, log_token_usage
+from src.shared.core.models import GlobalPipelineContext, PipelineTelemetry
+from src.shared.core.observability import reconfigure_logging, log_token_usage, describe_finish_reason
 from src.shared.utils.redaction import RedactionFilter
 
 
@@ -94,7 +94,7 @@ class LogTokenUsageTests(unittest.TestCase):
 
     def test_gemini_cached_tokens_excluded_from_budget_and_tracked_separately(self) -> None:
         # Arrange — prompt_token_count INCLUDES cached (2000 = 500 fresh + 1500 cached).
-        ctx = GlobalPipelineContext(pr_description="x")
+        telemetry = PipelineTelemetry()
         raw = SimpleNamespace(usage_metadata=SimpleNamespace(
             prompt_token_count=2000,
             candidates_token_count=400,
@@ -102,13 +102,43 @@ class LogTokenUsageTests(unittest.TestCase):
             total_token_count=2400,
             prompt_tokens_details=None,
         ))
-        # Act — model_name=None keeps cost at 0 and avoids the genai dependency.
-        log_token_usage(ctx, "QA Agent", raw, model_name=None)
+        # Act — telemetry-first signature; model_name=None keeps cost at 0 and avoids the genai dependency.
+        log_token_usage(telemetry, "QA Agent", raw, model_name=None)
         # Assert — budgeted total = fresh(500) + output(400); cache tracked but NOT budgeted.
-        self.assertEqual(ctx.telemetry.total_tokens, 900)
-        self.assertEqual(ctx.telemetry.total_cache_read_tokens, 1500)
-        qa = ctx.telemetry.by_agent["QA Agent"]
+        self.assertEqual(telemetry.total_tokens, 900)
+        self.assertEqual(telemetry.total_cache_read_tokens, 1500)
+        qa = telemetry.by_agent["QA Agent"]
         self.assertEqual((qa.input_tokens, qa.output_tokens, qa.cache_read_tokens), (500, 400, 1500))
+
+
+class DescribeFinishReasonTests(unittest.TestCase):
+    """The finish_reason diagnostic must name a content-filter block (the RECITATION crash cause)
+    and return None for a normal completion — never raising on odd shapes."""
+
+    @staticmethod
+    def _completion(reason: object) -> SimpleNamespace:
+        return SimpleNamespace(candidates=[SimpleNamespace(finish_reason=reason)])
+
+    def test_recitation_on_instructor_exception_yields_hint(self) -> None:
+        # Mirror instructor's InstructorRetryException carrying the raw genai completion.
+        exc = SimpleNamespace(last_completion=self._completion(SimpleNamespace(name="RECITATION")))
+        desc = describe_finish_reason(exc)
+        self.assertIsNotNone(desc)
+        self.assertIn("RECITATION", desc)
+        self.assertIn("rephrase", desc.lower())
+
+    def test_enum_string_form_is_parsed(self) -> None:
+        # finish_reason rendered as the enum's str form, e.g. "FinishReason.SAFETY".
+        desc = describe_finish_reason(self._completion("FinishReason.SAFETY"))
+        self.assertIsNotNone(desc)
+        self.assertTrue(desc.startswith("SAFETY"))
+
+    def test_stop_returns_none(self) -> None:
+        self.assertIsNone(describe_finish_reason(self._completion(SimpleNamespace(name="STOP"))))
+
+    def test_garbage_returns_none(self) -> None:
+        self.assertIsNone(describe_finish_reason(object()))
+        self.assertIsNone(describe_finish_reason(None))
 
 
 if __name__ == "__main__":
