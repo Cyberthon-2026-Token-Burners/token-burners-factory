@@ -40,7 +40,7 @@ SUPPORTED_ENVIRONMENTS = {
         # --no-cache: one-shot pass, so skip the cache — otherwise ruff writes a `.ruff_cache/` into the
         # repo that `git add -A` would commit.
         "format_cmd": "ruff check --fix --exit-zero --quiet --no-cache .",
-        "sandbox_env": {"HOME": "/tmp", "XDG_CACHE_HOME": "/tmp/.cache", "PYTHONDONTWRITEBYTECODE": "1"},
+        "sandbox_env": {"HOME": "/tmp", "XDG_CACHE_HOME": "/tmp/.cache", "PYTHONDONTWRITEBYTECODE": "1"},  # nosec B108 — in-container tmpfs paths
         # Persistent download cache (survives the separate restore/build/test containers + across runs);
         # mounted RW only on the network-ON restore phase. Overrides the tmpfs pip cache.
         "cache_volume": {"name": "sdlc-cache-python", "mount": "/cache", "env": {"PIP_CACHE_DIR": "/cache/pip"}},
@@ -62,7 +62,7 @@ SUPPORTED_ENVIRONMENTS = {
         # (docker/go.Dockerfile); falls back to gofmt (always present) if the build couldn't fetch
         # goimports behind a proxy — gofmt still formats, just won't strip imports. Non-fatal post-QA pass.
         "format_cmd": "goimports -w . 2>/dev/null || gofmt -w .",
-        "sandbox_env": {"HOME": "/tmp", "GOCACHE": "/tmp/.cache/go-build", "GOPATH": "/tmp/go", "GOMODCACHE": "/tmp/go/pkg/mod"},
+        "sandbox_env": {"HOME": "/tmp", "GOCACHE": "/tmp/.cache/go-build", "GOPATH": "/tmp/go", "GOMODCACHE": "/tmp/go/pkg/mod"},  # nosec B108 — in-container tmpfs paths
         # Persist the module DOWNLOAD cache (GOMODCACHE) only; the build cache (GOCACHE) stays on tmpfs.
         "cache_volume": {"name": "sdlc-cache-go", "mount": "/cache", "env": {"GOMODCACHE": "/cache/go/pkg/mod"}},
         "language_id": "go",
@@ -76,7 +76,7 @@ SUPPORTED_ENVIRONMENTS = {
         # Best-effort: only fixes if a project-local eslint is installed (--no-install never fetches).
         # Non-fatal, so a project without eslint just skips the cleanup.
         "format_cmd": "npx --no-install eslint --fix . || true",
-        "sandbox_env": {"HOME": "/tmp", "npm_config_cache": "/tmp/.npm"},
+        "sandbox_env": {"HOME": "/tmp", "npm_config_cache": "/tmp/.npm"},  # nosec B108 — in-container tmpfs paths
         # Persist the npm download cache across the restore/build/test containers + runs.
         "cache_volume": {"name": "sdlc-cache-node", "mount": "/cache", "env": {"npm_config_cache": "/cache/npm"}},
         "language_id": "node",
@@ -93,7 +93,7 @@ SUPPORTED_ENVIRONMENTS = {
         "setup_cmd": "for i in 1 2 3; do dotnet restore --disable-parallel && exit 0; sleep 5; done; exit 1",
         # Best-effort: --no-restore keeps it network-OFF; removes unused usings where the SDK supports it.
         "format_cmd": "dotnet format --no-restore",
-        "sandbox_env": {"HOME": "/tmp", "DOTNET_CLI_HOME": "/tmp", "NUGET_PACKAGES": "/tmp/nuget", "XDG_DATA_HOME": "/tmp/.local"},
+        "sandbox_env": {"HOME": "/tmp", "DOTNET_CLI_HOME": "/tmp", "NUGET_PACKAGES": "/tmp/nuget", "XDG_DATA_HOME": "/tmp/.local"},  # nosec B108 — in-container tmpfs paths
         # Persist the NuGet global-packages folder; overrides the tmpfs NUGET_PACKAGES so a package
         # restored online once is reused offline on every later container/run (the NU1301 cure).
         "cache_volume": {"name": "sdlc-cache-dotnet", "mount": "/cache", "env": {"NUGET_PACKAGES": "/cache/nuget"}},

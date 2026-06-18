@@ -51,7 +51,7 @@ async def run_in_image(
         "--network", network,
         "--memory", _SANDBOX_MEMORY, "--pids-limit", _SANDBOX_PIDS, "--cpus", _SANDBOX_CPUS,
         "--cap-drop", "ALL",
-        "--tmpfs", "/tmp:rw,exec",                 # writable scratch for caches without touching the mount
+        "--tmpfs", "/tmp:rw,exec",                 # nosec B108 — in-container tmpfs scratch, not a host temp path
     ]
     if cache_volume:
         # Insert BEFORE the /workspace mount so the image/sh/command tail stays at argv[-4:].
