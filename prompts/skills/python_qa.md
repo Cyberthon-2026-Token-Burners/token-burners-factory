@@ -17,6 +17,11 @@ LANGUAGE TARGET: Python — test-suite rules for the Python tech stack.
   `.args`, or its `str()`.
 - Include type-boundary negative cases (e.g. a `bool` where an `int` is expected) and assert only
   the raised type.
+- CSV / NEWLINES (CRITICAL): Python's stdlib `csv` writer emits `\r\n` line terminators (RFC 4180),
+  NOT `\n`. NEVER hard-code a bare-`\n` expectation for CSV output — it fails as `'a\r\n1' != 'a\n1'`.
+  Either expect `\r\n` explicitly, or normalize both sides before comparing (e.g.
+  `actual.replace("\r\n", "\n")`, or compare `actual.splitlines() == expected.splitlines()`). The same
+  applies to any code path that goes through `csv.writer`/`csv.DictWriter`.
 
 ## File Placement & Module Identity
 - Tests live in the dedicated `tests/` directory (the engine derives the exact path) — NEVER colocated

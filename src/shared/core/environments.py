@@ -30,9 +30,12 @@ SUPPORTED_ENVIRONMENTS = {
         # ImportError/SyntaxError before the Reviewer. Drives the pre-Reviewer QA test-compile gate.
         "test_compile_cmd": "python -m pytest --collect-only -q",
         "setup_cmd": "pip install -r requirements.txt 2>/dev/null || true",
-        # format_cmd: deterministic post-QA cleanup pass — strips unused imports (the #1 cause of a
-        # compile-gate bounce on freshly generated tests). ruff --fix is autofix-only; non-fatal.
-        "format_cmd": "ruff check --fix --quiet .",
+        # format_cmd: deterministic post-QA cleanup pass — strips unused imports + autofixes lint on
+        # freshly generated tests (ruff is baked into the image). --exit-zero keeps a residual
+        # unfixable finding from logging a spurious non-fatal warning; the pass is cleanup, not a gate.
+        # --no-cache: one-shot pass, so skip the cache — otherwise ruff writes a `.ruff_cache/` into the
+        # repo that `git add -A` would commit.
+        "format_cmd": "ruff check --fix --exit-zero --quiet --no-cache .",
         "sandbox_env": {"HOME": "/tmp", "XDG_CACHE_HOME": "/tmp/.cache", "PYTHONDONTWRITEBYTECODE": "1"},
         "language_id": "python",
         "description": "Python 3.12 core runtime (pytest; Semgrep SAST).",
