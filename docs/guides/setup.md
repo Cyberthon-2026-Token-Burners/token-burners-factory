@@ -153,8 +153,15 @@ source ~/.bashrc
 
 ## 9. Run the Orchestrator
 
+The entrypoint is `main.py`. Start a new project from an idea, then execute a generated ticket
+(see the [Quick Start](../../README.md) for the full command set):
+
 ```bash
-python3 orchestrator.py
+# Plan a new project: idea -> Epic + Blueprint + tickets
+python3 main.py --idea "Build a CLI that converts JSON to CSV" --repo <url|path>
+
+# Execute one generated ticket under the same project
+python3 main.py --run <project-slug> -f TASK-01
 ```
 
 ## Troubleshooting

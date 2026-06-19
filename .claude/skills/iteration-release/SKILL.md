@@ -25,11 +25,14 @@ and any agent-prompt/constraint changes (the new rule + the anti-pattern it prev
    with: Problem Statement, Implemented Solutions, Metrics/Logs analysis (use real numbers — e.g.
    `git diff --stat <prev-tag-or-commit>` for the footprint, plus any validation-run outcomes). Link it to
    the ADR (and the ADR/CHANGELOG should link back to it).
-3. **CHANGELOG + README** — run the `docs-sync` skill (follow its full README-alignment checklist): add the
+3. **CHANGELOG + README + ARCHITECTURE** — run the `docs-sync` skill (follow its full checklist): add the
    release section to `CHANGELOG.md` (linked to the new ADR + the archive) and patch `README.md`. Do the
    docs-sync **completeness sweep** — a new agent role/skill must appear in EVERY place peers are
    enumerated (roster, capabilities, structure tree, meta-tools), and every new env knob (not just CLI
-   flags) must be named.
+   flags) must be named. **If this iteration changed structure** (a new/removed agent role, an FSM
+   state/route, an external system, or a plane/container/store), docs-sync's **Architecture Diagram Sync**
+   step also updates the C4 diagrams + component table in `docs/ARCHITECTURE.md` — skip it only for pure
+   behavior/bugfix iterations.
 4. **PRACTICUM** — run the `practicum-update` skill: add one or more new "Key Engineering Takeaways"
    bullet(s) at the TOP of that section, each capturing a generalizable lesson and linking the iteration's
    ADR (from step 1). (Only add a "Development Steps" row if that table actually exists in the current

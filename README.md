@@ -200,3 +200,9 @@ Run these at the end of an iteration or when a milestone is reached:
 * **`/analyze-run`** — On-demand run diagnostics. Evidence-first root-cause analysis of a failed, looping, or circuit-breaker-halted pipeline run: reads the run's `reports/checkpoint.json` + `logs/sdlc_audit.log` + incident/finops, classifies the cause (content-filter block, agent-fixable bug, contract conflict, environment misconfig, budget breach), and points the fix at `src/`/`prompts/` — never the generated clone.
 
 Non-interactive form: `claude -p "/adr-generation"`.
+
+---
+
+## 📄 License
+
+Released under the [Apache License 2.0](./LICENSE). You are free to use, modify, and distribute this software, including for commercial purposes, provided you retain the copyright/attribution notices and state significant changes; the Apache 2.0 grant also includes an explicit patent license. The software is provided "as is", without warranty.
