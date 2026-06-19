@@ -1,8 +1,15 @@
 # Backlog
 
-Open, deferred fixes surfaced across pipeline runs. Resolved items have been removed — their fixes
-live in the code, tests, and `CHANGELOG.md`; only outstanding work remains. Original item numbers are
-preserved so existing cross-references stay valid.
+Two parts:
+
+- **Part I — Capability Roadmap (Epics `E1`–`E4`)**: the forward-looking work to close the autonomy loop
+  (idea → working, merged code in `main` → deployable). Larger than a single fix; each has its own
+  Goal / Current state / Design / Dependencies / Risks / Acceptance.
+- **Part II — Defects & Refinements (`#4`–`#26`)**: granular fixes surfaced across pipeline runs, grouped by
+  theme. Resolved items have been removed — their fixes live in the code, tests, and `CHANGELOG.md`; only
+  outstanding work remains. **Original item numbers are preserved** so existing cross-references (from
+  `.claude/rules/*` and ADRs) stay valid. The `E#` epic namespace is deliberately separate from the `#NN`
+  defect sequence.
 
 > Last reviewed 2026-06-18: pruned items resolved by subsequent design changes — **#10** (zombie
 > disposal: `target_modules` is now contract-scoped via `is_testable_source(files_to_modify)`, so a
@@ -12,6 +19,170 @@ preserved so existing cross-references stay valid.
 > Items #17–#24 added from the PO→Reviewer pipeline contract analysis. Items #25–#26 added from the
 > Arbiter (ADR 0016) TASK-03 run analysis — the Arbiter's `developer`/`qa` routes are advisory, and a
 > non-amending verdict grants no extra cycle budget.
+>
+> Updated 2026-06-19: added **Part I — Capability Roadmap** (`E1`–`E4`, closing the idea→main→deploy loop)
+> and regrouped the defect items by theme (numbers unchanged).
+
+---
+
+# Part I — Capability Roadmap (Epics)
+
+**North star:** an *idea in* → a *working, reviewed, merged application in `main`* → *deployable*, with the
+engine driving the whole cycle autonomously. Today the engine is a **head + hands** split that stops
+half-finished: **Nexus** (head) plans `Epic → Blueprint → TASK-*.md`, but the operator launches the
+**Executor** (hands) by hand one ticket at a time, and verified work lands only on a `feat/ticket-<id>`
+branch that is **never merged**.
+
+**Dependency order (build in this sequence):**
+
+```
+E1  Nexus auto-dispatches Executor (one ticket)
+      └─► E2  Close the loop to main (auto-approved PR + merge)
+              └─► E3  Cyclical multi-ticket orchestration (all tasks, each building on the last)
+                      └─► E4  DevOps / deployment   (scope only — decision deferred)
+```
+
+E3 depends on E2 for a hard structural reason (see E3): each ticket clones `main` **fresh**, so TASK-02 only
+sees TASK-01 if TASK-01 has already been merged to `main`.
+
+---
+
+## E1. [EPIC] Nexus auto-dispatches the Executor (single ticket)
+
+**Goal:** after planning, the engine automatically runs the Executor for `TASK-01` — no manual second
+command. (User-requested feature 1: "nexus запускал executor с задачей 1".)
+
+**Current state:**
+- The two planes are bridged only inside `main()` (resume routing by checkpoint `kind`,
+  [runner.py:647-673](../src/executor/runner.py#L647-L673)); neither plane invokes the other — the operator
+  does, via a second `--run` invocation.
+- The per-ticket Executor flow (bootstrap → FSM cycle → finalize) is **inlined inside `main()`**
+  ([runner.py](../src/executor/runner.py), roughly the `bootstrap_session` → while-loop → `finalize_transaction`
+  span), **not** a callable function. `bootstrap_session` and `finalize_transaction` already are async/standalone.
+- Tasks are enumerated as `NexusState.tasks` (`list[dict]` of `ticket_id/title/environment_id/description`)
+  and materialized to `artifacts/TASK-*.md` ([nexus_runner.py](../src/nexus/nexus_runner.py)); the executor
+  resolves a ticket file via `_resolve_ticket_file` from the latest Nexus run.
+
+**Design (seam + approach):**
+- **Refactor:** extract the inlined FSM loop into `run_executor_fsm_loop(ctx, cfg) -> bool` and wrap
+  bootstrap+loop+finalize in `execute_one_ticket(project, ticket_id, projects, *, push, auto_merge) ->
+  (run_dir, ok)`, reusing the already-standalone `bootstrap_session`/`finalize_transaction`.
+- Add `get_tasks_for_nexus_run(run_dir) -> list[dict]` (read `NexusState.tasks` from the checkpoint, or scan
+  `artifacts/TASK-*.md`).
+- Add an opt-in flag (e.g. `--auto-execute`) on the `--idea` path. **Orchestrate from `runner.main()`** (or a
+  thin new orchestration entry) — do **not** make the Nexus plane import the Executor plane (preserve the
+  ADR 0012 plane discipline; the bridge stays in the worker/entry layer).
+
+**Dependencies:** none — this is the refactor foundation for E2/E3.
+
+**Risks / open questions:** the FSM loop is coupled to module-level constants (`MAX_FUNCTIONAL_RETRIES`,
+reroute caps, budgets) and the ambient `log` re-anchored per run — these must move cleanly into the extracted
+function without changing per-ticket checkpoint/resume semantics.
+
+**Acceptance:** `--idea "…" --auto-execute` plans, then executes `TASK-01` end-to-end in one invocation; the
+existing manual `--run` path is unchanged; unit tests mock the loop and assert dispatch + termination.
+
+## E2. [EPIC] Close the loop to `main` via an auto-approved PR
+
+**Goal:** on a successful ticket, open a PR from `feat/ticket-<id>` into `base_branch` and **auto-approve +
+merge** it, so verified work actually lands in `main`. (User-requested feature 2; chosen approach: **PR +
+auto-approve + merge** — full-autonomy MVP, switchable to human-review later.)
+
+**Current state:**
+- `finalize_transaction` makes the atomic `feat(<ticket>): …` commit on `feat/ticket-<id>` and, with `--push`,
+  runs `git push -u origin HEAD` — and stops ([runner.py:219-257](../src/executor/runner.py#L219-L257)). The
+  success block that calls it is [runner.py:1155-1163](../src/executor/runner.py#L1155-L1163).
+- `base_branch` is only a **diff anchor + fetch ref**, **never a merge target** (grep confirms; bootstrap
+  fetches it for `git diff --cached <base>`).
+- **PR/merge/`gh`/GitHub API = none today (greenfield).** `ctx.pr_description` (clean ticket text) and the
+  `feat(<ticket>):` subject are available for the PR body/title. The PAT embedded in the repo URL authenticates
+  the GitHub REST API; a separate `GITHUB_TOKEN` is cleaner (keeps the full credentialed URL out of logs).
+
+**Design (seam + approach):**
+- New step **after** `finalize_transaction` in the success block, behind a flag (e.g. `--auto-merge`).
+- A **provider-agnostic** interface (`open_pr` / `approve_pr` / `merge_pr`) with a **GitHub-first** impl via
+  `gh` or REST; squash-merge into `base_branch`; PR title from the commit subject, body from
+  `ctx.pr_description` + a gate/FinOps summary. Auth via `GITHUB_TOKEN` (preferred) or the existing URL PAT.
+
+**Dependencies:** E1 (or usable standalone via `--run … --auto-merge`).
+
+**Risks / open questions (call out before building):**
+- **Self-approval:** GitHub forbids a PR author approving their *own* PR — auto-approve likely needs a
+  *separate reviewer token*, or branch-protection bypass / admin auto-merge. Decide the identity model.
+- Branch-protection / required-status-checks interaction (the engine already ran the checks locally).
+- **Idempotency on `--resume`** after a partial merge; relates to **#23** (abort leaves a dirty index) for
+  clean resume hygiene.
+- Provider lock-in: keep the interface generic so GitLab/Bitbucket can follow.
+
+**Acceptance:** a successful ticket yields a merged PR on `base_branch`; a failed/halted ticket leaves no PR
+or merge; re-running or resuming is idempotent (no duplicate PRs).
+
+## E3. [EPIC] Cyclical multi-ticket orchestration
+
+**Goal:** Nexus drives the Executor over **all** generated tasks in order — `TASK-01 → merge → TASK-02 → …` —
+so each ticket builds on the previously merged state, ending with the full app on `main`. (User-requested
+feature 3: "nexus циклично по таскам запускал executor".)
+
+**Current state:** each ticket runs in its **own** exec run dir and **clones `main` fresh** on a new
+`feat/ticket-<id>` branch ([bootstrap_session](../src/executor/runner.py#L165-L192)). There is no cross-ticket
+state — TASK-02's clone does **not** contain TASK-01's work unless it has already merged to `main`.
+
+**Design (seam + approach):** a batch loop over `get_tasks_for_nexus_run(...)` (from E1) calling
+`execute_one_ticket(..., auto_merge=True)` in TPM order. **Correctness hinges on E2 merging to `main` before
+the next ticket's fresh clone** — that is what makes the fresh-clone model compose into a coherent,
+cumulative application. Add a **batch-level checkpoint** (which tickets are done) for resume, and an explicit,
+tunable **failure policy** (default: stop the batch on the first unrecoverable halt, write the incident, and
+let `--resume` continue from the failed ticket).
+
+**Dependencies:** **E1 + E2** (hard).
+
+**Risks / open questions:** a mid-batch halt strands later tickets (resume story must be solid); per-ticket
+FinOps vs a batch-wide budget ceiling; inter-ticket ordering/dependencies are implicit via shared `main` (no
+explicit DAG between tickets today); ties to **#20** (env_id must propagate cleanly per ticket) and **#26**
+(per-ticket retry budget).
+
+**Acceptance:** `--idea "…"` with auto-execute + auto-merge drives every task to `main` in order; a halt stops
+the batch cleanly with an incident, and `--resume` continues from the failed ticket without redoing merged
+ones.
+
+## E4. [EPIC] DevOps / deployment — SCOPE ONLY (decision deferred)
+
+**Goal:** record the epic and its decision space; **do not pick the mechanism yet** (user choice:
+"только зафиксировать scope" — needs refinement on *how and where* to deploy).
+
+**Current state:**
+- The **DevOps** node is named in the mission graph (README "Target Pipeline Graph") and
+  [ADR 0000](decisions/0000-cloud-infra-fsm-research.md), but has **zero implementation**; the pipeline stops
+  at QA/Reviewer.
+- [environments.py](../src/shared/core/environments.py) has `build`/`test`/`setup`/`format` commands but
+  **no `run`/`serve`/`package`/`deploy`** command. `docker_adapter.py` runs ephemeral, least-privilege
+  *verification* sandboxes only — not a deployment target.
+- [techwriter.py](../src/executor/agents/techwriter.py) is the exact structural template for a success-path
+  "finalizing" agent (runs once on success, before commit); adding a `devops` role follows the 8-point
+  checklist in [agent-role-registration](../.claude/rules/agent-role-registration.md).
+
+**Decision space to resolve when picked up** (recommended-but-deferred lean toward the lowest-risk first):
+- **(a) Generate CI/CD config** — a `devops` agent emits a `Dockerfile` + GitHub Actions workflow
+  (build/test/deploy) committed to the repo; the engine makes the app *deployable* and the platform performs
+  the deploy. *Lowest infra/risk; recommended MVP.*
+- **(b) Build + push a container image** to a registry (needs registry credentials).
+- **(c) Live cloud deploy** to a real target (AWS/GCP/Azure/k8s) — needs target credentials + infra, and is
+  irreversible/highest-risk.
+
+Plus open sub-decisions: the new `devops` agent role (model/prompt/output-model/FSM wiring), new
+`environments.py` deploy-command fields, credential/secret handling, and **where in the loop deploy runs**
+(per merged ticket vs once per completed epic).
+
+**Dependencies:** E3 (a coherent application on `main` to deploy).
+
+**Acceptance:** epic captured with a clear decision matrix and the touch-points enumerated; **no
+implementation** until the mechanism is chosen.
+
+---
+
+# Part II — Defects & Refinements
+
+### Sandbox & egress security
 
 ## 4. Restrict egress during the dependency-restore phase
 **Why:** the dependency-restore phase (`setup_cmd`) runs with `--network bridge`. Package managers
@@ -20,6 +191,8 @@ execution and SAST both stay `--network none` (SAST runs fully offline — its r
 the image), so only restore keeps a network window.
 **Fix direction:** route restore through an egress-restricted proxy (allowlist package registries),
 or vendor dependencies offline, so no phase has unrestricted network.
+
+### Reviewer accuracy & feedback-channel routing
 
 ## 11. [P1] Reviewer hallucinates production defects not present in the gate output
 **Symptom:** cycle 1 `code_quality_approved=false` + `dev_diagnostic_payload` "rename go.mod module
@@ -54,6 +227,32 @@ Developer and QA both act next cycle and can fight (dev edits production while Q
 LLM-trust invariant with no code guard.
 **Fix direction:** validate routing coherence — e.g. a payload may be non-empty only when its own
 approval is false (pairs naturally with #17), and log/incident when both are populated in one report.
+
+## 25. [P2] Arbiter `developer`/`qa` routes are advisory — they don't change control flow
+**Context:** the Arbiter (ADR [0016](decisions/0016-arbiter-contract-self-healing.md), added to the FSM at
+[runner.py](../src/executor/runner.py) in the `if not all_gates_passed:` block) returns
+`ArbiterVerdict.route ∈ {developer, qa, contract, halt}`. Only `contract` (re-derive the TechLead spec)
+and `halt` (abort) actually alter control flow. For `developer`/`qa` the code **falls through to the
+existing isolated-channel routing** — i.e. the next cycle is driven by the Reviewer's
+`dev_diagnostic_payload`/`qa_diagnostic_payload`, NOT by the Arbiter's verdict.
+**Symptom (observed):** in the TASK-03 run `005_exec_TASK-03_…`, the Arbiter fired once on cycle 2,
+correctly diagnosed a **test defect** (`route=qa`, `root_cause_class=test_bug` — a test mocked `json.load`
+while the production code streamed via `ijson`, so the mock was inert and the test ran an empty file), then
+fell through. The recovery on cycle 3 was driven entirely by the Reviewer's channels + `regenerate_tests`;
+the Arbiter's (correct) verdict cost one Gemini call (~$0.013) but changed nothing. So today the Arbiter
+only "earns its cost" on `contract`/`halt`.
+**Why it matters:** the most valuable thing a `developer`/`qa` verdict could do is **override a Reviewer
+misroute**. Channel-isolation is the classic deadlock (see #18): the Reviewer can fill the wrong channel
+(test fix written into `dev_diagnostic_payload`, or vice versa), and since the Developer can't touch tests
+and QA can't touch production code, the run loops to the breaker. The Arbiter already has the diagnosis
+needed to fix this.
+**Fix direction:** make `developer`/`qa` routes authoritative. When the Arbiter's `route` disagrees with
+which Reviewer payload is populated, re-route: move the fix text into the channel the Arbiter chose
+(`ctx.error_trace` for `developer`, `ctx.qa_error_trace` for `qa`) and clear the other, instead of copying
+both payloads verbatim. Pairs naturally with #17/#18 (payload-coherence validation). Keep the fall-through
+only when the Arbiter agrees with the Reviewer's routing.
+
+### Contract / topology integrity (Nexus → Executor)
 
 ## 19. [P1] `domain_tags[0]` and `environment_id` are validated individually, never against each other
 **Symptom:** a `TechLeadContract` with `environment_id=go-1.23-cli` + `domain_tags=['python']` passes
@@ -92,43 +291,7 @@ post-Developer test-compile gate ([runner.py:991](../src/executor/runner.py#L991
 errors. Tracked as a known limitation, not a defect — monitor for cycle-1 import-collection failures that
 trace back to thin/ambiguous topology nodes.
 
-## 23. [P2] Abort path leaves staged changes in the run clone's index
-**Symptom:** every reroute calls `git add -A` (in `build_production_snapshot`); `_abort_with_incident`
-does `sys.exit(1)` with no `git reset`. The run clone is reused on `--resume`, so a resumed run starts
-with a dirty index from the failed attempt. `finalize_transaction` only stages-and-commits on success.
-**Fix direction:** `git reset` (or discard the worktree) in `_abort_with_incident` for clean resume hygiene.
-
-## 24. [P3] Misleading comment on the QA-self zombie-disposal path
-**Symptom:** [qa.py:231](../src/executor/agents/qa.py#L231) labels the `suite.files_to_delete` disposal as
-"Reviewer-routed", but that path is QA-self-identified; the Reviewer-routed disposal is the separate block
-at [qa.py:126-129](../src/executor/agents/qa.py#L126-L129). Both call the same idempotent guarded
-`_dispose_zombie_tests`, so behavior is correct — only the comment is wrong.
-**Fix direction:** relabel the [qa.py:231](../src/executor/agents/qa.py#L231) comment to "QA-self-identified
-obsolete files" to match the dual-path reality already documented in `qa.md`.
-
-## 25. [P2] Arbiter `developer`/`qa` routes are advisory — they don't change control flow
-**Context:** the Arbiter (ADR [0016](decisions/0016-arbiter-contract-self-healing.md), added to the FSM at
-[runner.py](../src/executor/runner.py) in the `if not all_gates_passed:` block) returns
-`ArbiterVerdict.route ∈ {developer, qa, contract, halt}`. Only `contract` (re-derive the TechLead spec)
-and `halt` (abort) actually alter control flow. For `developer`/`qa` the code **falls through to the
-existing isolated-channel routing** — i.e. the next cycle is driven by the Reviewer's
-`dev_diagnostic_payload`/`qa_diagnostic_payload`, NOT by the Arbiter's verdict.
-**Symptom (observed):** in the TASK-03 run `005_exec_TASK-03_…`, the Arbiter fired once on cycle 2,
-correctly diagnosed a **test defect** (`route=qa`, `root_cause_class=test_bug` — a test mocked `json.load`
-while the production code streamed via `ijson`, so the mock was inert and the test ran an empty file), then
-fell through. The recovery on cycle 3 was driven entirely by the Reviewer's channels + `regenerate_tests`;
-the Arbiter's (correct) verdict cost one Gemini call (~$0.013) but changed nothing. So today the Arbiter
-only "earns its cost" on `contract`/`halt`.
-**Why it matters:** the most valuable thing a `developer`/`qa` verdict could do is **override a Reviewer
-misroute**. Channel-isolation is the classic deadlock (see #18): the Reviewer can fill the wrong channel
-(test fix written into `dev_diagnostic_payload`, or vice versa), and since the Developer can't touch tests
-and QA can't touch production code, the run loops to the breaker. The Arbiter already has the diagnosis
-needed to fix this.
-**Fix direction:** make `developer`/`qa` routes authoritative. When the Arbiter's `route` disagrees with
-which Reviewer payload is populated, re-route: move the fix text into the channel the Arbiter chose
-(`ctx.error_trace` for `developer`, `ctx.qa_error_trace` for `qa`) and clear the other, instead of copying
-both payloads verbatim. Pairs naturally with #17/#18 (payload-coherence validation). Keep the fall-through
-only when the Arbiter agrees with the Reviewer's routing.
+### Arbiter retry budget
 
 ## 26. [P2] Zero retry margin when the Arbiter declines to amend the contract
 **Context:** the outer cycle ceiling is dynamic —
@@ -150,3 +313,19 @@ budget.
 operators); (c) gate the Arbiter on a *repeated/identical* failure rather than `attempt >= 2`, so it only
 spends when truly stuck and any granted bonus is better targeted. Bound any bonus to keep the financial
 circuit breaker the absolute ceiling.
+
+### Git / run hygiene
+
+## 23. [P2] Abort path leaves staged changes in the run clone's index
+**Symptom:** every reroute calls `git add -A` (in `build_production_snapshot`); `_abort_with_incident`
+does `sys.exit(1)` with no `git reset`. The run clone is reused on `--resume`, so a resumed run starts
+with a dirty index from the failed attempt. `finalize_transaction` only stages-and-commits on success.
+**Fix direction:** `git reset` (or discard the worktree) in `_abort_with_incident` for clean resume hygiene.
+
+## 24. [P3] Misleading comment on the QA-self zombie-disposal path
+**Symptom:** [qa.py:231](../src/executor/agents/qa.py#L231) labels the `suite.files_to_delete` disposal as
+"Reviewer-routed", but that path is QA-self-identified; the Reviewer-routed disposal is the separate block
+at [qa.py:126-129](../src/executor/agents/qa.py#L126-L129). Both call the same idempotent guarded
+`_dispose_zombie_tests`, so behavior is correct — only the comment is wrong.
+**Fix direction:** relabel the [qa.py:231](../src/executor/agents/qa.py#L231) comment to "QA-self-identified
+obsolete files" to match the dual-path reality already documented in `qa.md`.
