@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Each release maps to a completed SDLC iteration; the corresponding Architecture
 Decision Record (ADR) is linked from the version heading.
 
+## [Unreleased]
+
+Documentation, licensing, and meta-tooling maintenance (no engine/runtime behavior change).
+
+### Added
+- **Apache-2.0 `LICENSE` for the engine repository** (+ a `## 📄 License` section in `README.md`). Chosen
+  over MIT for the explicit patent grant and change-notice requirement that fit a code-generating tool.
+  (Distinct from the **MIT** baseline the engine injects into *generated apps* via `boilerplate.py`, which
+  is unchanged.)
+- **`docs/ARCHITECTURE.md`** — C4 model in GitHub-native Mermaid: **L1** System Context, **L2** Containers
+  (Nexus / Executor / Shared planes, prompt store, sandbox images, run store), **L3** Executor FSM, plus an
+  end-to-end `sequenceDiagram` and a component-reference table. No C4-plugin syntax (GitHub won't render it).
+- **Docs navigation index pages** — `docs/README.md` (front door) and `docs/decisions/README.md` (ADR index
+  grouped by theme).
+- **Rewritten onboarding guide `docs/guides/setup.md`** — a single zero-to-first-run spine: prerequisites
+  table, ordered steps with per-step verifies, a **pre-flight self-check that mirrors `check_environment`**,
+  a first-run walkthrough (plan → execute → resume + success/failure signals), an environment-variable
+  reference table, and an expanded troubleshooting matrix.
+
+### Changed
+- **`docs/` restructured for navigability** (history-preserving `git mv`): `docs/adr/`→`docs/decisions/`,
+  `docs/archive/`→`docs/releases/`, `docs/{setup,docker-on-windows}.md`→`docs/guides/`; every cross-link
+  rewritten.
+- **`/docs-sync` and `/iteration-release` skills extended** to also synchronize the `docs/ARCHITECTURE.md`
+  C4 diagrams + component table when an iteration changes *structure* (a new/removed agent role, FSM route,
+  external system, or plane/container).
+
+### Removed
+- **The stale root `Dockerfile`** — it `COPY`/`ENTRYPOINT`-ed the long-deleted `orchestrator.py` (broken
+  since the ADR 0012 plane split) and was referenced by no build/compose/CI. Sandbox runtimes are built from
+  `docker/*.Dockerfile` via `scripts/build_sandbox_images.sh`. The stale `python3 orchestrator.py` example in
+  the setup guide was corrected to `main.py`.
+
 ## [v0.16.0] - 2026-06-19 — Arbiter: Autonomous Contract Self-Healing & Recitation Resilience
 
 ADR: [0016-arbiter-contract-self-healing](./docs/decisions/0016-arbiter-contract-self-healing.md)

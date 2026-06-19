@@ -93,9 +93,11 @@ async-agentic-sdlc/
 │   ├── releases/               # Per-iteration release write-ups (iteration_NN/)
 │   └── BACKLOG.md              # Open, deferred fixes (prioritized)
 ├── main.py                     # Root CLI entrypoint: runs src/executor/runner.py:main()
+├── CLAUDE.md                   # Claude Code project governance: CLI economy, dev commands, guardrails
 ├── CHANGELOG.md                # Release history (Keep a Changelog), linked to ADRs
 ├── PRACTICUM.md                # Project manifest & Key Engineering Takeaways
 ├── requirements.txt            # Explicit dependency manifest
+├── LICENSE                     # Apache License 2.0 — the engine's own license
 ├── .gitignore                  # Ignores runs/ — runtime session state stays out of git
 └── README.md                   # System mission briefing & specifications
 ```
