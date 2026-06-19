@@ -7,9 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Each release maps to a completed SDLC iteration; the corresponding Architecture
 Decision Record (ADR) is linked from the version heading.
 
-## [Unreleased]
+## [v0.16.1] - 2026-06-19 — Documentation, Licensing & Onboarding
 
-Documentation, licensing, and meta-tooling maintenance (no engine/runtime behavior change).
+Archive: [iteration_16.1](./docs/releases/iteration_16.1/iteration_16.1_README.md)
+
+> No ADR — documentation, licensing, and meta-tooling maintenance only (no engine/runtime behavior change).
 
 ### Added
 - **Apache-2.0 `LICENSE` for the engine repository** (+ a `## 📄 License` section in `README.md`). Chosen
