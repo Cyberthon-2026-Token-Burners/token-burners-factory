@@ -34,37 +34,37 @@ flagging legacy code — but verbatim-citation is still not enforced.)
 
 ## 17. [P1] Reviewer can reject without guidance — silent retry-budget burn
 **Symptom:** the Reviewer sets `code_quality_approved=false` (or `test_integrity_approved=false`) while
-leaving the matching payload `""`. Routing at [runner.py:1089-1092](src/executor/runner.py#L1089-L1092)
+leaving the matching payload `""`. Routing at [runner.py:1089-1092](../src/executor/runner.py#L1089-L1092)
 copies the empty trace; the agent re-runs next cycle with zero guidance, reproduces the same output, and
 the loop burns all `max_retries` cycles until aborting "Retries exhausted."
 **Cause:** no model/code invariant ties an approval to a non-empty payload. The deadlock guard
-([runner.py:1070](src/executor/runner.py#L1070)) only catches `gate_failed ∧ approved_both`, never
-`not approved ∧ empty payload`. Payload defaults are `""` ([models.py:244-245](src/shared/core/models.py)).
+([runner.py:1070](../src/executor/runner.py#L1070)) only catches `gate_failed ∧ approved_both`, never
+`not approved ∧ empty payload`. Payload defaults are `""` ([models.py:244-245](../src/shared/core/models.py)).
 **Fix direction:** add a `ReviewReport` model validator — `not code_quality_approved ⇒ dev_diagnostic_payload != ""`
 and the QA analog — so a guidance-less rejection fails fast with a debuggable validation error instead of
 silently wasting the budget.
 
 ## 18. [P2] Feedback-channel isolation is enforced only by prompt, not by code
 **Symptom:** `reviewer.md` mandates "never duplicate an instruction across both channels," but
-[runner.py:1091-1092](src/executor/runner.py#L1091-L1092) copies BOTH `dev_diagnostic_payload` and
+[runner.py:1091-1092](../src/executor/runner.py#L1091-L1092) copies BOTH `dev_diagnostic_payload` and
 `qa_diagnostic_payload` unconditionally. If the Reviewer LLM populates both (or the wrong one), the
 Developer and QA both act next cycle and can fight (dev edits production while QA expects a test fix).
 **Cause:** the transport is isolated (`error_trace` vs `qa_error_trace`, reset each cycle at
-[runner.py:816-817](src/executor/runner.py#L816-L817)), but *which* channel the Reviewer fills is an
+[runner.py:816-817](../src/executor/runner.py#L816-L817)), but *which* channel the Reviewer fills is an
 LLM-trust invariant with no code guard.
 **Fix direction:** validate routing coherence — e.g. a payload may be non-empty only when its own
 approval is false (pairs naturally with #17), and log/incident when both are populated in one report.
 
 ## 19. [P1] `domain_tags[0]` and `environment_id` are validated individually, never against each other
 **Symptom:** a `TechLeadContract` with `environment_id=go-1.23-cli` + `domain_tags=['python']` passes
-both validators yet loads Python skills ([prompts.py:266](src/shared/core/prompts.py)) while every gate
-runs the Go toolchain ([gates.py](src/executor/nodes/gates.py)) — split-brain execution.
+both validators yet loads Python skills ([prompts.py:266](../src/shared/core/prompts.py)) while every gate
+runs the Go toolchain ([gates.py](../src/executor/nodes/gates.py)) — split-brain execution.
 **Cause:** skills route on `domain_tags[0]`; gates route on `environment_id`; nothing cross-checks that
 the first tag is the language of the selected platform. Currently guarded only by `techlead.md` prose.
 **Fix direction:** add a `TechLeadContract` model validator — `env_language(environment_id) == domain_tags[0]`.
 
 ## 20. [P1] SA's structured `environment_id` is discarded at the Nexus→executor boundary
-**Symptom:** `run_sa` returns only `result.markdown`; [nexus_runner.py:72](src/nexus/nexus_runner.py#L72)
+**Symptom:** `run_sa` returns only `result.markdown`; [nexus_runner.py:72](../src/nexus/nexus_runner.py#L72)
 persists only `blueprint.md`. The validated, authoritative platform key the SA selected never crosses the
 boundary — the TPM and TechLead re-extract it from blueprint prose and re-validate.
 **Cause:** the markdown is the only persisted artifact; structured fields collapse to text. A blueprint
@@ -76,19 +76,19 @@ TechLead input so the chosen platform propagates as a validated value, not re-pa
 
 ## 21. [P2] TechLead contract is an un-cross-checkable single point of failure
 **Symptom:** the Developer never sees the blueprint; QA sees the contract; the Reviewer audits the
-contract dump ([reviewer.py:23](src/executor/agents/reviewer.py#L23)), not `blueprint.md`. If the
+contract dump ([reviewer.py:23](../src/executor/agents/reviewer.py#L23)), not `blueprint.md`. If the
 TechLead drops an NFR from `architectural_constraints` or misreads the blueprint, no downstream agent can
 detect the omission — they all inherit the flattened contract as ground truth.
 **Fix direction:** feed `blueprint_markdown` to the Reviewer as a reference block so it can audit the
 TechLead's extraction fidelity against the source, not just adjudicate the derived contract.
 
 ## 22. [P3] QA generates tests on cycle 1 with no production-code snapshot (by design)
-**Symptom:** cycle 1 `needs_test_regeneration()` is True (no test snapshot, [models.py:283](src/shared/core/models.py#L283)),
-so QA generates BEFORE the Developer ([runner.py:825-851](src/executor/runner.py#L825-L851)); the
-`PRODUCTION CODE SNAPSHOT` block is absent ([qa.py:162](src/executor/agents/qa.py#L162)). Import
+**Symptom:** cycle 1 `needs_test_regeneration()` is True (no test snapshot, [models.py:283](../src/shared/core/models.py#L283)),
+so QA generates BEFORE the Developer ([runner.py:825-851](../src/executor/runner.py#L825-L851)); the
+`PRODUCTION CODE SNAPSHOT` block is absent ([qa.py:162](../src/executor/agents/qa.py#L162)). Import
 correctness on cycle 1 rests entirely on `topology_contract` precision.
 **Note:** contract-first is intentional and `qa.md` says "when present, the PRODUCTION CODE SNAPSHOT"; the
-post-Developer test-compile gate ([runner.py:991](src/executor/runner.py#L991)) catches resulting import
+post-Developer test-compile gate ([runner.py:991](../src/executor/runner.py#L991)) catches resulting import
 errors. Tracked as a known limitation, not a defect — monitor for cycle-1 import-collection failures that
 trace back to thin/ambiguous topology nodes.
 
@@ -99,16 +99,16 @@ with a dirty index from the failed attempt. `finalize_transaction` only stages-a
 **Fix direction:** `git reset` (or discard the worktree) in `_abort_with_incident` for clean resume hygiene.
 
 ## 24. [P3] Misleading comment on the QA-self zombie-disposal path
-**Symptom:** [qa.py:231](src/executor/agents/qa.py#L231) labels the `suite.files_to_delete` disposal as
+**Symptom:** [qa.py:231](../src/executor/agents/qa.py#L231) labels the `suite.files_to_delete` disposal as
 "Reviewer-routed", but that path is QA-self-identified; the Reviewer-routed disposal is the separate block
-at [qa.py:126-129](src/executor/agents/qa.py#L126-L129). Both call the same idempotent guarded
+at [qa.py:126-129](../src/executor/agents/qa.py#L126-L129). Both call the same idempotent guarded
 `_dispose_zombie_tests`, so behavior is correct — only the comment is wrong.
-**Fix direction:** relabel the [qa.py:231](src/executor/agents/qa.py#L231) comment to "QA-self-identified
+**Fix direction:** relabel the [qa.py:231](../src/executor/agents/qa.py#L231) comment to "QA-self-identified
 obsolete files" to match the dual-path reality already documented in `qa.md`.
 
 ## 25. [P2] Arbiter `developer`/`qa` routes are advisory — they don't change control flow
-**Context:** the Arbiter (ADR [0016](docs/adr/0016-arbiter-contract-self-healing.md), added to the FSM at
-[runner.py](src/executor/runner.py) in the `if not all_gates_passed:` block) returns
+**Context:** the Arbiter (ADR [0016](decisions/0016-arbiter-contract-self-healing.md), added to the FSM at
+[runner.py](../src/executor/runner.py) in the `if not all_gates_passed:` block) returns
 `ArbiterVerdict.route ∈ {developer, qa, contract, halt}`. Only `contract` (re-derive the TechLead spec)
 and `halt` (abort) actually alter control flow. For `developer`/`qa` the code **falls through to the
 existing isolated-channel routing** — i.e. the next cycle is driven by the Reviewer's

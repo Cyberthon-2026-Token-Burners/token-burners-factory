@@ -3,7 +3,7 @@
 ## Prerequisites (Windows)
 
 - Windows 10/11 with WSL2 enabled
-- Docker configured for WSL2 — see [docs/docker-on-windows.md](docs/docker-on-windows.md)
+- Docker configured for WSL2 — see [docs/docker-on-windows.md](docker-on-windows.md)
 - WSL2 distro: Ubuntu 24.04 (recommended)
 - Node.js + npm installed inside WSL2
 
@@ -17,7 +17,7 @@ wsl --install -d Ubuntu-24.04
 
 Restart, then open the Ubuntu terminal and create a user when prompted.
 
-For Docker setup (Engine in WSL2 + CLI on Windows), follow [docs/docker-on-windows.md](docs/docker-on-windows.md).
+For Docker setup (Engine in WSL2 + CLI on Windows), follow [docs/docker-on-windows.md](docker-on-windows.md).
 
 ---
 
@@ -32,7 +32,7 @@ sudo apt update && sudo apt upgrade -y
 sudo apt install -y python3-pip python3-venv bandit
 ```
 
-> Do **not** install `docker.io` via apt and do **not** use Docker Desktop. The upstream `docker-ce` Engine runs in WSL2 and the CLI on Windows — install it by following [docs/docker-on-windows.md](docs/docker-on-windows.md) (§2 Step A), which also binds the API to loopback (`127.0.0.1:2375`) only.
+> Do **not** install `docker.io` via apt and do **not** use Docker Desktop. The upstream `docker-ce` Engine runs in WSL2 and the CLI on Windows — install it by following [docs/docker-on-windows.md](docker-on-windows.md) (§2 Step A), which also binds the API to loopback (`127.0.0.1:2375`) only.
 
 ## 2. Node.js (native, inside WSL2 via nvm)
 
@@ -161,9 +161,9 @@ python3 orchestrator.py
 
 | Problem | Fix |
 |---|---|
-| `docker: command not found` | Start the WSL2 engine: `sudo service docker start` (or `wsl -d Ubuntu -u root service docker start` from PowerShell). Confirm `docker-ce` is installed per [docs/docker-on-windows.md](docs/docker-on-windows.md) §2 Step A. |
+| `docker: command not found` | Start the WSL2 engine: `sudo service docker start` (or `wsl -d Ubuntu -u root service docker start` from PowerShell). Confirm `docker-ce` is installed per [docs/docker-on-windows.md](docker-on-windows.md) §2 Step A. |
 | `permission denied` on docker socket | Add your user to the `docker` group: `sudo usermod -aG docker $USER`, then restart WSL (`wsl --shutdown`). |
-| `Cannot connect to the Docker daemon at tcp://127.0.0.1:2375` | The engine is down or `DOCKER_HOST` is unset/wrong — start the engine and ensure `DOCKER_HOST=tcp://127.0.0.1:2375` (see [docs/docker-on-windows.md](docs/docker-on-windows.md) §3). |
+| `Cannot connect to the Docker daemon at tcp://127.0.0.1:2375` | The engine is down or `DOCKER_HOST` is unset/wrong — start the engine and ensure `DOCKER_HOST=tcp://127.0.0.1:2375` (see [docs/docker-on-windows.md](docker-on-windows.md) §3). |
 | `npm: command not found` | Install Node.js per step 2 |
 | `npm install -g` fails with `EPERM` / installs `claude-code-win32-x64` | You are on `/mnt/c/`. Move the project to `~/` and use nvm Node (steps 2–3); `which node` must be a `/home/...` path. |
 | Developer agent hangs with no console output | `claude` is resolving to a Windows `claude.exe`. Run `which claude` — if it shows `/mnt/c/...`, reinstall via nvm and set `CLAUDE_CLI_BIN=$(which claude)` (step 7). The session is also bounded by `DEVELOPER_CLI_TIMEOUT`. |

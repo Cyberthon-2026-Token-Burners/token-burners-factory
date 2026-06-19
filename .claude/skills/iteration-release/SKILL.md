@@ -16,12 +16,12 @@ changes, the key implementations (specific code/model changes + the benefit gain
 and any agent-prompt/constraint changes (the new rule + the anti-pattern it prevents).
 
 ## Tasks
-1. **ADR** — run the `adr-generation` skill: create `docs/adr/NNNN-[slug].md` (next sequence number) in
+1. **ADR** — run the `adr-generation` skill: create `docs/decisions/NNNN-[slug].md` (next sequence number) in
    MADR format (Title, Status, Context, Decision, Consequences). **If the architectural ADR for this
    change was already created during implementation** (a large feature often lands its own ADR with the
    code), do NOT create a duplicate — `adr-generation` aborts when no *new* architectural change remains;
-   identify the existing `docs/adr/NNNN` and use it as this iteration's ADR for all the cross-links below.
-2. **Archive** — create `docs/archive/iteration_[ITERATION_NUMBER]/iteration_[ITERATION_NUMBER]_README.md`
+   identify the existing `docs/decisions/NNNN` and use it as this iteration's ADR for all the cross-links below.
+2. **Archive** — create `docs/releases/iteration_[ITERATION_NUMBER]/iteration_[ITERATION_NUMBER]_README.md`
    with: Problem Statement, Implemented Solutions, Metrics/Logs analysis (use real numbers — e.g.
    `git diff --stat <prev-tag-or-commit>` for the footprint, plus any validation-run outcomes). Link it to
    the ADR (and the ADR/CHANGELOG should link back to it).
@@ -36,7 +36,7 @@ and any agent-prompt/constraint changes (the new rule + the anti-pattern it prev
    `PRACTICUM.md` — the present structure is the Takeaways list, so do not invent a table.)
 5. **Verify** — concretely confirm every cross-link resolves and every path matches the current topology:
    the ADR, archive, and any referenced rule/skill files EXIST on disk; relative paths from the archive
-   (`../../adr/…`, `../../../CHANGELOG.md`) and the CHANGELOG/README/PRACTICUM (`./docs/adr/…`) point at real
+   (`../../decisions/…`, `../../../CHANGELOG.md`) and the CHANGELOG/README/PRACTICUM (`./docs/decisions/…`) point at real
    files; and the CHANGELOG version heading + ADR slug match. Fix any miss before finishing.
 
 ## Placeholders to customize
