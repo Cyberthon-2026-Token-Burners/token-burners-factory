@@ -75,6 +75,13 @@ DEVELOPER_CLI_TIMEOUT = int(os.environ.get("DEVELOPER_CLI_TIMEOUT", "900"))
 # than the hard wall-clock cap. Env-overridable.
 DEVELOPER_CLI_IDLE_TIMEOUT = int(os.environ.get("DEVELOPER_CLI_IDLE_TIMEOUT", "120"))
 
+# Per-request wall-clock ceiling (seconds) for EVERY structured Gemini call (run_structured_llm → the
+# shared instructor/genai client). Without it a stalled HTTP request hangs the executor forever, because
+# with_api_retry only fires on exceptions and run_in_executor has no timeout. Wired into the client as
+# `http_options.timeout` (milliseconds); on expiry the SDK raises, with_api_retry backs off and fails
+# fast. Matches the GIT_NETWORK_TIMEOUT / GH_NETWORK_TIMEOUT 300 s convention; env-overridable.
+GEMINI_REQUEST_TIMEOUT = int(os.environ.get("GEMINI_REQUEST_TIMEOUT", "300"))
+
 # The Claude CLI executable. Default "claude" resolves on PATH; under WSL point this at the Linux
 # binary (e.g. "/usr/local/bin/claude") so the run never accidentally resolves to a Windows
 # `claude.exe` across the WSL↔Win32 interop boundary. Env-overridable.
@@ -239,7 +246,11 @@ def get_genai_client() -> genai.Client:
 
 def _build_genai_client() -> genai.Client:
     log.debug("Initializing Google AI Studio client via GEMINI_API_KEY")
-    return genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
+    return genai.Client(
+        api_key=os.environ.get("GEMINI_API_KEY"),
+        # Bound every request so a stalled call raises instead of hanging the executor forever.
+        http_options=types.HttpOptions(timeout=GEMINI_REQUEST_TIMEOUT * 1000),  # SDK expects ms
+    )
 
 
 _genai_client: genai.Client = _build_genai_client()

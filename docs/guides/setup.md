@@ -356,6 +356,7 @@ wsl -e bash -lc "cd /mnt/c/code/async-agentic-sdlc && source venv/bin/activate &
 | `GH_NETWORK_TIMEOUT` | `300` | Hard wall-clock ceiling (s) for each `gh` PR/merge call. |
 | `DEVELOPER_CLI_TIMEOUT` | `900` | Hard wall-clock ceiling (s) per Developer CLI session; child is killed+reaped on expiry. |
 | `DEVELOPER_CLI_IDLE_TIMEOUT` | `120` | Inactivity ceiling (s); kills the child if it emits no output for this long. |
+| `GEMINI_REQUEST_TIMEOUT` | `300` | Per-request wall-clock ceiling (s) for every structured Gemini call; a stalled request raises (retried, then fails fast) instead of hanging the run. |
 | `PIPELINE_BUDGET_USD` | `10.00` | Primary Financial Circuit Breaker gate (authoritative for Claude, estimated for Gemini). |
 | `PIPELINE_BUDGET_TOKENS` | `1000000` | Secondary token ceiling (fresh in+out; cache excluded). |
 | `PIPELINE_MAX_RETRIES` | `3` | Functional retry budget for the FSM cycle. |

@@ -8,10 +8,12 @@ import os
 import unittest
 from decimal import Decimal
 from types import SimpleNamespace
+from unittest import mock
 
 # config imports src.shared.core.config at import time and needs a key present.
 os.environ.setdefault("GEMINI_API_KEY", "test-key")
 
+from src.shared.core import config
 from src.shared.core.config import estimate_gemini_cost_usd, MODEL_PRICING_MATRIX
 
 
@@ -86,6 +88,25 @@ class EstimateGeminiCostTests(unittest.TestCase):
         # Defensive: cached > prompt must not produce a negative cost.
         cost = estimate_gemini_cost_usd(self.FLASH, _usage(prompt=10, output=0, cached=1000))
         self.assertGreaterEqual(cost, Decimal("0"))
+
+
+class GenaiClientTimeoutTests(unittest.TestCase):
+    """The shared genai client must carry a per-request timeout (ms) so a stalled Gemini call raises
+    instead of hanging the executor forever — regression guard for the Reviewer-context hang."""
+
+    def test_genai_client_built_with_request_timeout(self) -> None:
+        with mock.patch("src.shared.core.config.genai.Client") as Client:
+            config._build_genai_client()
+        http_options = Client.call_args.kwargs["http_options"]
+        self.assertEqual(http_options.timeout, config.GEMINI_REQUEST_TIMEOUT * 1000)
+
+    def test_request_timeout_honors_constant(self) -> None:
+        # The builder reads the (env-overridable) module constant — patch it to a sentinel and confirm
+        # it flows through to http_options as milliseconds.
+        with mock.patch.object(config, "GEMINI_REQUEST_TIMEOUT", 42), \
+                mock.patch("src.shared.core.config.genai.Client") as Client:
+            config._build_genai_client()
+        self.assertEqual(Client.call_args.kwargs["http_options"].timeout, 42_000)
 
 
 if __name__ == "__main__":
