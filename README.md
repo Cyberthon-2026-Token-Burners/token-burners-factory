@@ -47,7 +47,7 @@ As determined during the initial research phase, this project intentionally reje
    * **Claude (Developer)**: Lead Software Engineer (sandboxed CLI executions via Claude Code). The model and reasoning effort are set in `src/shared/core/config.py` — `DEVELOPER_MODEL` (default `sonnet`) and `DEVELOPER_EFFORT` (default `medium`; one of `low|medium|high|xhigh|max`), forwarded to the CLI as `--model` / `--effort`.
 3. **Sandboxed Runtimes**: Isolated Docker containers run code execution and verification gates to prevent agent workspace corruption.
 4. **Dual-Channel Observability**: Complete console diagnostics split from a persistent, rotating debug audit log (`sdlc_audit.log`). Real-time input/output token metrics tracked natively.
-5. **Git-Anchored Sessions**: Each executor run shallow-clones the target repository into an isolated session directory (`runs/<project>/<NNN>_exec_<ticket>_<ts>_<uid>/repo/`), checks out a `feat/ticket-<ticket>` branch, and treats the single clone's `.git` as the transactional Unit-of-Work. Snapshots use the index diff (`git add -A` → `git diff --cached <base_branch> --name-only`), giving a strict causal delta — including untracked files — while protecting context windows from binary pollution and retry bleed. On full success the orchestrator makes one atomic `feat(<ticket>): …` commit (opt-in `--push`).
+5. **Git-Anchored Sessions**: Each executor run shallow-clones the target repository into an isolated session directory (`runs/<project>/<NNN>_exec_<ticket>_<ts>_<uid>/repo/`), checks out a `feat/ticket-<ticket>` branch, and treats the single clone's `.git` as the transactional Unit-of-Work. Snapshots use the index diff (`git add -A` → `git diff --cached <base_branch> --name-only`), giving a strict causal delta — including untracked files — while protecting context windows from binary pollution and retry bleed. On full success the orchestrator makes one atomic `feat(<ticket>): …` commit (opt-in `--push`); with `--auto-merge` it then opens, approves, and squash-merges a PR from `feat/ticket-<id>` into `base_branch` — closing the loop to `main` through a provider-agnostic `gh`-backed forge seam ([ADR 0018](./docs/decisions/0018-auto-merge-pr-loop-closure.md)).
 6. **Brownfield & Multi-File Support**: The pipeline operates on any external repository via `--repo` and `--ticket`, with `--base-branch` as the diff anchor. Source layout is no longer pinned by CLI flags — the SA/blueprint topology decides source paths (the Developer writes by the contract's full repo-relative paths) and the QA language profile owns test placement. A generated repository topology map is injected into the TechLead and QA contexts so new files land inside existing packages rather than redundant root-level directories, and the TechLead's first `domain_tags` entry declares the target language, dynamically routing stack-specific skill files to the execution agents. QA test generation fans out concurrently via `asyncio.gather` — one isolated test file per production module — bypassing LLM output token ceilings, and returns each complete test file (whole-file assembly, preserving still-valid cases) rather than blind-overwriting the suite.
 7. **Fast-Fail Documentation Guardrail**: A deterministic, zero-LLM-cost middleware runs right after the Developer phase: every newly-created file outside the architecture contract must open with a comment-block justification (language-agnostic lexical check over the first 15 lines). A miss triggers a "free reroute" back to the Developer — bypassing the expensive Reviewer/QA nodes without spending the functional circuit-breaker retry budget. After 2 failed reroutes the engine performs a deterministic Hard Halt, dumping the full FSM state to that run's `reports/incident_report.json` (under `runs/<project>/<NNN>_<plane>_<label>_<ts>_<uid>/`) and exiting safely.
 8. **Autonomous Contract Self-Healing (Arbiter)**: When a cycle is genuinely stuck (a prior fix already failed, `attempt ≥ ARBITER_TRIGGER_ATTEMPT`), an **Arbiter** agent triages the root cause and adds a third routing target beyond the Developer/QA feedback channels — the **contract** itself. For a contract-level defect no downstream agent can fix (a contradictory algorithm, overlapping error conditions with no precedence, or a fix that would violate a stated NFR), it re-derives (amends) the TechLead contract instead of looping to the breaker; otherwise it routes back to Developer/QA or halts. Amendment is bounded conservatively: `environment_id` is pinned (the platform never thrashes), `MAX_CONTRACT_AMENDMENTS` (default 1) caps rewrites, and each amendment grants a bounded retry-budget bonus (`ARBITER_AMENDMENT_RETRY_BONUS`) over the env-tunable `PIPELINE_MAX_RETRIES` ceiling (the Financial Circuit Breaker remains the absolute bound). See [ADR 0016](./docs/decisions/0016-arbiter-contract-self-healing.md). Separately, Gemini content-filter blocks (`RECITATION` et al.) are treated as deterministic — fail-fast instead of burning the backoff budget, with one paraphrase-guarded retry for `RECITATION` — and the engine injects canonical baseline files (`LICENSE`/`.gitignore`) into `TASK-01` so the model never reproduces training-data boilerplate that trips the filter.
@@ -69,7 +69,7 @@ async-agentic-sdlc/
 │   │   └── nodes/              # FSM gates (build/test compile gates, SAST)
 │   └── shared/                 # Shared Plane — common foundations reused across planes
 │       ├── core/               # Pydantic models, observability, env config, run topology, prompt loader, baseline files
-│       └── utils/              # Subprocess, git, and workspace-path-safe helpers
+│       └── utils/              # Subprocess, git, PR-forge (gh), and workspace-path-safe helpers
 ├── prompts/                    # Runtime agent instructions (decoupled from src/ logic)
 │   ├── system/                 # Per-role system prompts (po, sa, tpm, techlead, developer, qa, reviewer, techwriter, arbiter)
 │   └── skills/                 # Reusable prompt fragments injected into agents (engineering_guide, strict_validation, deterministic_mutation)
@@ -79,7 +79,7 @@ async-agentic-sdlc/
 ├── docker/                     # Sandbox image Dockerfiles (python/go/node/dotnet) + semgrep SAST image
 ├── scripts/                    # build_sandbox_images.sh — builds the sandbox + SAST images
 ├── .claude/                    # Claude Code metadata (AI-assisted maintenance)
-│   ├── skills/                 # Native Agent Skills (/adr-generation, /docs-sync, /analyze-run, …)
+│   ├── skills/                 # Native Agent Skills (/adr-generation, /docs-sync, /claude-context-sync, /analyze-run, …)
 │   └── rules/                  # Path-scoped project knowledge auto-loaded by Claude Code
 ├── .github/                    # CI workflows (workflows/ci.yml)
 ├── runs/                       # Volatile per-run sessions (created dynamically, ignored by git)
@@ -170,6 +170,12 @@ python3 main.py --run cli-that-converts-json-to-csv -f TASK-01
 # Or plan AND auto-run the first ticket in one shot (E1). --repo is required so there is a clone target.
 python3 main.py --idea "CLI that converts JSON to CSV with a selectable delimiter" \
     --repo git@github.com:acme/widgets.git --auto-execute
+
+# Close the loop to the base branch (E2): on success, open a PR from feat/ticket-<id> and squash-merge it
+# into base. Implies --push; needs the `gh` CLI + GITHUB_TOKEN. Protected repos: set GITHUB_REVIEWER_TOKEN
+# (a separate identity) for a real approval, and/or GITHUB_MERGE_STRATEGY=auto to queue the merge behind CI.
+python3 main.py --idea "CLI that converts JSON to CSV with a selectable delimiter" \
+    --repo https://github.com/acme/widgets.git --auto-execute --auto-merge
 ```
 
 Each run is isolated under `runs/<project>/<NNN>_<plane>_<label>_<ts>_<uid>/`: an executor run
@@ -204,15 +210,20 @@ For the release-by-release history see [CHANGELOG.md](./CHANGELOG.md), the decis
 
 ## 🛠️ Developer Meta-Tools (AI-Assisted Maintenance)
 
-The repository ships a set of native [Claude Code Agent Skills](https://docs.claude.com/en/docs/claude-code/skills) under `.claude/skills/` that automate project governance, maintain the engineering journal, and keep documentation in sync. They are auto-discoverable (invoke with `/name`, or let Claude trigger them from their description) and strictly separated from the core runtime agent prompts in `prompts/`. Project knowledge is encoded as path-scoped rules under `.claude/rules/`.
+The repository ships a set of native [Claude Code Agent Skills](https://docs.claude.com/en/docs/claude-code/skills) under `.claude/skills/` that automate project governance, maintain the engineering journal, and keep documentation in sync. They are auto-discoverable (invoke with `/name`, or let Claude trigger them from their description) and strictly separated from the core runtime agent prompts in `prompts/`. Project knowledge is encoded as **path-scoped rules** under `.claude/rules/` — each rule's `paths:` frontmatter makes it auto-load only when you edit a matching file (e.g. [subprocess-and-external-call-safety](.claude/rules/subprocess-and-external-call-safety.md) loads when you touch a subprocess/external-call site), so there is no manual step; `/claude-context-sync` keeps both the rules and the skills current with the code.
 
-Run these at the end of an iteration or when a milestone is reached:
+Release-time skills — run at the end of an iteration (or just run `/iteration-release`, which orchestrates them):
 
 * **`/adr-generation`** — Generate Architecture Decision Records. Analyzes recent git diffs to catch systemic architectural shifts and documents them in MADR format into `docs/decisions/`.
-* **`/docs-sync`** — Synchronize factual docs. Parses recent commits to update `CHANGELOG.md` (Keep a Changelog standard) and align `README.md` with new CLI flags / configuration.
+* **`/docs-sync`** — Synchronize factual docs. Parses recent commits to update `CHANGELOG.md` (Keep a Changelog standard) and align `README.md` / `docs/ARCHITECTURE.md` with new CLI flags / configuration.
+* **`/claude-context-sync`** — Reconcile Claude's own operating context: updates the *content* of `.claude/rules/*` + `.claude/skills/*` (module map, FSM states, CLI/env knobs, diagnostic classes) to the current code — the complement to `/docs-sync`'s human-doc + enumeration sync.
 * **`/practicum-update`** — Distill engineering lessons. Reflects on the latest ADR to extract generalized multi-agent patterns into `PRACTICUM.md`.
-* **`/iteration-release`** — One-shot release documentation: runs the three skills above plus an iteration archive, with all cross-links resolved.
-* **`/analyze-run`** — On-demand run diagnostics. Evidence-first root-cause analysis of a failed, looping, or circuit-breaker-halted pipeline run: reads the run's `reports/checkpoint.json` + `logs/sdlc_audit.log` + incident/finops, classifies the cause (content-filter block, agent-fixable bug, contract conflict, environment misconfig, budget breach), and points the fix at `src/`/`prompts/` — never the generated clone.
+* **`/iteration-release`** — One-shot release documentation: runs the four sync skills above plus an iteration archive, with all cross-links resolved.
+
+On-demand skills — invoke any time, not tied to a release:
+
+* **`/agent-role-scaffold`** — Scaffold a new structured (Gemini) agent role across every touch point (config/`ROLE_MODELS`, prompt, output model, node, persistence, FSM wiring, tests, ADR); operationalizes the `agent-role-registration` rule. (Pauses for sign-off before any `prompts/system/` write.)
+* **`/analyze-run`** — Run diagnostics. Evidence-first root-cause analysis of a failed, looping, or circuit-breaker-halted run (also a PR/merge failure or a non-halt crash/hang): reads the run's `reports/checkpoint.json` + `logs/sdlc_audit.log` + incident/finops, classifies the cause (content-filter block, agent-fixable bug, contract conflict, environment misconfig, budget breach, forge/loop-closure failure, boundary crash/hang), and points the fix at `src/`/`prompts/` — never the generated clone.
 
 Non-interactive form: `claude -p "/adr-generation"`.
 

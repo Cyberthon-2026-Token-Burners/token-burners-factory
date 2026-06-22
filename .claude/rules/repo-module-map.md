@@ -6,18 +6,20 @@ first ticket, ADR 0017). Three planes under `src/` (ADR 0012 virtual separation)
 
 **`src/shared/core/`** — engine SSOTs:
 - `models.py` — `RUNS_BASE`, `WorkspacePaths`, `PipelineTelemetry`, `GlobalPipelineContext` (`save_checkpoint`/`load_checkpoint`).
-- `config.py` — `ROLE_MODELS` (role→(model, label)), `PIPELINE_BUDGET_USD/TOKENS`, `MODEL_PRICING_MATRIX`, `estimate_gemini_cost_usd`, `instructor_client`, `check_environment`.
+- `config.py` — `ROLE_MODELS` (role→(model, label)), `PIPELINE_BUDGET_USD/TOKENS`, `MODEL_PRICING_MATRIX`, `estimate_gemini_cost_usd`, `instructor_client` (built with a `GEMINI_REQUEST_TIMEOUT` `http_options` ceiling — every structured call is wall-clock-bounded), `check_environment(require_forge=…)` (with `--auto-merge` also requires `gh` + `GITHUB_TOKEN`).
 - `observability.py` — `log`, `reconfigure_logging`, `log_token_usage` (telemetry-first), `log_finops_summary`, `describe_finish_reason`.
 - `runs.py` — `Projects` store + `allocate_run_dir` + `slugify` (run-layout SSOT; see [run-layout-and-cli](run-layout-and-cli.md)).
 - `docker_adapter.py` — `run_in_image` / `execute_in_sandbox` (sandbox least-privilege; see [qa-sandbox-hardening](qa-sandbox-hardening.md)).
 - `environments.py` — `SUPPORTED_ENVIRONMENTS` registry (per-language image + build/test/setup cmds + cache_volume).
 - `prompts.py` — `build_agent_context`, `get_system_prompt*`, `generate_repo_map` (skill routing: [skill-routing-frontmatter](skill-routing-frontmatter.md)).
 
-**`src/shared/utils/`** — `subprocess_helpers.py` (`parse_claude_usage`, streaming), `git_helpers.py`,
-`llm.py` (`run_structured_llm`), `api_retry.py` (`with_api_retry`), `redaction.py` (`redact`).
+**`src/shared/utils/`** — `subprocess_helpers.py` (`parse_claude_usage`, streaming, `sanitize_for_argv` — strips C0/NUL from every subprocess argv, the SSOT both `forge` and `runner._run_checked` call), `git_helpers.py`,
+`llm.py` (`run_structured_llm`), `api_retry.py` (`with_api_retry`), `redaction.py` (`redact`),
+`forge.py` (`open_pr`/`approve_pr`/`merge_pr` — gh-backed PR auto-merge seam, E2 / `--auto-merge`).
 
 **`src/executor/`** (worker plane) — `runner.py` (`main()` dispatcher + `run_executor` per-ticket FSM +
-`prepare_ticket_run` cfg-wiring/allocation, shared by `--run`/`--auto-execute`), `nodes/gates.py`
+`prepare_ticket_run` cfg-wiring/allocation, shared by `--run`/`--auto-execute` + `finalize_pr` — the E2
+success-path PR step (open→approve→merge via `forge`, behind `--auto-merge`)), `nodes/gates.py`
 (build/test/SAST gates + `build_failure_is_environmental`),
 `agents/{techlead,developer,qa,reviewer,techwriter,arbiter}.py`.
 

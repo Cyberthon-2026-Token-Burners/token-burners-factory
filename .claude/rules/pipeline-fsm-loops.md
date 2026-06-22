@@ -50,7 +50,7 @@ copies both payloads unconditionally (hardening: docs/BACKLOG.md #18). Distinct 
 CLAUDE.md-vs-prompts boundary in [feedback-context-isolation](feedback-context-isolation.md).
 
 ## Termination states
-- **Success** — `run_techwriter_node` (updates the living ADR) → `finalize_transaction` (atomic commit) → return.
+- **Success** — `run_techwriter_node` (updates the living ADR) → `finalize_transaction` (atomic commit + optional push) → (E2, only with `--auto-merge`) `finalize_pr` (open → best-effort approve → squash-merge the PR into base, via `src/shared/utils/forge.py`) → return. `finalize_pr` is wrapped so the FinOps report/summary still print on a merge failure; a *genuine* `merge_pr` failure `sys.exit(1)`s **without** an `incident_report.json` (it is not an FSM halt — the gates already passed). A halted ticket never reaches the PR step (no PR on failure).
 - **Retries exhausted** — loop ends → `_abort_with_incident("Retries exhausted")`.
 - **Financial breaker** — `enforce_financial_circuit_breaker` at 6 checkpoints; gates primarily on `PIPELINE_BUDGET_USD` (see [token-budget-excludes-cache](token-budget-excludes-cache.md)).
 - **Hard-halt** — misplaced contract file at cap, persistently undocumented new file, or persistent environmental build error.

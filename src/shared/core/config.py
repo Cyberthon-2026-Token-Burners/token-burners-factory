@@ -4,6 +4,7 @@ import shutil
 import instructor
 from decimal import Decimal
 from google import genai
+from google.genai import types
 from google.genai.errors import ClientError
 
 from src.shared.core.observability import log
@@ -73,6 +74,13 @@ DEVELOPER_CLI_TIMEOUT = int(os.environ.get("DEVELOPER_CLI_TIMEOUT", "900"))
 # launcher kills it — a stalled/rate-limited API call produces silence, so this catches it far sooner
 # than the hard wall-clock cap. Env-overridable.
 DEVELOPER_CLI_IDLE_TIMEOUT = int(os.environ.get("DEVELOPER_CLI_IDLE_TIMEOUT", "120"))
+
+# Per-request wall-clock ceiling (seconds) for EVERY structured Gemini call (run_structured_llm → the
+# shared instructor/genai client). Without it a stalled HTTP request hangs the executor forever, because
+# with_api_retry only fires on exceptions and run_in_executor has no timeout. Wired into the client as
+# `http_options.timeout` (milliseconds); on expiry the SDK raises, with_api_retry backs off and fails
+# fast. Matches the GIT_NETWORK_TIMEOUT / GH_NETWORK_TIMEOUT 300 s convention; env-overridable.
+GEMINI_REQUEST_TIMEOUT = int(os.environ.get("GEMINI_REQUEST_TIMEOUT", "300"))
 
 # The Claude CLI executable. Default "claude" resolves on PATH; under WSL point this at the Linux
 # binary (e.g. "/usr/local/bin/claude") so the run never accidentally resolves to a Windows
@@ -199,15 +207,22 @@ def estimate_gemini_cost_usd(model_name: str, usage_metadata) -> Decimal:
 # ==========================================
 # ENVIRONMENT CHECKER
 # ==========================================
-def check_environment():
+def check_environment(require_forge: bool = False):
     log.info("🔍 Pre-flight environment check...")
-    for tool in ["docker", "claude", "bandit"]:
+    # `gh` (+ GITHUB_TOKEN) is only required when the run will open/merge a PR (--auto-merge, E2),
+    # so plain runs never force a forge CLI on the operator.
+    tools = ["docker", "claude", "bandit"] + (["gh"] if require_forge else [])
+    for tool in tools:
         if not shutil.which(tool):
             log.error(f"🚨 CRITICAL: Binary '{tool}' not found in PATH.")
             sys.exit(1)
 
     if not os.environ.get("GEMINI_API_KEY"):
         log.error("🚨 CRITICAL: GEMINI_API_KEY is not set.")
+        sys.exit(1)
+
+    if require_forge and not os.environ.get("GITHUB_TOKEN"):
+        log.error("🚨 CRITICAL: --auto-merge requires GITHUB_TOKEN (gh PR/merge auth) to be set.")
         sys.exit(1)
 
     # Container hardening: in docker mode the framework source must be immutable so the
@@ -231,7 +246,11 @@ def get_genai_client() -> genai.Client:
 
 def _build_genai_client() -> genai.Client:
     log.debug("Initializing Google AI Studio client via GEMINI_API_KEY")
-    return genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
+    return genai.Client(
+        api_key=os.environ.get("GEMINI_API_KEY"),
+        # Bound every request so a stalled call raises instead of hanging the executor forever.
+        http_options=types.HttpOptions(timeout=GEMINI_REQUEST_TIMEOUT * 1000),  # SDK expects ms
+    )
 
 
 _genai_client: genai.Client = _build_genai_client()

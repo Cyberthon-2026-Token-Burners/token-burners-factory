@@ -8,7 +8,7 @@ decisions, or release history as needed.
 |---|---|
 | Understand **what the system is and how it's built** | [ARCHITECTURE.md](ARCHITECTURE.md) — C4 context / container / FSM diagrams (Mermaid) |
 | **Run it locally** | [guides/setup.md](guides/setup.md) → [guides/docker-on-windows.md](guides/docker-on-windows.md) |
-| Know **why** a design choice was made | [decisions/](decisions/README.md) — the ADR log (0000–0016) |
+| Know **why** a design choice was made | [decisions/](decisions/README.md) — the ADR log (0000–0018) |
 | See **what changed each release** | [../CHANGELOG.md](../CHANGELOG.md) + [releases/](releases/) write-ups |
 | Find the **distilled engineering lessons** | [../PRACTICUM.md](../PRACTICUM.md) |
 | See **what's still open** | [BACKLOG.md](BACKLOG.md) |
@@ -22,22 +22,29 @@ docs/
     docker-on-windows.md
   decisions/            # Architecture Decision Records (MADR) + index
     README.md
-    0000-…md … 0016-…md
+    0000-…md … 0018-…md
   releases/             # per-iteration release write-ups
-    iteration_15/ · iteration_16/
+    iteration_15/ … iteration_18/
   BACKLOG.md            # open, deferred fixes (prioritized)
 ```
 
 ## 🗂️ Beyond docs/
 - **[../README.md](../README.md)** — project mission, quick-start CLI, FinOps, and the meta-tool skills.
 - **[../CLAUDE.md](../CLAUDE.md)** — CLI governance, dev commands, and architecture guardrails.
-- **`.claude/rules/`** — auto-loaded engineering knowledge (path-scoped). Notable:
+- **`.claude/rules/`** — auto-loaded engineering knowledge (path-scoped: a rule loads only when you touch a
+  file its `paths:` frontmatter matches — no manual step). Notable:
   [repo-module-map](../.claude/rules/repo-module-map.md) (where things live),
   [pipeline-fsm-loops](../.claude/rules/pipeline-fsm-loops.md) (the FSM cycle),
   [agent-contracts](../.claude/rules/agent-contracts.md) (per-agent I/O),
   [agent-provider-model-map](../.claude/rules/agent-provider-model-map.md) (Gemini vs Claude routing),
+  [config-constant-convention](../.claude/rules/config-constant-convention.md) (env-overridable knobs),
+  [subprocess-and-external-call-safety](../.claude/rules/subprocess-and-external-call-safety.md) (sanitize
+  every argv + time-bound every blocking call),
   [debugging-protocol](../.claude/rules/debugging-protocol.md) (diagnose a run).
-- **`.claude/skills/`** — invokable meta-tools: `/adr-generation`, `/docs-sync`, `/practicum-update`,
-  `/iteration-release`, `/analyze-run`. (Documented in [../README.md](../README.md) → Developer Meta-Tools.)
+- **`.claude/skills/`** — invokable meta-tools (type `/name`, or let Claude auto-trigger them from their
+  description): `/adr-generation`, `/docs-sync`, `/claude-context-sync` (sync the rules + skills above to the
+  code), `/practicum-update`, `/iteration-release` (orchestrates the four sync skills + the archive),
+  `/analyze-run` (diagnose a run), `/agent-role-scaffold` (add a new structured agent role end-to-end).
+  (Full usage in [../README.md](../README.md) → Developer Meta-Tools.)
 - **`prompts/`** — the runtime agent prompts (`prompts/system/*.md`) and gated skill fragments
   (`prompts/skills/*.md`). These configure the pipeline agents themselves, not the docs.
