@@ -14,8 +14,9 @@ Entrypoint is `main.py` (→ `src/executor/runner.py` `main()`). There is no `or
 toolchain (orchestrator, tests, bandit) runs through **WSL + the project `venv/`** — the Windows
 interpreter lacks the dependencies and the venv is WSL-only.
 
-* **New project (Nexus planning)**: `python3 main.py --idea "<idea>" [--repo <url|path>] [--auto-execute]`  (`--auto-execute` also runs the Executor for the first ticket; requires `--repo`)
-* **Execute a ticket**: `python3 main.py --run <project> -f TASK-01`
+* **New project (Nexus planning)**: `python3 main.py --idea "<idea>" [--repo <url|path>] [--auto-execute] [--auto-merge]`  (`--auto-execute` also runs the Executor for the first ticket; requires `--repo`)
+* **Execute a ticket**: `python3 main.py --run <project> -f TASK-01 [--auto-merge]`
+* **Close the loop to `main` (E2)**: add `--auto-merge` to any run path → on success open + (best-effort) approve + squash-merge a PR `feat/ticket-<id>` → base. **Implies `--push`**; needs the `gh` CLI + `GITHUB_TOKEN` (and a separate `GITHUB_REVIEWER_TOKEN` for a real approval). Seam: `src/shared/utils/forge.py`.
 * **Resume a run**: `python3 main.py --resume <project> [NNN]`  (slug alone → latest Nexus run)
 * **Legacy direct run**: `python3 main.py --repo <url|path> --ticket <ID> -f <ticket_path>`
 * **Run Tests**: `wsl -e bash -lc "cd /mnt/c/code/async-agentic-sdlc && source venv/bin/activate && python3 -m unittest discover -s tests"`
@@ -23,8 +24,8 @@ interpreter lacks the dependencies and the venv is WSL-only.
 
 ## Project Knowledge & Procedures
 * Project knowledge lives in `.claude/rules/*.md` — auto-loaded by Claude Code (path-scoped rules load only when you touch matching files; cross-cutting ones load every session). No manual step needed.
-* Metadata-synchronization procedures are native skills in `.claude/skills/`: `/adr-generation`, `/docs-sync`, `/practicum-update`, and `/iteration-release` (orchestrates the first three).
-* Run diagnostics are a native skill in `.claude/skills/`: `/analyze-run` — evidence-first root-cause analysis of a failed/looping/halted pipeline run (reads `reports/checkpoint.json` + `logs/sdlc_audit.log` + incident/finops), classifies the cause, and points the fix at `src/`/`prompts/` (never the clone). Invoke it whenever asked to diagnose a run, a circuit-breaker halt, a stuck cycle, or a Gemini RECITATION block.
+* Metadata-synchronization procedures are native skills in `.claude/skills/`: `/adr-generation`, `/docs-sync`, `/claude-context-sync` (reconciles `.claude/rules/*` + `.claude/skills/*` content to the code), `/practicum-update`, and `/iteration-release` (orchestrates all four). Adding a new structured agent role is `/agent-role-scaffold` (operationalizes the `agent-role-registration` rule).
+* Run diagnostics are a native skill in `.claude/skills/`: `/analyze-run` — evidence-first root-cause analysis of a failed/looping/halted pipeline run (reads `reports/checkpoint.json` + `logs/sdlc_audit.log` + incident/finops), classifies the cause, and points the fix at `src/`/`prompts/` (never the clone). Invoke it whenever asked to diagnose a run, a circuit-breaker halt, a stuck cycle, a Gemini RECITATION block, a PR/merge (forge) failure, or a non-halt crash/hang (an `embedded null byte` traceback or a stalled agent call that printed no incident).
 
 ## Project Architecture Guardrails
 * Never modify runtime prompts inside `prompts/system/` unless explicitly ordered by the Human.

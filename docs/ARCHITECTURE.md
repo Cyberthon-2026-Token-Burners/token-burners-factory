@@ -34,7 +34,7 @@ flowchart TB
     engine -->|"prompts → structured JSON<br/>(PO/SA/TPM, TechLead, QA,<br/>Reviewer, TechWriter, Arbiter)"| gemini
     engine -->|"prompt + tools → file edits<br/>(Developer only)"| claude
     engine -->|"run code in least-priv container"| docker
-    engine -->|"shallow clone, branch,<br/>atomic commit, optional push"| github
+    engine -->|"shallow clone, branch, atomic commit,<br/>optional push, PR open/approve/merge"| github
 
     classDef sys fill:#1168bd,stroke:#0b4884,color:#fff;
     classDef ext fill:#999,stroke:#6b6b6b,color:#fff;
@@ -54,7 +54,9 @@ flowchart TB
 - **Docker Engine** — runs the build, unit-test, and SAST gates in a hardened, least-privilege container
   (`--network none` for test/SAST).
 - **Git / GitHub remote + target repository** — the executor shallow-clones the target repo, works on a
-  `feat/ticket-<id>` branch, and makes one atomic commit (optionally pushed) on full success.
+  `feat/ticket-<id>` branch, and makes one atomic commit (optionally pushed) on full success; with
+  `--auto-merge` it then opens, approves, and squash-merges a PR into `base_branch` via the `gh`-backed
+  forge seam (ADR 0018), closing the loop to `main`.
 
 ---
 
@@ -98,7 +100,7 @@ flowchart TB
     shared -->|"agentic Developer session"| claude
     executor -->|"run_in_image (gates)"| docker
     docker --> images
-    executor -->|"clone / branch / commit / push"| github
+    executor -->|"clone / branch / commit / push / PR+merge (--auto-merge)"| github
 
     classDef plane fill:#1168bd,stroke:#0b4884,color:#fff;
     classDef store fill:#2d6a4f,stroke:#1b4332,color:#fff;
@@ -120,7 +122,7 @@ flowchart TB
 - **Shared plane** (`src/shared/`) — the engine SSOTs both planes import: `core/` (`models.py`,
   `config.py` incl. `ROLE_MODELS`, `observability.py`, `runs.py`, `docker_adapter.py`, `environments.py`,
   `prompts.py`) and `utils/` (`llm.py`, `api_retry.py`, `git_helpers.py`, `subprocess_helpers.py`,
-  `redaction.py`). All LLM traffic flows through here.
+  `redaction.py`, `forge.py` — the `gh`-backed PR open/approve/merge seam). All LLM traffic flows through here.
 - **Prompt store** — per-role system prompts (`prompts/system/*.md`) + frontmatter-gated skill fragments
   (`prompts/skills/*.md`) assembled per node by `build_agent_context`.
 - **Sandbox images** — pre-built per-language Docker images invoked by `environment_id`.
@@ -230,7 +232,10 @@ sequenceDiagram
     end
     X->>G: TechWriter (living ADR)
     X->>R: atomic commit (+ optional push)
-    X-->>H: ✅ committed + FinOps total
+    opt --auto-merge (E2)
+        X->>R: open PR → approve (reviewer token) → squash-merge into base
+    end
+    X-->>H: ✅ committed / merged + FinOps total
 ```
 
 ---
@@ -261,9 +266,10 @@ for the full module map and [agent-contracts](../.claude/rules/agent-contracts.m
 | Shared | Environments | `src/shared/core/environments.py` | `SUPPORTED_ENVIRONMENTS` (image + build/test cmds + gitignore). |
 | Shared | Prompts | `src/shared/core/prompts.py` | `get_system_prompt*`, `build_agent_context` (skill routing). |
 | Shared | LLM / retry | `src/shared/utils/{llm,api_retry}.py` | `run_structured_llm`; backoff + non-retryable/RECITATION handling. |
+| Shared | PR forge | `src/shared/utils/forge.py` | Provider-agnostic `open_pr`/`approve_pr`/`merge_pr` (`gh`-backed); `--auto-merge` loop closure to `base_branch`. |
 
 ---
 
-*Diagrams reflect the engine as of the auto-dispatch iteration ([CHANGELOG](../CHANGELOG.md) v0.17.0 —
-`--auto-execute`, ADR [0017](decisions/0017-nexus-executor-auto-dispatch.md)). For the "why" behind each
-decision see [decisions/](decisions/README.md); for what's still open see [BACKLOG.md](BACKLOG.md).*
+*Diagrams reflect the engine as of the auto-merge iteration ([CHANGELOG](../CHANGELOG.md) v0.18.0 —
+`--auto-merge` loop closure, ADR [0018](decisions/0018-auto-merge-pr-loop-closure.md)). For the "why" behind
+each decision see [decisions/](decisions/README.md); for what's still open see [BACKLOG.md](BACKLOG.md).*

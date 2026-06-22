@@ -11,7 +11,10 @@ paths:
 forced structured Pydantic output): the executor's **TechLead, QA, Reviewer, Technical Writer** and the
 Nexus control plane's **PO, SA, TPM**. Each role's model + display label is in `ROLE_MODELS`
 (`src/shared/core/config.py`). On a structured failure the cause (e.g. Gemini `RECITATION`) is surfaced
-by `describe_finish_reason` (`observability.py`) via `with_api_retry`.
+by `describe_finish_reason` (`observability.py`) via `with_api_retry`. Every structured call is
+wall-clock-bounded: `instructor_client` is built with a `GEMINI_REQUEST_TIMEOUT` (default 300 s, env-overridable)
+`http_options` ceiling, so a stalled request *raises* (then `with_api_retry` backs off and fails fast)
+instead of hanging the run forever — `with_api_retry` only catches exceptions, never a silent stall.
 
 **Claude Code CLI, via `run_claude_cli`** (agentic, NOT structured): the **Developer** only. It edits
 files directly in the run's `repo/`, re-sending its prompt/transcript each turn (hence cache-heavy).

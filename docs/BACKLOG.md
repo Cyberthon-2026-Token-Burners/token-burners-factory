@@ -39,7 +39,7 @@ branch that is **never merged**.
 
 ```
 E1 ✅ Nexus auto-dispatches Executor (one ticket)   — DONE (v0.17.0 / ADR 0017)
-      └─► E2  Close the loop to main (auto-approved PR + merge)
+      └─► E2 ✅ Close the loop to main (auto-approved PR + merge)  — DONE (v0.18.0 / ADR 0018)
               └─► E3  Cyclical multi-ticket orchestration (all tasks, each building on the last)
                       └─► E4  DevOps / deployment   (scope only — decision deferred)
 ```
@@ -96,7 +96,7 @@ function without changing per-ticket checkpoint/resume semantics.
 **Acceptance:** `--idea "…" --auto-execute` plans, then executes `TASK-01` end-to-end in one invocation; the
 existing manual `--run` path is unchanged; unit tests mock the loop and assert dispatch + termination.
 
-## E2. [EPIC] Close the loop to `main` via an auto-approved PR
+## E2. [✅ DONE — v0.18.0 / ADR 0018] Close the loop to `main` via an auto-approved PR
 
 **Goal:** on a successful ticket, open a PR from `feat/ticket-<id>` into `base_branch` and **auto-approve +
 merge** it, so verified work actually lands in `main`. (User-requested feature 2; chosen approach: **PR +

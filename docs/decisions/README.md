@@ -57,3 +57,4 @@ with the `/adr-generation` skill (next free sequence number).
 | ADR | Decision |
 |---|---|
 | [0017](0017-nexus-executor-auto-dispatch.md) | `--auto-execute`: plan then auto-dispatch the Executor for the first ticket; extract `run_executor` / `prepare_ticket_run` (E1). |
+| [0018](0018-auto-merge-pr-loop-closure.md) | `--auto-merge`: on success open + approve + squash-merge a PR into `base_branch` via a provider-agnostic `gh`-backed forge seam (E2); argv-NUL + Gemini-timeout boundary hardening. |

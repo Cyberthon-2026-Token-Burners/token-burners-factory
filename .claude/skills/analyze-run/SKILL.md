@@ -1,6 +1,6 @@
 ---
 name: analyze-run
-description: Diagnose a pipeline run (executor or Nexus) from its persisted artifacts — classify root cause, cite evidence, and point the fix at the engine/prompts (never the clone). Use when the user asks to analyze/diagnose a run, explain a CIRCUIT BREAKER / "Retries exhausted" halt, a looping or stuck cycle, a Gemini RECITATION/SAFETY block, or "what happened" in a runs/<project>/<NNN>_... run. Accepts a run dir, a project slug, or pasted run log output.
+description: Diagnose a pipeline run (executor or Nexus) from its persisted artifacts — classify root cause, cite evidence, and point the fix at the engine/prompts (never the clone). Use when the user asks to analyze/diagnose a run, explain a CIRCUIT BREAKER / "Retries exhausted" halt, a looping or stuck cycle, a Gemini RECITATION/SAFETY block, a PR/merge (forge) failure under `--auto-merge`, a non-halt crash/hang (an `embedded null byte` traceback or a stalled agent call that printed no incident), or "what happened" in a runs/<project>/<NNN>_... run. Accepts a run dir, a project slug, or pasted run log output.
 ---
 
 # Pipeline Run Analysis
@@ -29,8 +29,12 @@ flaw, then recommend a fix in `src/`/`prompts/` — NEVER edit the generated clo
    `epic_text`/`blueprint_text`/`tasks`.
 2. **Audit log** — tail `logs/sdlc_audit.log` (last ~50–100 lines): trace the FSM transitions and which
    agent/cycle failed.
-3. **Incident report** — `reports/incident_report.json` (present only on a halt): the redacted final state
-   + the halt header.
+3. **Incident report** — `reports/incident_report.json` (present only on an FSM halt): the redacted final
+   state + the halt header. **Tell:** a run that printed the FinOps GRAND TOTAL and then died with a raw
+   Python traceback (and **no** incident report) is *not* an FSM halt — it is an uncaught exception that
+   escaped to `main()` **after** the gates passed: a loop-closure (`finalize_pr`/`gh` merge) failure, an
+   `embedded null byte` argv crash, or (pre-`GEMINI_REQUEST_TIMEOUT`) a stalled call. Read the traceback's
+   frame, not the absent incident.
 4. **FinOps** — `reports/finops_report.json` (per-agent token/USD + cumulative).
 5. **Gate output** — for a test/build/SAST failure, read the raw runner output captured in the log /
    checkpoint (`_extract_failure_context`).
@@ -53,6 +57,17 @@ Map the evidence to one class (decisive — pick the dominant one and say so):
 - **Financial circuit breaker** — cumulative USD/token budget breached (`enforce_financial_circuit_breaker`).
 - **Stuck retry loop** — same failure repeated across cycles until "Retries exhausted"; inspect WHY no
   channel/Arbiter route resolved it (often a mis-route, an empty diagnostic payload, or a contract flaw).
+- **Loop-closure (forge / `--auto-merge`) failure** — the cycle *succeeded* (all gates passed, atomic
+  commit + push done) but `finalize_pr` failed at the GitHub seam (`src/shared/utils/forge.py`): a genuine
+  `gh pr merge` failure (`sys.exit(1)`, no incident), a missing `gh`/`GITHUB_TOKEN` (preflight), an
+  approval skipped for want of a separate `GITHUB_REVIEWER_TOKEN` (best-effort, expected), or a merge
+  refused by *remote* required checks (falls back to a queued `--auto` merge). Fix the forge seam / env, not
+  any agent — the generated code already passed.
+- **Boundary crash / hang (escaped to `main()`, no incident)** — an `embedded null byte` `ValueError` from a
+  control char in agent-authored text reaching a subprocess argv (fixed at the boundary by
+  `sanitize_for_argv`; a *new* occurrence means a call site bypassed it), or a structured-LLM call that hung
+  (now bounded by `GEMINI_REQUEST_TIMEOUT`; a hang past that ceiling points at the client/timeout wiring).
+  Both are engine-boundary bugs, never an "LLM failure".
 
 ## Step 4 — Trace to the systemic flaw (never blame "the LLM")
 Look for engine/prompt causes per the debugging-protocol: path-routing conflicts, strict-validation

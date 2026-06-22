@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Each release maps to a completed SDLC iteration; the corresponding Architecture
 Decision Record (ADR) is linked from the version heading.
 
+## [v0.18.0] - 2026-06-22 — Close the Loop to `main` via an Auto-Merged PR (`--auto-merge`, E2)
+
+ADR: [0018-auto-merge-pr-loop-closure](./docs/decisions/0018-auto-merge-pr-loop-closure.md)
+(extends [0008](./docs/decisions/0008-git-anchored-sessions-atomic-commit.md),
+[0012](./docs/decisions/0012-virtual-separation-monorepo-planes.md),
+[0017](./docs/decisions/0017-nexus-executor-auto-dispatch.md))
+
+Archive: [iteration_18](./docs/releases/iteration_18/iteration_18_README.md)
+
+### Added
+- **`--auto-merge` — close the autonomy loop to `main` (E2).** On PIPELINE SUCCESS the engine now opens a PR
+  from `feat/ticket-<id>` into `base_branch`, optionally approves it, and **squash-merges** it — so verified,
+  gate-passing work actually lands in `main` with no human hand-off. `RunConfig.auto_merge` carries the flag
+  and **implies `--push`**; `finalize_pr` runs after `finalize_transaction`, wrapped so the FinOps summary
+  prints even on a merge failure. The bridge stays in the entry/worker layer — the control plane never
+  learns about PRs (ADR 0012).
+- **Provider-agnostic forge seam — `src/shared/utils/forge.py`** (`open_pr` / `approve_pr` / `merge_pr`),
+  GitHub-first via the `gh` CLI. Subprocess-first (mirrors `git_helpers.py` + the `_run_checked` auth idiom):
+  prompts disabled, a per-call wall-clock ceiling (`GH_NETWORK_TIMEOUT`), `GITHUB_TOKEN` from the env, and
+  `gh` inferring owner/repo from the clone's `origin` remote. `open_pr` is **idempotent** (reuse an OPEN PR
+  into the same base, skip a MERGED one) so `--resume` after a partial merge is safe.
+- **Identity model + protected-repo path.** `merge_pr` does `--squash --admin --delete-branch` (closes the
+  loop on unprotected repos); `approve_pr` is best-effort via a **separate `GITHUB_REVIEWER_TOKEN`** (GitHub
+  forbids self-approval) and swallows any `gh` failure. An `--admin` merge blocked by pending required checks
+  falls back to `gh pr merge --auto`; `GITHUB_MERGE_STRATEGY=auto` forces the queued path up front.
+
+### Changed
+- **`check_environment(require_forge=…)`** — with `--auto-merge`, the preflight now also requires `gh` on
+  PATH and a non-empty `GITHUB_TOKEN`, aborting before any tokens are spent.
+- **Setup guide + meta-rules synced** — `docs/guides/setup.md` gains a `gh` install/auth section, the new env
+  knobs, a pre-flight `gh` check, and troubleshooting rows; `docs/ARCHITECTURE.md` C4 + sequence + component
+  table now include the PR/merge step and `forge.py`; `.claude/rules/*` record `forge.py`, the knobs, and
+  `--auto-merge`.
+- **Governance tooling — auto-sync of Claude's operating context.** New `/claude-context-sync` skill
+  reconciles the *content* of `.claude/rules/*` + `.claude/skills/*` to the code (the complement to
+  `/docs-sync`'s human-doc + enumeration sync), now wired as a step in `/iteration-release` so rules/skills
+  stay current with each release. New `/agent-role-scaffold` skill operationalizes the `agent-role-registration`
+  checklist for adding a structured agent. New rule `subprocess-and-external-call-safety` binds future engine
+  edits to `sanitize_for_argv` + transport-layer timeouts (codifying the two fixes below).
+
+### Fixed
+- **Subprocess crash on a NUL byte in agent-authored text.** A corrupted glyph (`©` → `\x00`) in a Nexus
+  ticket flowed into the PR body and crashed `gh pr create` (`ValueError: embedded null byte`, POSIX `execvp`
+  rejects a NUL in argv). New SSOT `sanitize_for_argv` (`src/shared/utils/subprocess_helpers.py`, strips C0
+  controls + DEL, keeps `\t`/`\n`/`\r`) is applied at **both** subprocess boundaries — `forge._run_gh` and
+  `runner._run_checked` (the commit path had the same latent exposure).
+- **Indefinite hang on a stalled Gemini call.** A structured Gemini request could hang the executor forever
+  (`run_in_executor` had no timeout, `with_api_retry` only fires on exceptions, the client had no ceiling).
+  The shared genai client is now built with a per-request timeout (`GEMINI_REQUEST_TIMEOUT`, 300 s,
+  env-overridable) via `http_options`, so a stall raises → retries → fails fast. Covers every structured
+  role (PO/SA/TPM/TechLead/QA/Reviewer/TechWriter/Arbiter).
+
 ## [v0.17.0] - 2026-06-22 — Nexus → Executor Auto-Dispatch (`--auto-execute`)
 
 ADR: [0017-nexus-executor-auto-dispatch](./docs/decisions/0017-nexus-executor-auto-dispatch.md)
