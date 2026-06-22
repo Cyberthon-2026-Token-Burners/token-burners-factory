@@ -312,3 +312,28 @@ class GlobalPipelineContext(BaseModel):
     def load_checkpoint(cls, path: Path) -> "GlobalPipelineContext":
         raw = path.read_text(encoding="utf-8")
         return cls.model_validate_json(raw)
+
+
+class BatchState(BaseModel):
+    """E3 batch-level checkpoint: tracks which tickets of a Nexus plan have already merged to ``main``.
+
+    A multi-ticket batch (``--auto-execute``) drives every planned ticket in TPM order, each one cloning
+    ``main`` fresh — so progress must survive a mid-batch halt to resume without redoing merged tickets.
+    Persisted as ``reports/batch_state.json`` in the Nexus run dir (sibling of the ``kind="nexus"``
+    planning checkpoint), so a bare ``--resume <project>`` (which resolves to the latest Nexus run) can
+    re-enter the loop. Same JSON dump/load pattern as NexusState / GlobalPipelineContext.
+    """
+    kind: Literal["batch"] = "batch"   # NOT a --resume checkpoint discriminator; a sidecar marker.
+    project_slug: str
+    nexus_run: str                     # the Nexus run dir name this batch is driving
+    tickets: list[str] = Field(default_factory=list)    # full ordered ticket snapshot (TPM order)
+    completed: list[str] = Field(default_factory=list)  # tickets already merged to the base branch
+    failed: str | None = None          # the ticket that halted the batch (cleared on its later success)
+
+    def save_checkpoint(self, path: Path) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(self.model_dump_json(indent=2), encoding="utf-8")
+
+    @classmethod
+    def load_checkpoint(cls, path: Path) -> "BatchState":
+        return cls.model_validate_json(Path(path).read_text(encoding="utf-8"))

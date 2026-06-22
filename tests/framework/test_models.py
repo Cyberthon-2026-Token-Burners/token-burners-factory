@@ -19,6 +19,7 @@ from src.shared.core.models import (
     QATestSuite,
     ReviewReport,
     WorkspacePaths,
+    BatchState,
 )
 
 
@@ -469,6 +470,32 @@ class GlobalContextCheckpointTests(unittest.TestCase):
             # Act / Assert
             with self.assertRaises(ValidationError):
                 GlobalPipelineContext.load_checkpoint(checkpoint)
+
+
+class BatchStateCheckpointTests(unittest.TestCase):
+    """E3 batch checkpoint: persists which tickets of a Nexus plan have merged, for resume."""
+
+    def test_round_trip_preserves_progress(self) -> None:
+        with TemporaryDirectory() as td:
+            path = Path(td) / "reports" / "batch_state.json"
+            BatchState(
+                project_slug="my-proj", nexus_run="001_nexus_plan",
+                tickets=["TASK-01", "TASK-02", "TASK-03"],
+                completed=["TASK-01"], failed="TASK-02",
+            ).save_checkpoint(path)
+
+            loaded = BatchState.load_checkpoint(path)
+            self.assertEqual(loaded.kind, "batch")
+            self.assertEqual(loaded.project_slug, "my-proj")
+            self.assertEqual(loaded.tickets, ["TASK-01", "TASK-02", "TASK-03"])
+            self.assertEqual(loaded.completed, ["TASK-01"])
+            self.assertEqual(loaded.failed, "TASK-02")
+
+    def test_defaults_are_empty(self) -> None:
+        batch = BatchState(project_slug="p", nexus_run="001_nexus_plan")
+        self.assertEqual(batch.tickets, [])
+        self.assertEqual(batch.completed, [])
+        self.assertIsNone(batch.failed)
 
 
 if __name__ == "__main__":

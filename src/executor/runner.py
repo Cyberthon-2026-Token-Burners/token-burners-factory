@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from src.shared.core.observability import log, reconfigure_logging
 from src.shared.core.observability import log_finops_summary as _render_finops_summary
 from src.shared.core.config import check_environment, PIPELINE_BUDGET_TOKENS, PIPELINE_BUDGET_USD
-from src.shared.core.models import GlobalPipelineContext, WorkspacePaths, RUNS_BASE
+from src.shared.core.models import GlobalPipelineContext, WorkspacePaths, RUNS_BASE, BatchState
 from src.shared.core.runs import Projects
 from src.shared.core.environments import is_test_file, get_qa_profile
 from src.shared.core.prompts import generate_repo_map
@@ -28,6 +28,19 @@ from src.executor.agents.reviewer import run_reviewer_node
 from src.executor.agents.arbiter import run_arbiter_node
 from src.executor.agents.techwriter import run_techwriter_node
 from src.executor.nodes.gates import run_qa_unit_tests, run_security_scan, run_build_gate, run_test_compile_gate, build_failure_is_test_only, build_failure_is_environmental
+
+# ==========================================
+# CONTROL-FLOW SIGNALS
+# ==========================================
+class PipelineHalt(Exception):
+    """Raised by ``_abort_with_incident`` when an FSM halt terminates a ticket run.
+
+    Replaces a bare ``sys.exit(1)`` so the halt is *catchable*: the E3 batch loop catches it to record
+    which ticket failed and stop cleanly, while every single-ticket path lets it propagate to the
+    entrypoint guard in ``main.py`` (``except PipelineHalt: sys.exit(1)``) — preserving today's exit code.
+    The incident report + FinOps are already persisted by ``_abort_with_incident`` before it raises.
+    """
+
 
 # ==========================================
 # CLI ARGUMENT PARSER
@@ -70,8 +83,9 @@ def parse_args() -> RunConfig:
     parser.add_argument("--push", action="store_true", help="Push the feature branch to origin after the atomic success commit.")
     parser.add_argument("--idea", help="Raw idea → start a NEW project and run the Nexus planning pipeline.")
     parser.add_argument("--auto-execute", action="store_true",
-                        help="With --idea: after planning, automatically run the Executor for the first ticket "
-                             "(requires --repo so there is a target to clone).")
+                        help="With --idea: after planning, drive the Executor over ALL planned tickets in "
+                             "order (TASK-01→merge→TASK-02→…; E3). Requires --repo to clone, and IMPLIES "
+                             "--auto-merge (hence --push) so each ticket lands on main before the next clones it.")
     parser.add_argument("--auto-merge", action="store_true",
                         help="On success, open a PR from feat/ticket-<id> into the base branch and squash-merge "
                              "it (E2). Implies --push; requires the gh CLI + GITHUB_TOKEN.")
@@ -82,13 +96,16 @@ def parse_args() -> RunConfig:
     push = args.push or args.auto_merge
 
     # Nexus Control Plane: an idea starts a new project (planning run). --repo (optional) is captured
-    # into the project so later `--run` ticket executions reuse it. With --auto-execute the engine
-    # dispatches the Executor for the first ticket once planning completes (E1).
+    # into the project so later `--run` ticket executions reuse it. With --auto-execute the engine drives
+    # the Executor over ALL planned tickets once planning completes (E3). A multi-ticket batch is only
+    # coherent if each ticket merges to main before the next clones it fresh, so --auto-execute IMPLIES
+    # --auto-merge (hence --push) — scoped to this idea path only.
     if args.idea:
+        auto_merge = args.auto_merge or args.auto_execute
         return RunConfig(
             description=None, base_branch=args.base_branch, resume=None, reset_attempts=False,
-            idea=args.idea, repo=args.repo, push=push, auto_execute=args.auto_execute,
-            auto_merge=args.auto_merge,
+            idea=args.idea, repo=args.repo, push=(push or auto_merge), auto_execute=args.auto_execute,
+            auto_merge=auto_merge,
         )
 
     # Execute a ticket under an existing project: --run <project> -f <ticket>.
@@ -678,7 +695,13 @@ def log_finops_summary(ctx: GlobalPipelineContext) -> None:
 
 
 def _abort_with_incident(ctx: GlobalPipelineContext, header: str) -> NoReturn:
-    """Logs a terminal header, persists the full context as an incident report, and exits non-zero."""
+    """Logs a terminal header, persists the full context as an incident report, and raises PipelineHalt.
+
+    Raises ``PipelineHalt`` rather than calling ``sys.exit(1)`` directly so the halt is catchable: the
+    E3 batch loop records the failed ticket and stops cleanly, while single-ticket paths let it bubble to
+    the ``main.py`` entrypoint guard (which converts it to exit 1). The incident report + FinOps are
+    persisted here, BEFORE raising, so spend stays auditable on a halt exactly as before.
+    """
     log.error(header)
     incident_file = str(ctx.workspace_paths.reports_dir / "incident_report.json")
     with open(incident_file, "w", encoding="utf-8") as f:
@@ -688,7 +711,7 @@ def _abort_with_incident(ctx: GlobalPipelineContext, header: str) -> NoReturn:
     # Always persist + surface the FinOps breakdown, even on a halt, so spend is auditable.
     write_finops_report(ctx)
     log_finops_summary(ctx)
-    sys.exit(1)
+    raise PipelineHalt(header)
 
 
 # ==========================================
@@ -721,6 +744,60 @@ def _resolve_ticket_file(projects: Projects, slug: str, ticket: str) -> Path | N
     name = ticket if ticket.endswith(".md") else f"{ticket}.md"
     cand = nexus_run / "artifacts" / name
     return cand if cand.exists() else None
+
+
+def _batch_state_path(nexus_run_dir: Path) -> Path:
+    """The E3 batch sidecar lives beside the Nexus planning checkpoint (reports/batch_state.json)."""
+    return nexus_run_dir / "reports" / "batch_state.json"
+
+
+def _load_or_init_batch(nexus_run_dir: Path, project, tickets: list[str]) -> BatchState:
+    """Load the batch checkpoint for this Nexus run (resume) or mint a fresh one (first batch)."""
+    path = _batch_state_path(nexus_run_dir)
+    if path.exists():
+        batch = BatchState.load_checkpoint(path)
+        # Re-pin the ticket snapshot in case the plan was re-materialized; keep prior `completed`.
+        batch.tickets = tickets
+        return batch
+    return BatchState(project_slug=project.slug, nexus_run=nexus_run_dir.name, tickets=tickets)
+
+
+async def run_batch(projects: Projects, project, cfg: RunConfig, nexus_run_dir: Path,
+                    tickets: list[str]) -> None:
+    """E3: drive the Executor over ALL planned tickets in TPM order, one merged ticket at a time.
+
+    Each ticket clones ``main`` FRESH, so correctness hinges on E2 merging it before the next ticket's
+    clone — ``--auto-execute`` implies ``--auto-merge``, so every ``run_executor`` here merges on success.
+    Progress is checkpointed to ``reports/batch_state.json`` so a mid-batch halt resumes from the failed
+    ticket without redoing merged ones (failure policy: stop on the first unrecoverable halt, exit 1).
+    """
+    batch = _load_or_init_batch(nexus_run_dir, project, tickets)
+    batch_path = _batch_state_path(nexus_run_dir)
+    log.info(f"🔁 Batch: {len(batch.completed)}/{len(tickets)} already merged; driving the rest in order.")
+    for ticket in tickets:
+        if ticket in batch.completed:
+            log.info(f"⏭️  Batch: '{ticket}' already merged — skipping.")
+            continue
+        run_dir = prepare_ticket_run(projects, project, cfg, ticket)
+        if run_dir is None:
+            batch.failed = ticket
+            batch.save_checkpoint(batch_path)
+            log.error(f"🛑 Batch: ticket '{ticket}' not found in the Nexus artifacts — stopping. "
+                      f"Resume with `--resume {project.slug}` after fixing the plan.")
+            sys.exit(1)
+        log.info(f"🤖 Batch: dispatching '{ticket}' ({len(batch.completed) + 1}/{len(tickets)}).")
+        try:
+            await run_executor(cfg, run_dir)
+        except PipelineHalt:
+            batch.failed = ticket
+            batch.save_checkpoint(batch_path)
+            log.error(f"🛑 Batch halted at '{ticket}'; {len(batch.completed)}/{len(tickets)} merged. "
+                      f"Incident written in {run_dir.name}. Resume with `--resume {project.slug}`.")
+            sys.exit(1)
+        batch.completed.append(ticket)
+        batch.failed = None
+        batch.save_checkpoint(batch_path)
+    log.info(f"🏁 Batch complete: all {len(tickets)} ticket(s) merged into {cfg.base_branch}.")
 
 
 def prepare_ticket_run(projects: Projects, project, cfg: RunConfig, ticket_id: str) -> Path | None:
@@ -763,8 +840,8 @@ async def main():
         out = await run_nexus(cfg.idea, run_dir=nexus_run_dir)
         log.info(f"✅ Nexus complete → {out.resolve()}")
 
-        # E1 — auto-dispatch the Executor for the FIRST planned ticket. Planning has SUCCEEDED, so every
-        # skip below is a clean exit (nothing to execute ≠ failure); only a real executor halt exits 1.
+        # E3 — auto-dispatch the Executor over ALL planned tickets in order. Planning has SUCCEEDED, so
+        # every skip below is a clean exit (nothing to execute ≠ failure); only a real executor halt exits 1.
         if not cfg.auto_execute:
             return
         if not project.repo:
@@ -775,13 +852,9 @@ async def main():
         if not tickets:
             log.warning("⏭️  --auto-execute skipped: the Nexus run produced no tickets.")
             return
-        log.info(f"🤖 --auto-execute: dispatching the Executor for the first ticket '{tickets[0]}' "
-                 f"(of {len(tickets)} planned).")
-        run_dir = prepare_ticket_run(projects, project, cfg, tickets[0])
-        if run_dir is None:
-            log.warning(f"⏭️  --auto-execute skipped: ticket '{tickets[0]}' not found in the Nexus artifacts.")
-            return
-        await run_executor(cfg, run_dir)
+        log.info(f"🤖 --auto-execute: driving the Executor over all {len(tickets)} planned ticket(s) "
+                 f"to {cfg.base_branch}, in order.")
+        await run_batch(projects, project, cfg, nexus_run_dir, tickets)
         return
 
     # ---- Resolve a resume target → (run_dir, checkpoint). Either a project slug (+ optional run
@@ -802,6 +875,20 @@ async def main():
             if run_dir is None:
                 log.error(f"🚨 Project '{cfg.resume_project}' has no Nexus run to continue.")
                 sys.exit(1)
+            # E3 — a bare `--resume <project>` re-enters an in-progress multi-ticket batch (if one was
+            # started) rather than re-planning. The batch sidecar lives beside the Nexus checkpoint;
+            # run_batch skips already-merged tickets and re-runs the failed one against the latest main.
+            if _batch_state_path(run_dir).exists():
+                from src.nexus.nexus_runner import get_tasks_for_nexus_run
+                project = projects.load(cfg.resume_project)
+                cfg.repo = cfg.repo or project.repo
+                cfg.base_branch = project.base_branch
+                cfg.auto_merge = cfg.push = True  # a batch always merges each ticket to base
+                check_environment(require_forge=True)
+                reconfigure_logging(run_dir / "logs")
+                log.info(f"🔁 Resuming the multi-ticket batch for project '{project.slug}'.")
+                await run_batch(projects, project, cfg, run_dir, get_tasks_for_nexus_run(run_dir))
+                return
         resume_checkpoint = run_dir / "reports" / "checkpoint.json"
     elif cfg.resume:
         resume_checkpoint = cfg.resume
@@ -840,8 +927,9 @@ async def main():
 async def run_executor(cfg: RunConfig, run_dir: Path, resume_checkpoint: Path | None = None) -> bool:
     """Execute ONE ticket end-to-end in a prepared run dir: bootstrap (or resume) → TechLead → the FSM
     self-heal cycle → atomic success commit. Returns ``True`` on full success; a halt writes an incident
-    report and exits the process (``sys.exit(1)`` via ``_abort_with_incident``). Shared by the direct
-    ``--run``/resume paths and ``--idea --auto-execute`` (E1).
+    report and raises ``PipelineHalt`` (via ``_abort_with_incident``) — caught by the E3 batch loop, or
+    converted to exit 1 by the ``main.py`` guard on single-ticket paths. Shared by the direct
+    ``--run``/resume paths and ``--idea --auto-execute`` (E1/E3).
     """
     # Re-anchor the audit trail to THIS run's logs/ dir before any other log line is emitted.
     # Append mode keeps a resumed run's timeline linear in the SAME file instead of splitting it.

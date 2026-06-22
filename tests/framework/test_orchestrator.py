@@ -112,6 +112,18 @@ class ParseArgsProjectVerbsTests(unittest.TestCase):
         self.assertEqual(cfg.idea, "json to csv")
         self.assertEqual(cfg.repo, "git@h:r.git")
 
+    def test_idea_auto_execute_implies_auto_merge_and_push(self) -> None:
+        # E3: a multi-ticket batch only composes if each ticket merges to main before the next clone,
+        # so --auto-execute turns on --auto-merge (and therefore --push) without an explicit flag.
+        cfg = self._parse("--idea", "an app", "--repo", "r", "--auto-execute")
+        self.assertTrue(cfg.auto_execute)
+        self.assertTrue(cfg.auto_merge)
+        self.assertTrue(cfg.push)
+        # Plain --idea (no auto-execute) implies neither.
+        plain = self._parse("--idea", "an app", "--repo", "r")
+        self.assertFalse(plain.auto_merge)
+        self.assertFalse(plain.push)
+
     def test_run_project_requires_ticket(self) -> None:
         with self.assertRaises(SystemExit) as ctx:
             self._parse("--run", "my-proj")            # missing -f
@@ -617,11 +629,10 @@ class ResumeFsmRecoveryTests(unittest.IsolatedAsyncioTestCase):
                 mock.patch.object(orchestrator, "finalize_transaction", new_callable=AsyncMock),
                 mock.patch.object(orchestrator, "run_techwriter_node", new_callable=AsyncMock),
             ):
-                with self.assertRaises(SystemExit) as exit_ctx:
+                with self.assertRaises(orchestrator.PipelineHalt):
                     await orchestrator.main()
 
             # Assert
-            self.assertEqual(exit_ctx.exception.code, 1)
             techlead.assert_not_called()
             qa.assert_not_called()
             developer.assert_not_called()
@@ -749,10 +760,9 @@ class DeadlockGuardTests(unittest.IsolatedAsyncioTestCase):
                 mock.patch.object(orchestrator, "finalize_transaction", new_callable=AsyncMock) as finalize,
                 mock.patch.object(orchestrator, "run_techwriter_node", new_callable=AsyncMock),
             ):
-                with self.assertRaises(SystemExit) as exit_ctx:
+                with self.assertRaises(orchestrator.PipelineHalt):
                     await orchestrator.main()
 
-            self.assertEqual(exit_ctx.exception.code, 1)
             # Fail-fast: aborted DURING cycle 1 — the Developer/Reviewer each ran exactly once, never looped.
             developer.assert_awaited_once()
             reviewer.assert_awaited_once()
@@ -878,9 +888,8 @@ class ArbiterRoutingTests(unittest.IsolatedAsyncioTestCase):
             with ExitStack() as stack:
                 for p in self._patches(ctx, reviewer, arbiter, AsyncMock()):
                     stack.enter_context(p)
-                with self.assertRaises(SystemExit) as exit_ctx:
+                with self.assertRaises(orchestrator.PipelineHalt):
                     await orchestrator.main()
-            self.assertEqual(exit_ctx.exception.code, 1)
 
     async def test_amendment_cap_downgrades_contract_to_halt(self) -> None:
         # The contract was already amended once (cap reached) → a further `contract` verdict must halt,
@@ -900,28 +909,26 @@ class ArbiterRoutingTests(unittest.IsolatedAsyncioTestCase):
             with ExitStack() as stack:
                 for p in self._patches(ctx, reviewer, arbiter, techlead):
                     stack.enter_context(p)
-                with self.assertRaises(SystemExit) as exit_ctx:
+                with self.assertRaises(orchestrator.PipelineHalt):
                     await orchestrator.main()
-            self.assertEqual(exit_ctx.exception.code, 1)
             techlead.assert_not_awaited()                        # cap reached → no 2nd amendment
             self.assertEqual(ctx.contract_amendments, 1)
 
 
 class IdeaAutoExecuteDispatchTests(unittest.IsolatedAsyncioTestCase):
-    """E1: `--idea --auto-execute` plans then dispatches the Executor for the FIRST ticket; plain
+    """E3: `--idea --auto-execute` plans then drives the Executor over ALL tickets via run_batch; plain
     `--idea` stops after planning; a repo-less project (or no tickets) skips execution cleanly (exit 0)."""
 
     def _projects(self, td, repo="some-repo"):
         nexus_dir = Path(td) / "001_nexus_plan"
-        exec_dir = Path(td) / "002_exec"
         project = mock.MagicMock()
         project.slug = "p"
         project.repo = repo
         project.base_branch = "main"
         projects = mock.MagicMock()
         projects.create.return_value = project
-        projects.allocate.side_effect = [nexus_dir, exec_dir]
-        return projects, project, nexus_dir, exec_dir
+        projects.allocate.return_value = nexus_dir   # only the nexus 'plan' allocate runs in main()
+        return projects, project, nexus_dir
 
     def _idea_cfg(self, auto_execute: bool, repo="some-repo"):
         return orchestrator.RunConfig(
@@ -929,81 +936,212 @@ class IdeaAutoExecuteDispatchTests(unittest.IsolatedAsyncioTestCase):
             idea="an idea", repo=repo, auto_execute=auto_execute,
         )
 
-    async def test_auto_execute_dispatches_first_ticket(self) -> None:
+    async def test_auto_execute_drives_the_full_batch(self) -> None:
         with TemporaryDirectory() as td:
-            projects, project, nexus_dir, exec_dir = self._projects(td)
-            ticket_file = Path(td) / "TASK-01.md"
-            ticket_file.write_text("ticket body", encoding="utf-8")
-            run_executor = AsyncMock(return_value=True)
+            projects, project, nexus_dir = self._projects(td)
+            run_batch = AsyncMock()
             with (
                 mock.patch.object(orchestrator, "parse_args", return_value=self._idea_cfg(True)),
                 mock.patch.object(orchestrator, "Projects", return_value=projects),
                 mock.patch.object(orchestrator, "check_environment"),
                 mock.patch.object(orchestrator, "reconfigure_logging"),
-                mock.patch.object(orchestrator, "_resolve_ticket_file", return_value=ticket_file),
-                mock.patch.object(orchestrator, "run_executor", new=run_executor),
+                mock.patch.object(orchestrator, "run_batch", new=run_batch),
                 mock.patch("src.nexus.nexus_runner.run_nexus", new=AsyncMock(return_value=nexus_dir)),
                 mock.patch("src.nexus.nexus_runner.get_tasks_for_nexus_run",
                            return_value=["TASK-01", "TASK-02"]),
             ):
                 await orchestrator.main()
 
-            run_executor.assert_awaited_once()
-            cfg_arg, run_dir_arg = run_executor.await_args.args[0], run_executor.await_args.args[1]
-            self.assertEqual(run_dir_arg, exec_dir)
-            # prepare_ticket_run wired cfg for the FIRST ticket only.
-            self.assertEqual(cfg_arg.ticket, "TASK-01")
-            self.assertEqual(cfg_arg.description, "ticket body")
+            run_batch.assert_awaited_once()
+            # run_batch(projects, project, cfg, nexus_run_dir, tickets) — the full planned list, in order.
+            args = run_batch.await_args.args
+            self.assertEqual(args[3], nexus_dir)
+            self.assertEqual(args[4], ["TASK-01", "TASK-02"])
 
     async def test_plain_idea_does_not_dispatch_executor(self) -> None:
         with TemporaryDirectory() as td:
-            projects, project, nexus_dir, _exec = self._projects(td)
-            run_executor = AsyncMock()
+            projects, project, nexus_dir = self._projects(td)
+            run_batch = AsyncMock()
             with (
                 mock.patch.object(orchestrator, "parse_args", return_value=self._idea_cfg(False)),
                 mock.patch.object(orchestrator, "Projects", return_value=projects),
                 mock.patch.object(orchestrator, "check_environment") as check_env,
                 mock.patch.object(orchestrator, "reconfigure_logging"),
-                mock.patch.object(orchestrator, "run_executor", new=run_executor),
+                mock.patch.object(orchestrator, "run_batch", new=run_batch),
                 mock.patch("src.nexus.nexus_runner.run_nexus", new=AsyncMock(return_value=nexus_dir)),
                 mock.patch("src.nexus.nexus_runner.get_tasks_for_nexus_run", return_value=["TASK-01"]),
             ):
                 await orchestrator.main()
-            run_executor.assert_not_awaited()
+            run_batch.assert_not_awaited()
             check_env.assert_not_called()  # planning-only must not require docker/claude/bandit
 
     async def test_auto_execute_skips_cleanly_when_project_has_no_repo(self) -> None:
         with TemporaryDirectory() as td:
-            projects, project, nexus_dir, _exec = self._projects(td, repo=None)
-            run_executor = AsyncMock()
+            projects, project, nexus_dir = self._projects(td, repo=None)
+            run_batch = AsyncMock()
             with (
                 mock.patch.object(orchestrator, "parse_args", return_value=self._idea_cfg(True, repo=None)),
                 mock.patch.object(orchestrator, "Projects", return_value=projects),
                 mock.patch.object(orchestrator, "check_environment"),
                 mock.patch.object(orchestrator, "reconfigure_logging"),
-                mock.patch.object(orchestrator, "run_executor", new=run_executor),
+                mock.patch.object(orchestrator, "run_batch", new=run_batch),
                 mock.patch("src.nexus.nexus_runner.run_nexus", new=AsyncMock(return_value=nexus_dir)),
                 mock.patch("src.nexus.nexus_runner.get_tasks_for_nexus_run", return_value=["TASK-01"]),
             ):
                 # No repo to clone → clean skip, NOT a SystemExit (planning still succeeded).
                 await orchestrator.main()
-            run_executor.assert_not_awaited()
+            run_batch.assert_not_awaited()
 
     async def test_auto_execute_skips_cleanly_when_no_tickets(self) -> None:
         with TemporaryDirectory() as td:
-            projects, project, nexus_dir, _exec = self._projects(td)
-            run_executor = AsyncMock()
+            projects, project, nexus_dir = self._projects(td)
+            run_batch = AsyncMock()
             with (
                 mock.patch.object(orchestrator, "parse_args", return_value=self._idea_cfg(True)),
                 mock.patch.object(orchestrator, "Projects", return_value=projects),
                 mock.patch.object(orchestrator, "check_environment"),
                 mock.patch.object(orchestrator, "reconfigure_logging"),
-                mock.patch.object(orchestrator, "run_executor", new=run_executor),
+                mock.patch.object(orchestrator, "run_batch", new=run_batch),
                 mock.patch("src.nexus.nexus_runner.run_nexus", new=AsyncMock(return_value=nexus_dir)),
                 mock.patch("src.nexus.nexus_runner.get_tasks_for_nexus_run", return_value=[]),
             ):
                 await orchestrator.main()
-            run_executor.assert_not_awaited()
+            run_batch.assert_not_awaited()
+
+
+class RunBatchTests(unittest.IsolatedAsyncioTestCase):
+    """E3 run_batch: drives every ticket in order (one merged at a time), checkpoints progress to
+    reports/batch_state.json, skips already-merged tickets on resume, and stops on the first halt."""
+
+    def _fixtures(self, td):
+        nexus_dir = Path(td) / "001_nexus_plan"
+        (nexus_dir / "reports").mkdir(parents=True, exist_ok=True)
+        project = mock.MagicMock()
+        project.slug = "p"
+        project.repo = "some-repo"
+        project.base_branch = "main"
+        projects = mock.MagicMock()
+        cfg = orchestrator.RunConfig(
+            description=None, base_branch="main", resume=None, reset_attempts=False,
+            idea="an idea", repo="some-repo", auto_execute=True, auto_merge=True, push=True,
+        )
+        return projects, project, cfg, nexus_dir
+
+    async def test_drives_all_tickets_in_order_and_checkpoints(self) -> None:
+        from src.shared.core.models import BatchState
+        with TemporaryDirectory() as td:
+            projects, project, cfg, nexus_dir = self._fixtures(td)
+            seen = []
+            run_executor = AsyncMock(return_value=True)
+
+            def _prepare(_projects, _project, _cfg, ticket):
+                seen.append(ticket)
+                return Path(td) / f"exec_{ticket}"
+
+            with (
+                mock.patch.object(orchestrator, "prepare_ticket_run", side_effect=_prepare),
+                mock.patch.object(orchestrator, "run_executor", new=run_executor),
+            ):
+                await orchestrator.run_batch(projects, project, cfg, nexus_dir,
+                                             ["TASK-01", "TASK-02", "TASK-03"])
+
+            self.assertEqual(seen, ["TASK-01", "TASK-02", "TASK-03"])
+            self.assertEqual(run_executor.await_count, 3)
+            batch = BatchState.load_checkpoint(orchestrator._batch_state_path(nexus_dir))
+            self.assertEqual(batch.completed, ["TASK-01", "TASK-02", "TASK-03"])
+            self.assertIsNone(batch.failed)
+
+    async def test_resume_skips_already_completed(self) -> None:
+        from src.shared.core.models import BatchState
+        with TemporaryDirectory() as td:
+            projects, project, cfg, nexus_dir = self._fixtures(td)
+            # Seed a prior batch: TASK-01 already merged.
+            BatchState(project_slug="p", nexus_run=nexus_dir.name,
+                       tickets=["TASK-01", "TASK-02", "TASK-03"], completed=["TASK-01"]
+                       ).save_checkpoint(orchestrator._batch_state_path(nexus_dir))
+            seen = []
+
+            def _prepare(_projects, _project, _cfg, ticket):
+                seen.append(ticket)
+                return Path(td) / f"exec_{ticket}"
+
+            with (
+                mock.patch.object(orchestrator, "prepare_ticket_run", side_effect=_prepare),
+                mock.patch.object(orchestrator, "run_executor", new=AsyncMock(return_value=True)),
+            ):
+                await orchestrator.run_batch(projects, project, cfg, nexus_dir,
+                                             ["TASK-01", "TASK-02", "TASK-03"])
+
+            self.assertEqual(seen, ["TASK-02", "TASK-03"])     # TASK-01 skipped (already merged)
+            batch = BatchState.load_checkpoint(orchestrator._batch_state_path(nexus_dir))
+            self.assertEqual(batch.completed, ["TASK-01", "TASK-02", "TASK-03"])
+
+    async def test_halt_stops_batch_and_records_failed_ticket(self) -> None:
+        from src.shared.core.models import BatchState
+        with TemporaryDirectory() as td:
+            projects, project, cfg, nexus_dir = self._fixtures(td)
+
+            async def _executor(_cfg, run_dir):
+                if run_dir.name.endswith("TASK-02"):
+                    raise orchestrator.PipelineHalt("halt on TASK-02")
+                return True
+
+            with (
+                mock.patch.object(orchestrator, "prepare_ticket_run",
+                                  side_effect=lambda _p, _pr, _c, t: Path(td) / f"exec_{t}"),
+                mock.patch.object(orchestrator, "run_executor", new=AsyncMock(side_effect=_executor)) as ex,
+            ):
+                with self.assertRaises(SystemExit) as exit_ctx:   # batch stops the process (exit 1)
+                    await orchestrator.run_batch(projects, project, cfg, nexus_dir,
+                                                 ["TASK-01", "TASK-02", "TASK-03"])
+
+            self.assertEqual(exit_ctx.exception.code, 1)
+            self.assertEqual(ex.await_count, 2)                # TASK-03 NEVER dispatched after the halt
+            batch = BatchState.load_checkpoint(orchestrator._batch_state_path(nexus_dir))
+            self.assertEqual(batch.completed, ["TASK-01"])
+            self.assertEqual(batch.failed, "TASK-02")
+
+
+class BatchResumeRoutingTests(unittest.IsolatedAsyncioTestCase):
+    """A bare `--resume <project>` re-enters an in-progress batch (batch_state.json present) instead of
+    re-planning the Nexus run."""
+
+    async def test_bare_resume_with_batch_sidecar_re_enters_run_batch(self) -> None:
+        from src.shared.core.models import BatchState
+        with TemporaryDirectory() as td:
+            nexus_dir = Path(td) / "001_nexus_plan"
+            BatchState(project_slug="p", nexus_run=nexus_dir.name,
+                       tickets=["TASK-01", "TASK-02"], completed=["TASK-01"]
+                       ).save_checkpoint(orchestrator._batch_state_path(nexus_dir))
+            project = mock.MagicMock()
+            project.slug = "p"; project.repo = "some-repo"; project.base_branch = "main"
+            projects = mock.MagicMock()
+            projects.exists.return_value = True
+            projects.latest_run.return_value = nexus_dir
+            projects.load.return_value = project
+            run_batch = AsyncMock()
+            cfg = orchestrator.RunConfig(
+                description=None, base_branch="main", resume=None, reset_attempts=False,
+                resume_project="p",
+            )
+            with (
+                mock.patch.object(orchestrator, "parse_args", return_value=cfg),
+                mock.patch.object(orchestrator, "Projects", return_value=projects),
+                mock.patch.object(orchestrator, "check_environment") as check_env,
+                mock.patch.object(orchestrator, "reconfigure_logging"),
+                mock.patch.object(orchestrator, "run_batch", new=run_batch),
+                mock.patch("src.nexus.nexus_runner.run_nexus", new=AsyncMock()) as run_nexus,
+                mock.patch("src.nexus.nexus_runner.get_tasks_for_nexus_run",
+                           return_value=["TASK-01", "TASK-02"]),
+            ):
+                await orchestrator.main()
+
+            run_batch.assert_awaited_once()
+            run_nexus.assert_not_awaited()                   # batch resume, NOT a re-plan
+            check_env.assert_called_once_with(require_forge=True)
+            # The batch always merges, so resume forces auto_merge + push on.
+            self.assertTrue(cfg.auto_merge)
+            self.assertTrue(cfg.push)
 
     async def test_reanchor_logging_leaves_single_file_handler(self) -> None:
         # Regression guard for the nexus→exec re-anchor: reconfigure_logging must SWAP (not stack) the
@@ -1894,10 +2032,9 @@ class DocumentationGuardrailLoopTests(unittest.IsolatedAsyncioTestCase):
                 mock.patch.object(orchestrator, "run_techwriter_node", new_callable=AsyncMock),
             ):
                 # Act / Assert
-                with self.assertRaises(SystemExit) as exit_ctx:
+                with self.assertRaises(orchestrator.PipelineHalt):
                     await orchestrator.main()
 
-            self.assertEqual(exit_ctx.exception.code, 1)
             self.assertEqual(developer.await_count, 3)   # initial + 2 fast-fail reroutes (cap=2)
             reviewer.assert_not_called()                 # Reviewer never reached
             self.assertEqual(ctx.current_attempt, 1)     # no functional-budget retry consumed
@@ -1919,11 +2056,10 @@ class FinancialCircuitBreakerTests(unittest.TestCase):
             base = Path(td)
             ctx = self._ctx(base)
             ctx.telemetry.record("Developer Agent", 900, 200, 0.5)
-            # Act / Assert — breaker fires a non-zero hard-halt.
+            # Act / Assert — breaker fires a hard-halt (PipelineHalt, caught at the entrypoint → exit 1).
             with mock.patch.object(orchestrator, "PIPELINE_BUDGET_TOKENS", 1000):
-                with self.assertRaises(SystemExit) as exit_ctx:
+                with self.assertRaises(orchestrator.PipelineHalt):
                     orchestrator.enforce_financial_circuit_breaker(ctx)
-            self.assertEqual(exit_ctx.exception.code, 1)
             # Incident report carries the telemetry breakdown for audit.
             report = (base / "reports" / "incident_report.json").read_text(encoding="utf-8")
             self.assertIn("Developer Agent", report)
