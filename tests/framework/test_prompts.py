@@ -418,5 +418,31 @@ class PerLanguageCoreFrontmatterTests(unittest.TestCase):
             self.assertIn("LANGUAGE TARGET", body, skill_id)
 
 
+class DevOpsPromptTests(unittest.TestCase):
+    """E4: the devops system prompt carries the archetype-branching + WIF hard rules, and the three
+    archetype skills are well-formed and target the devops node."""
+
+    def setUp(self) -> None:
+        get_system_prompt.cache_clear()
+        get_skill.cache_clear()
+
+    def test_system_prompt_has_archetype_branching_and_wif_rules(self) -> None:
+        raw = get_system_prompt("devops")
+        self.assertIn("Workload Identity Federation", raw)
+        self.assertIn("Cloud Run", raw)
+        # CLI/library must NOT get a Dockerfile / Cloud Run deploy (the audit's #3 — in the prompt itself).
+        self.assertIn("NO Dockerfile and NO Cloud Run deploy step", raw)
+
+    def test_archetype_skills_target_devops_node(self) -> None:
+        from src.shared.core.prompts import _parse_frontmatter, _SKILLS_DIR
+        expected = {"devops_rest_api": "api", "devops_crud_app": "crud", "devops_cli_tool": "cli"}
+        for skill_id, trigger in expected.items():
+            meta, body = _parse_frontmatter((_SKILLS_DIR / f"{skill_id}.md").read_text(encoding="utf-8"))
+            self.assertEqual(meta.get("type"), "domain", skill_id)
+            self.assertEqual(meta.get("nodes"), ["devops"], skill_id)
+            self.assertEqual(meta.get("triggers"), [trigger], skill_id)
+            self.assertTrue(body.strip(), skill_id)
+
+
 if __name__ == "__main__":
     unittest.main()

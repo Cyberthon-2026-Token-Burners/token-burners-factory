@@ -27,7 +27,8 @@ from src.executor.agents.developer import run_developer_node
 from src.executor.agents.reviewer import run_reviewer_node
 from src.executor.agents.arbiter import run_arbiter_node
 from src.executor.agents.techwriter import run_techwriter_node
-from src.executor.nodes.gates import run_qa_unit_tests, run_security_scan, run_build_gate, run_test_compile_gate, build_failure_is_test_only, build_failure_is_environmental
+from src.executor.agents.devops import run_devops_node
+from src.executor.nodes.gates import run_qa_unit_tests, run_security_scan, run_build_gate, run_test_compile_gate, build_failure_is_test_only, build_failure_is_environmental, run_devops_gate
 
 # ==========================================
 # CONTROL-FLOW SIGNALS
@@ -62,6 +63,7 @@ class RunConfig:
     resume_number: str | None = None   # the optional NNN for --resume <project> <N>
     auto_execute: bool = False  # --idea --auto-execute: after planning, run the Executor for the first ticket
     auto_merge: bool = False  # --auto-merge: on success, open a PR into base_branch and squash-merge it (E2; implies push)
+    scaffold_deploy: bool = False  # --scaffold-deploy: after a batch merges all tickets, generate + merge deploy manifests (E4)
 
 
 def parse_args() -> RunConfig:
@@ -89,11 +91,22 @@ def parse_args() -> RunConfig:
     parser.add_argument("--auto-merge", action="store_true",
                         help="On success, open a PR from feat/ticket-<id> into the base branch and squash-merge "
                              "it (E2). Implies --push; requires the gh CLI + GITHUB_TOKEN.")
+    parser.add_argument("--scaffold-deploy", action="store_true",
+                        help="After the batch merges ALL tickets, generate + merge a Dockerfile + GitHub "
+                             "Actions deploy workflow (GCP Cloud Run via WIF) for the finished app (E4). "
+                             "Consumed only by the --auto-execute batch (or its --resume); requires the gh "
+                             "CLI + GITHUB_TOKEN.")
 
     args = parser.parse_args()
 
     # --auto-merge needs the branch on origin before a PR can reference it, so it implies --push.
     push = args.push or args.auto_merge
+
+    # --scaffold-deploy is consumed ONLY by the post-batch terminal phase (run_batch). On any non-batch
+    # invocation it is inert — warn rather than silently ignore it.
+    if args.scaffold_deploy and not (args.auto_execute or args.resume):
+        log.warning("⚠️  --scaffold-deploy is consumed only by the --auto-execute batch (or its --resume); "
+                    "it has no effect on this invocation.")
 
     # Nexus Control Plane: an idea starts a new project (planning run). --repo (optional) is captured
     # into the project so later `--run` ticket executions reuse it. With --auto-execute the engine drives
@@ -105,7 +118,7 @@ def parse_args() -> RunConfig:
         return RunConfig(
             description=None, base_branch=args.base_branch, resume=None, reset_attempts=False,
             idea=args.idea, repo=args.repo, push=(push or auto_merge), auto_execute=args.auto_execute,
-            auto_merge=auto_merge,
+            auto_merge=auto_merge, scaffold_deploy=args.scaffold_deploy,
         )
 
     # Execute a ticket under an existing project: --run <project> -f <ticket>.
@@ -131,6 +144,7 @@ def parse_args() -> RunConfig:
             description=None, base_branch=args.base_branch, resume=None,
             reset_attempts=args.reset_attempts, push=push, auto_merge=args.auto_merge,
             resume_project=first, resume_number=(args.resume[1] if len(args.resume) > 1 else None),
+            scaffold_deploy=args.scaffold_deploy,
         )
 
     # Fresh DIRECT run: a target repo and ticket are mandatory for git-anchored bootstrapping.
@@ -197,12 +211,13 @@ async def _run_checked(cmd: list[str], action: str, timeout: float | None = None
         sys.exit(1)
 
 
-async def bootstrap_session(cfg: RunConfig, run_dir: Path) -> WorkspacePaths:
+async def bootstrap_session(cfg: RunConfig, run_dir: Path, branch: str | None = None) -> WorkspacePaths:
     """Isolates a run: shallow-clone the target repo, cut the feature branch, map the workspace.
 
     The caller owns ``run_dir`` (and has already re-anchored logging to it), so the run id is
-    bound once, up front — no late binding. Produces ``run_dir/repo/`` (shallow clone on
-    ``feat/ticket-<ticket>``) and returns the mapped workspace paths.
+    bound once, up front — no late binding. Produces ``run_dir/repo/`` (shallow clone on ``branch``,
+    default ``feat/ticket-<ticket>``) and returns the mapped workspace paths. The E4 deploy-scaffolding
+    phase passes ``branch="chore/devops-scaffold"`` to land on a chore branch instead.
     """
     repo_dir = run_dir / "repo"
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -212,7 +227,7 @@ async def bootstrap_session(cfg: RunConfig, run_dir: Path) -> WorkspacePaths:
     # Network op: bounded by GIT_NETWORK_TIMEOUT so a credential prompt can never hang the run.
     await _run_checked(["git", "clone", "--depth", "1", cfg.repo, str(repo_dir)], "git clone", timeout=GIT_NETWORK_TIMEOUT)
 
-    branch = f"feat/ticket-{cfg.ticket}"
+    branch = branch or f"feat/ticket-{cfg.ticket}"
     await _run_checked(["git", "-C", str(repo_dir), "checkout", "-b", branch], "git checkout -b")
 
     # Force a LOCAL ref for the base branch via an explicit refspec (<base>:<base>) so the snapshot diff
@@ -304,16 +319,18 @@ def _pr_body(ctx: GlobalPipelineContext) -> str:
             f"FinOps: {_finops_subtotals(ctx)}.")
 
 
-async def finalize_pr(ctx: GlobalPipelineContext, cfg: RunConfig) -> None:
+async def finalize_pr(ctx: GlobalPipelineContext, cfg: RunConfig, head_branch: str | None = None) -> None:
     """E2: open a PR for the just-pushed feature branch and squash-merge it into ``cfg.base_branch``.
 
     Runs only on the success path, AFTER ``finalize_transaction`` has committed and pushed the branch
     (``--auto-merge`` implies ``--push``). Idempotent on ``--resume`` (reuses an open PR / skips an
     already-merged one). Approval is best-effort; a genuine merge failure exits non-zero so the operator
     sees the loop didn't close. Provider-agnostic via ``src.shared.utils.forge`` (GitHub-first via gh).
+    ``head_branch`` defaults to ``feat/ticket-<ticket>``; the E4 deploy-scaffolding phase passes
+    ``chore/devops-scaffold`` so it lands the same way through the forge seam (never a raw push to main).
     """
     from src.shared.utils.forge import open_pr, approve_pr, merge_pr
-    head_branch = f"feat/ticket-{ctx.ticket}"
+    head_branch = head_branch or f"feat/ticket-{ctx.ticket}"
     repo_dir = ctx.workspace_paths.repo_dir
     pr = await open_pr(repo_dir, head_branch, cfg.base_branch, _commit_subject(ctx), _pr_body(ctx))
     if pr is None:
@@ -416,6 +433,7 @@ GUARDRAIL_TOP_LINES = 15        # top-of-file window scanned for a justification
 GUARDRAIL_MAX_REROUTES = 2      # local guardrail_retries cap: free reroutes before a Hard Halt
 QA_GATE_MAX_REROUTES = 2        # free QA regenerations on a test-compile failure (Reviewer bypassed)
 QA_LINT_MAX_REROUTES = 2        # free QA regenerations on a contract-signature lint hit (Reviewer bypassed)
+DEVOPS_MAX_RETRIES = int(os.environ.get("DEVOPS_MAX_RETRIES", "1"))  # E4: self-heal retries on a deploy-manifest static-lint failure before Hard Halt
 
 # ==========================================
 # FUNCTIONAL RETRY BUDGET + ARBITER (contract self-healing)
@@ -798,6 +816,114 @@ async def run_batch(projects: Projects, project, cfg: RunConfig, nexus_run_dir: 
         batch.failed = None
         batch.save_checkpoint(batch_path)
     log.info(f"🏁 Batch complete: all {len(tickets)} ticket(s) merged into {cfg.base_branch}.")
+
+    # E4 — once every ticket has merged, optionally scaffold deploy config for the finished app. Reached
+    # only on a fully-merged batch: a mid-batch halt sys.exit(1)s above, so an incomplete app is never
+    # scaffolded. Covers both --idea --auto-execute and the bare --resume re-entry (both call run_batch).
+    if cfg.scaffold_deploy:
+        await run_devops_scaffold(projects, project, cfg, nexus_run_dir)
+
+
+def _repo_has_source(repo_dir: Path) -> bool:
+    """True if the clone holds ≥1 non-doc/non-metadata file — i.e. there is an application to deploy.
+
+    The empty-state guard for E4: a degenerate batch (all tickets skipped) or a misused flag would leave
+    nothing but README/LICENSE/git metadata, and scaffolding a deploy for nothing is wrong."""
+    doc_or_meta = {
+        "readme.md", "readme", "readme.rst", "readme.txt", "license", "license.md", "license.txt",
+        ".gitignore", ".gitattributes", ".gitmodules",
+    }
+    for root, dirs, files in os.walk(repo_dir):
+        if ".git" in dirs:
+            dirs.remove(".git")  # never descend into git internals
+        for name in files:
+            if name.lower() not in doc_or_meta:
+                return True
+    return False
+
+
+def _nexus_environment_ids(nexus_run_dir: Path) -> str:
+    """Best-effort comma list of the unique environment_id(s) the plan's tickets ran on (from the Nexus
+    checkpoint). Feeds the DevOps agent the runtime(s) of the finished app; '' if unreadable."""
+    try:
+        data = json.loads((nexus_run_dir / "reports" / "checkpoint.json").read_text(encoding="utf-8"))
+        ids: list[str] = []
+        for task in data.get("tasks", []):
+            env = (task or {}).get("environment_id")
+            if env and env not in ids:
+                ids.append(env)
+        return ", ".join(ids)
+    except Exception:
+        return ""
+
+
+async def run_devops_scaffold(projects: Projects, project, cfg: RunConfig, nexus_run_dir: Path) -> None:
+    """E4: after the batch has merged every ticket, scaffold deploy config for the finished application.
+
+    Clones the completed base branch FRESH, has the DevOps agent generate a Dockerfile + GitHub Actions
+    deploy workflow (Cloud Run via WIF for a web service; a build/release matrix for a CLI tool/library),
+    static-lints them (exactly ``DEVOPS_MAX_RETRIES`` self-heal retries), and lands them through the SAME
+    E2 forge flow tickets use — open → approve → squash-merge of ``chore/devops-scaffold`` — never a raw
+    push to ``main``. The merged application code is untouched on any failure; a persistently invalid
+    manifest writes an incident and exits 1 (the deploy config simply didn't land)."""
+    devops_branch = "chore/devops-scaffold"
+    cfg.repo = cfg.repo or project.repo
+    cfg.base_branch = project.base_branch
+    run_dir = projects.allocate(project.slug, "devops", "scaffold")
+    reconfigure_logging(run_dir / "logs")
+    log.info(f"🚀 [E4] Deploy-scaffolding for project '{project.slug}' → {run_dir.name}")
+
+    cfg.ticket = "devops"
+    ws = await bootstrap_session(cfg, run_dir, branch=devops_branch)
+
+    # Empty-state guard — nothing to deploy if the cloned base branch carries no source.
+    if not _repo_has_source(ws.repo_dir):
+        log.warning("⏭️  --scaffold-deploy: cloned main has no source — skipping deploy scaffolding.")
+        return
+
+    ctx = GlobalPipelineContext(
+        pr_description="scaffold deployment (Dockerfile + GitHub Actions deploy workflow)",
+        ticket="devops", base_branch=cfg.base_branch, workspace_paths=ws,
+    )
+    blueprint = nexus_run_dir / "artifacts" / "blueprint.md"
+    blueprint_text = blueprint.read_text(encoding="utf-8") if blueprint.exists() else "(no blueprint available)"
+    repo_map = generate_repo_map(ws.repo_dir)
+    environment_ids = _nexus_environment_ids(nexus_run_dir)
+
+    # Self-heal loop: exactly DEVOPS_MAX_RETRIES retries (default 1). Generate → static-lint; on a gate
+    # failure feed the errors back and regenerate; only a persistently invalid manifest Hard-Halts.
+    gate_feedback = ""
+    problems: list[str] = []
+    for attempt in range(1, DEVOPS_MAX_RETRIES + 2):
+        await run_devops_node(
+            ctx, blueprint_text=blueprint_text, repo_map=repo_map,
+            environment_ids=environment_ids, gate_feedback=gate_feedback,
+        )
+        problems = run_devops_gate(ws.repo_dir)
+        if not problems:
+            break
+        gate_feedback = "\n".join(f"- {p}" for p in problems)
+        log.warning(f"🔁 [E4] Deploy-manifest static lint failed (attempt {attempt}): {gate_feedback}")
+    if problems:
+        _abort_with_incident(
+            ctx,
+            "\n🚨 [E4] Deploy scaffolding failed static validation after retry (the application code is "
+            f"already merged to {cfg.base_branch}; only the deploy config did not land):\n{gate_feedback}",
+        )
+
+    # Land the manifests through the SAME E2 forge flow (no raw push). Skip cleanly when nothing is staged —
+    # an idempotent re-run after a prior scaffold already merged identical manifests.
+    repo_root = await get_git_root(str(ws.repo_dir))
+    if not await _has_staged_changes(repo_root):
+        log.info("🟢 [E4] No manifest changes vs the base branch — deploy config already present; nothing to merge.")
+        return
+    await finalize_transaction(ctx, push=True)
+    try:
+        await finalize_pr(ctx, cfg, head_branch=devops_branch)
+    finally:
+        write_finops_report(ctx)
+        log_finops_summary(ctx)
+    log.info(f"🏁 [E4] Deploy scaffolding merged into {cfg.base_branch}.")
 
 
 def prepare_ticket_run(projects: Projects, project, cfg: RunConfig, ticket_id: str) -> Path | None:

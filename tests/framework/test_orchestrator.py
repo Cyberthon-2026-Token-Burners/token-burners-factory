@@ -124,6 +124,15 @@ class ParseArgsProjectVerbsTests(unittest.TestCase):
         self.assertFalse(plain.auto_merge)
         self.assertFalse(plain.push)
 
+    def test_scaffold_deploy_flag_threads_into_idea_and_resume(self) -> None:
+        # E4: --scaffold-deploy is carried on the batch paths (--idea --auto-execute and a bare --resume).
+        idea = self._parse("--idea", "an app", "--repo", "r", "--auto-execute", "--scaffold-deploy")
+        self.assertTrue(idea.scaffold_deploy)
+        resume = self._parse("--resume", "my-proj", "--scaffold-deploy")
+        self.assertTrue(resume.scaffold_deploy)
+        # Off by default.
+        self.assertFalse(self._parse("--idea", "an app", "--repo", "r", "--auto-execute").scaffold_deploy)
+
     def test_run_project_requires_ticket(self) -> None:
         with self.assertRaises(SystemExit) as ctx:
             self._parse("--run", "my-proj")            # missing -f
@@ -1100,6 +1109,35 @@ class RunBatchTests(unittest.IsolatedAsyncioTestCase):
             batch = BatchState.load_checkpoint(orchestrator._batch_state_path(nexus_dir))
             self.assertEqual(batch.completed, ["TASK-01"])
             self.assertEqual(batch.failed, "TASK-02")
+
+    async def test_scaffold_deploy_runs_after_a_complete_batch(self) -> None:
+        # E4: a fully-merged batch with --scaffold-deploy runs the post-batch DevOps terminal phase once.
+        with TemporaryDirectory() as td:
+            projects, project, cfg, nexus_dir = self._fixtures(td)
+            cfg.scaffold_deploy = True
+            scaffold = AsyncMock()
+            with (
+                mock.patch.object(orchestrator, "prepare_ticket_run",
+                                  side_effect=lambda _p, _pr, _c, t: Path(td) / f"exec_{t}"),
+                mock.patch.object(orchestrator, "run_executor", new=AsyncMock(return_value=True)),
+                mock.patch.object(orchestrator, "run_devops_scaffold", new=scaffold),
+            ):
+                await orchestrator.run_batch(projects, project, cfg, nexus_dir, ["TASK-01", "TASK-02"])
+            scaffold.assert_awaited_once_with(projects, project, cfg, nexus_dir)
+
+    async def test_scaffold_deploy_skipped_when_flag_off(self) -> None:
+        with TemporaryDirectory() as td:
+            projects, project, cfg, nexus_dir = self._fixtures(td)
+            cfg.scaffold_deploy = False
+            scaffold = AsyncMock()
+            with (
+                mock.patch.object(orchestrator, "prepare_ticket_run",
+                                  side_effect=lambda _p, _pr, _c, t: Path(td) / f"exec_{t}"),
+                mock.patch.object(orchestrator, "run_executor", new=AsyncMock(return_value=True)),
+                mock.patch.object(orchestrator, "run_devops_scaffold", new=scaffold),
+            ):
+                await orchestrator.run_batch(projects, project, cfg, nexus_dir, ["TASK-01"])
+            scaffold.assert_not_awaited()
 
 
 class BatchResumeRoutingTests(unittest.IsolatedAsyncioTestCase):
