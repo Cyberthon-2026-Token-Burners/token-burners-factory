@@ -199,15 +199,22 @@ def estimate_gemini_cost_usd(model_name: str, usage_metadata) -> Decimal:
 # ==========================================
 # ENVIRONMENT CHECKER
 # ==========================================
-def check_environment():
+def check_environment(require_forge: bool = False):
     log.info("🔍 Pre-flight environment check...")
-    for tool in ["docker", "claude", "bandit"]:
+    # `gh` (+ GITHUB_TOKEN) is only required when the run will open/merge a PR (--auto-merge, E2),
+    # so plain runs never force a forge CLI on the operator.
+    tools = ["docker", "claude", "bandit"] + (["gh"] if require_forge else [])
+    for tool in tools:
         if not shutil.which(tool):
             log.error(f"🚨 CRITICAL: Binary '{tool}' not found in PATH.")
             sys.exit(1)
 
     if not os.environ.get("GEMINI_API_KEY"):
         log.error("🚨 CRITICAL: GEMINI_API_KEY is not set.")
+        sys.exit(1)
+
+    if require_forge and not os.environ.get("GITHUB_TOKEN"):
+        log.error("🚨 CRITICAL: --auto-merge requires GITHUB_TOKEN (gh PR/merge auth) to be set.")
         sys.exit(1)
 
     # Container hardening: in docker mode the framework source must be immutable so the

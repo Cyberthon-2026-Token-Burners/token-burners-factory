@@ -14,7 +14,8 @@ first ticket, ADR 0017). Three planes under `src/` (ADR 0012 virtual separation)
 - `prompts.py` — `build_agent_context`, `get_system_prompt*`, `generate_repo_map` (skill routing: [skill-routing-frontmatter](skill-routing-frontmatter.md)).
 
 **`src/shared/utils/`** — `subprocess_helpers.py` (`parse_claude_usage`, streaming), `git_helpers.py`,
-`llm.py` (`run_structured_llm`), `api_retry.py` (`with_api_retry`), `redaction.py` (`redact`).
+`llm.py` (`run_structured_llm`), `api_retry.py` (`with_api_retry`), `redaction.py` (`redact`),
+`forge.py` (`open_pr`/`approve_pr`/`merge_pr` — gh-backed PR auto-merge seam, E2 / `--auto-merge`).
 
 **`src/executor/`** (worker plane) — `runner.py` (`main()` dispatcher + `run_executor` per-ticket FSM +
 `prepare_ticket_run` cfg-wiring/allocation, shared by `--run`/`--auto-execute`), `nodes/gates.py`

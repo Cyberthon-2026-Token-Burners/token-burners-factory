@@ -47,6 +47,7 @@ class RunConfig:
     resume_project: str | None = None  # --resume <project> [N]: resume by project (+ optional run number)
     resume_number: str | None = None   # the optional NNN for --resume <project> <N>
     auto_execute: bool = False  # --idea --auto-execute: after planning, run the Executor for the first ticket
+    auto_merge: bool = False  # --auto-merge: on success, open a PR into base_branch and squash-merge it (E2; implies push)
 
 
 def parse_args() -> RunConfig:
@@ -70,8 +71,14 @@ def parse_args() -> RunConfig:
     parser.add_argument("--auto-execute", action="store_true",
                         help="With --idea: after planning, automatically run the Executor for the first ticket "
                              "(requires --repo so there is a target to clone).")
+    parser.add_argument("--auto-merge", action="store_true",
+                        help="On success, open a PR from feat/ticket-<id> into the base branch and squash-merge "
+                             "it (E2). Implies --push; requires the gh CLI + GITHUB_TOKEN.")
 
     args = parser.parse_args()
+
+    # --auto-merge needs the branch on origin before a PR can reference it, so it implies --push.
+    push = args.push or args.auto_merge
 
     # Nexus Control Plane: an idea starts a new project (planning run). --repo (optional) is captured
     # into the project so later `--run` ticket executions reuse it. With --auto-execute the engine
@@ -79,7 +86,8 @@ def parse_args() -> RunConfig:
     if args.idea:
         return RunConfig(
             description=None, base_branch=args.base_branch, resume=None, reset_attempts=False,
-            idea=args.idea, repo=args.repo, push=args.push, auto_execute=args.auto_execute,
+            idea=args.idea, repo=args.repo, push=push, auto_execute=args.auto_execute,
+            auto_merge=args.auto_merge,
         )
 
     # Execute a ticket under an existing project: --run <project> -f <ticket>.
@@ -88,7 +96,7 @@ def parse_args() -> RunConfig:
             parser.error("--run requires -f <ticket> (the ticket id to execute, e.g. --run my-proj -f TASK-01)")
         return RunConfig(
             description=None, base_branch=args.base_branch, resume=None,
-            reset_attempts=args.reset_attempts, push=args.push,
+            reset_attempts=args.reset_attempts, push=push, auto_merge=args.auto_merge,
             run_project=args.run_project, ticket=args.file, repo=args.repo,
         )
 
@@ -99,11 +107,11 @@ def parse_args() -> RunConfig:
         if first.endswith(".json") or Path(first).exists():
             return RunConfig(
                 description=None, base_branch=args.base_branch, resume=Path(first),
-                reset_attempts=args.reset_attempts, push=args.push,
+                reset_attempts=args.reset_attempts, push=push, auto_merge=args.auto_merge,
             )
         return RunConfig(
             description=None, base_branch=args.base_branch, resume=None,
-            reset_attempts=args.reset_attempts, push=args.push,
+            reset_attempts=args.reset_attempts, push=push, auto_merge=args.auto_merge,
             resume_project=first, resume_number=(args.resume[1] if len(args.resume) > 1 else None),
         )
 
@@ -131,7 +139,8 @@ def parse_args() -> RunConfig:
         reset_attempts=args.reset_attempts,
         repo=args.repo,
         ticket=args.ticket,
-        push=args.push,
+        push=push,
+        auto_merge=args.auto_merge,
         file=args.file,
     )
 
@@ -221,6 +230,18 @@ async def _has_staged_changes(repo_root: str) -> bool:
     sys.exit(1)
 
 
+def _commit_subject(ctx: GlobalPipelineContext) -> str:
+    """The conventional-commit subject ``feat(<ticket>): <summary>`` — single source of truth reused
+    for the atomic commit AND the auto-merge PR title (E2)."""
+    desc = (ctx.pr_description or "").strip()
+    summary = next((line.strip() for line in desc.splitlines() if line.strip()), "") if desc else ""
+    # First line is often a markdown heading (`# Title`) — strip the leading hashes/space so the
+    # conventional-commit subject reads cleanly (e.g. "feat(T-01): Repository initialization …").
+    summary = summary.lstrip("#").strip()
+    summary = (summary or ctx.ticket or "automated change")[:72]
+    return f"feat({ctx.ticket or 'ticket'}): {summary}"
+
+
 async def finalize_transaction(ctx: GlobalPipelineContext, push: bool = False) -> None:
     """Commits the staged delta atomically on full success; optionally pushes the branch.
 
@@ -233,13 +254,7 @@ async def finalize_transaction(ctx: GlobalPipelineContext, push: bool = False) -
         log.warning("🟡 No staged changes in the index — skipping final commit.")
         return
 
-    desc = (ctx.pr_description or "").strip()
-    summary = next((line.strip() for line in desc.splitlines() if line.strip()), "") if desc else ""
-    # First line is often a markdown heading (`# Title`) — strip the leading hashes/space so the
-    # conventional-commit subject reads cleanly (e.g. "feat(T-01): Repository initialization …").
-    summary = summary.lstrip("#").strip()
-    summary = (summary or ctx.ticket or "automated change")[:72]
-    subject = f"feat({ctx.ticket or 'ticket'}): {summary}"
+    subject = _commit_subject(ctx)
 
     # Pin a per-ticket agent identity so each session's commit is uniquely attributable
     # (and so the commit succeeds even when the clone inherits no global git config).
@@ -259,6 +274,32 @@ async def finalize_transaction(ctx: GlobalPipelineContext, push: bool = False) -
             "git push", timeout=GIT_NETWORK_TIMEOUT,
         )
         log.info("⬆️  Pushed feature branch to origin.")
+
+
+def _pr_body(ctx: GlobalPipelineContext) -> str:
+    """PR body: the clean ticket description + a gate/FinOps footer (the engine ran the checks locally)."""
+    desc = (ctx.pr_description or "").strip() or (ctx.ticket or "Automated change.")
+    return (f"{desc}\n\n---\n🤖 Automated by the SDLC engine — all validation gates passed locally.\n"
+            f"FinOps: {_finops_subtotals(ctx)}.")
+
+
+async def finalize_pr(ctx: GlobalPipelineContext, cfg: RunConfig) -> None:
+    """E2: open a PR for the just-pushed feature branch and squash-merge it into ``cfg.base_branch``.
+
+    Runs only on the success path, AFTER ``finalize_transaction`` has committed and pushed the branch
+    (``--auto-merge`` implies ``--push``). Idempotent on ``--resume`` (reuses an open PR / skips an
+    already-merged one). Approval is best-effort; a genuine merge failure exits non-zero so the operator
+    sees the loop didn't close. Provider-agnostic via ``src.shared.utils.forge`` (GitHub-first via gh).
+    """
+    from src.shared.utils.forge import open_pr, approve_pr, merge_pr
+    head_branch = f"feat/ticket-{ctx.ticket}"
+    repo_dir = ctx.workspace_paths.repo_dir
+    pr = await open_pr(repo_dir, head_branch, cfg.base_branch, _commit_subject(ctx), _pr_body(ctx))
+    if pr is None:
+        return  # already merged — idempotent skip
+    await approve_pr(repo_dir, pr)        # best-effort; needs a separate GITHUB_REVIEWER_TOKEN
+    await merge_pr(repo_dir, pr)
+    log.info(f"✅ Closed the loop: {head_branch} squash-merged into {cfg.base_branch}.")
 
 
 # ==========================================
@@ -710,7 +751,7 @@ async def main():
         # Fail fast: when we WILL auto-execute, the executor's docker/claude/bandit deps must be present
         # before we spend planning tokens. Plain planning skips this (control plane needs only Gemini).
         if cfg.auto_execute:
-            check_environment()
+            check_environment(require_forge=cfg.auto_merge)
         project = projects.create(cfg.idea, idea=cfg.idea, repo=cfg.repo, base_branch=cfg.base_branch)
         nexus_run_dir = projects.allocate(project.slug, "nexus", "plan")
         reconfigure_logging(nexus_run_dir / "logs")
@@ -801,7 +842,7 @@ async def run_executor(cfg: RunConfig, run_dir: Path, resume_checkpoint: Path | 
     # Re-anchor the audit trail to THIS run's logs/ dir before any other log line is emitted.
     # Append mode keeps a resumed run's timeline linear in the SAME file instead of splitting it.
     reconfigure_logging(run_dir / "logs")
-    check_environment()
+    check_environment(require_forge=cfg.auto_merge)
 
     if resume_checkpoint is not None:
         log.info(f"▶️ RESUMING FSM EXECUTION FROM CHECKPOINT: {resume_checkpoint}")
@@ -1209,8 +1250,14 @@ async def run_executor(cfg: RunConfig, run_dir: Path, resume_checkpoint: Path | 
             # commit so the verified delta and its documentation land in the same transaction.
             await run_techwriter_node(ctx)
             await finalize_transaction(ctx, push=cfg.push)
-            write_finops_report(ctx)
-            log_finops_summary(ctx)
+            # E2: close the loop to base_branch. Wrapped so a hard merge failure (sys.exit raises
+            # SystemExit) still persists + surfaces the FinOps report — spend stays auditable.
+            try:
+                if cfg.auto_merge:
+                    await finalize_pr(ctx, cfg)
+            finally:
+                write_finops_report(ctx)
+                log_finops_summary(ctx)
             return True
 
     # Escalation on Circuit Breaker open

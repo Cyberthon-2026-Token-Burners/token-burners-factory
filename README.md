@@ -170,6 +170,12 @@ python3 main.py --run cli-that-converts-json-to-csv -f TASK-01
 # Or plan AND auto-run the first ticket in one shot (E1). --repo is required so there is a clone target.
 python3 main.py --idea "CLI that converts JSON to CSV with a selectable delimiter" \
     --repo git@github.com:acme/widgets.git --auto-execute
+
+# Close the loop to the base branch (E2): on success, open a PR from feat/ticket-<id> and squash-merge it
+# into base. Implies --push; needs the `gh` CLI + GITHUB_TOKEN. Protected repos: set GITHUB_REVIEWER_TOKEN
+# (a separate identity) for a real approval, and/or GITHUB_MERGE_STRATEGY=auto to queue the merge behind CI.
+python3 main.py --idea "CLI that converts JSON to CSV with a selectable delimiter" \
+    --repo https://github.com/acme/widgets.git --auto-execute --auto-merge
 ```
 
 Each run is isolated under `runs/<project>/<NNN>_<plane>_<label>_<ts>_<uid>/`: an executor run

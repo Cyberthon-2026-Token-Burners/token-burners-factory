@@ -86,6 +86,18 @@ class ParseArgsFreshRunTests(unittest.TestCase):
         with mock.patch.object(sys, "argv", ["orchestrator.py", "--repo", "r", "--ticket", "T", "--push"]):
             self.assertTrue(orchestrator.parse_args().push)
 
+    def test_auto_merge_flag_defaults_false_and_implies_push(self) -> None:
+        # Default off — neither auto_merge nor push.
+        with mock.patch.object(sys, "argv", ["orchestrator.py", "--repo", "r", "--ticket", "T"]):
+            cfg = orchestrator.parse_args()
+            self.assertFalse(cfg.auto_merge)
+            self.assertFalse(cfg.push)
+        # --auto-merge sets auto_merge AND forces push (a PR can't reference an unpushed branch).
+        with mock.patch.object(sys, "argv", ["orchestrator.py", "--repo", "r", "--ticket", "T", "--auto-merge"]):
+            cfg = orchestrator.parse_args()
+            self.assertTrue(cfg.auto_merge)
+            self.assertTrue(cfg.push)
+
 
 class ParseArgsProjectVerbsTests(unittest.TestCase):
     """The project-umbrella CLI: --idea (new project), --run <project> -f <ticket>, and
@@ -1276,6 +1288,143 @@ class FinalizeTransactionTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("user.name=AI Agent (DEMO-1)", commit_cmd)
             self.assertIn("user.email=agent-demo-1@sdlc-factory.local", commit_cmd)
             self.assertIn("push", exec_mock.call_args_list[1].args)
+
+
+class FinalizePrTests(unittest.IsolatedAsyncioTestCase):
+    """E2: finalize_pr opens → approves → squash-merges; skips merge when the PR is already merged."""
+
+    def _ctx(self, base: Path) -> GlobalPipelineContext:
+        paths = WorkspacePaths(logs_dir=base / "logs", reports_dir=base / "reports", repo_dir=base)
+        return GlobalPipelineContext(
+            pr_description="# Add X\n\nbody", base_branch="main", ticket="T1", workspace_paths=paths,
+        )
+
+    def _cfg(self):
+        return orchestrator.RunConfig(
+            description=None, base_branch="main", resume=None, reset_attempts=False,
+            ticket="T1", auto_merge=True,
+        )
+
+    async def test_open_approve_merge_in_order(self) -> None:
+        with TemporaryDirectory() as td:
+            ctx = self._ctx(Path(td))
+            with (
+                mock.patch("src.shared.utils.forge.open_pr", new=AsyncMock(return_value="7")) as op,
+                mock.patch("src.shared.utils.forge.approve_pr", new=AsyncMock(return_value=False)) as ap,
+                mock.patch("src.shared.utils.forge.merge_pr", new=AsyncMock()) as mp,
+            ):
+                await orchestrator.finalize_pr(ctx, self._cfg())
+            op.assert_awaited_once()
+            # head/base wired correctly; PR title is the conventional commit subject (heading stripped).
+            _repo, head, base, title, _body = op.await_args.args
+            self.assertEqual(head, "feat/ticket-T1")
+            self.assertEqual(base, "main")
+            self.assertEqual(title, "feat(T1): Add X")
+            ap.assert_awaited_once()
+            mp.assert_awaited_once()
+
+    async def test_skips_merge_when_already_merged(self) -> None:
+        with TemporaryDirectory() as td:
+            ctx = self._ctx(Path(td))
+            with (
+                mock.patch("src.shared.utils.forge.open_pr", new=AsyncMock(return_value=None)),
+                mock.patch("src.shared.utils.forge.approve_pr", new=AsyncMock()) as ap,
+                mock.patch("src.shared.utils.forge.merge_pr", new=AsyncMock()) as mp,
+            ):
+                await orchestrator.finalize_pr(ctx, self._cfg())
+            ap.assert_not_awaited()    # open_pr returned None (already merged) → idempotent skip
+            mp.assert_not_awaited()
+
+
+class AutoMergeLoopClosureTests(unittest.IsolatedAsyncioTestCase):
+    """On PIPELINE SUCCESS the loop closes to base_branch via finalize_pr — iff cfg.auto_merge."""
+
+    async def _run_success(self, auto_merge: bool):
+        with TemporaryDirectory() as td:
+            base = Path(td)
+            paths = WorkspacePaths(logs_dir=base / "logs", reports_dir=base / "reports", repo_dir=base)
+            ctx = GlobalPipelineContext(
+                pr_description="add two ints", base_branch="main", ticket="T1",
+                workspace_paths=paths, test_code_snapshot="tests",
+            )
+            ctx.contract = TechLeadContract(
+                files_to_modify=["src/converter.py"], instruction="noop", function_signatures="noop",
+                strict_type_validation_rules="noop", techlead_reasoning="noop",
+                topology_contract=[], environment_id="python-3.12-core",
+            )
+
+            async def _approve_both(*_a, **_k) -> None:
+                ctx.review_report = ReviewReport(
+                    code_quality_analysis="ok", test_integrity_analysis="ok", log_verification_analysis="ok",
+                    code_quality_approved=True, test_integrity_approved=True,
+                    dev_diagnostic_payload="", qa_diagnostic_payload="",
+                )
+
+            finalize_pr = AsyncMock()
+            with (
+                mock.patch.object(orchestrator, "check_environment"),
+                mock.patch.object(orchestrator, "reconfigure_logging"),
+                mock.patch.object(orchestrator, "build_production_snapshot"),
+                mock.patch.object(orchestrator, "run_build_gate", new=AsyncMock(return_value=(True, []))),
+                mock.patch.object(orchestrator, "_missing_contract_files", return_value=[]),
+                mock.patch.object(orchestrator, "parse_args", return_value=orchestrator.RunConfig(
+                    description=None, base_branch="main", resume=Path("cp.json"),
+                    reset_attempts=False, ticket="T1", auto_merge=auto_merge)),
+                mock.patch.object(GlobalPipelineContext, "load_checkpoint", return_value=ctx),
+                mock.patch.object(orchestrator, "run_techlead_node", new_callable=AsyncMock),
+                mock.patch.object(orchestrator, "run_qa_agent_node", new_callable=AsyncMock),
+                mock.patch.object(orchestrator, "run_developer_node", new_callable=AsyncMock),
+                mock.patch.object(orchestrator, "run_reviewer_node", new=AsyncMock(side_effect=_approve_both)),
+                mock.patch.object(orchestrator, "run_qa_unit_tests", new=AsyncMock(return_value=(True, []))),
+                mock.patch.object(orchestrator, "run_security_scan", new=AsyncMock(return_value=(True, []))),
+                mock.patch.object(orchestrator, "finalize_transaction", new_callable=AsyncMock),
+                mock.patch.object(orchestrator, "finalize_pr", new=finalize_pr),
+                mock.patch.object(orchestrator, "run_techwriter_node", new_callable=AsyncMock),
+            ):
+                await orchestrator.main()
+            return finalize_pr
+
+    async def test_finalize_pr_runs_on_success_with_auto_merge(self) -> None:
+        finalize_pr = await self._run_success(auto_merge=True)
+        finalize_pr.assert_awaited_once()
+
+    async def test_finalize_pr_absent_without_auto_merge(self) -> None:
+        finalize_pr = await self._run_success(auto_merge=False)
+        finalize_pr.assert_not_awaited()
+
+
+class CheckEnvironmentForgeTests(unittest.TestCase):
+    """check_environment(require_forge=True) additionally demands the gh CLI + GITHUB_TOKEN (E2)."""
+
+    def test_require_forge_passes_with_gh_and_token(self) -> None:
+        from src.shared.core import config
+        with (
+            mock.patch.object(config.shutil, "which", return_value="/usr/bin/x"),
+            mock.patch.dict(os.environ, {"GEMINI_API_KEY": "k", "GITHUB_TOKEN": "t"}, clear=False),
+        ):
+            config.check_environment(require_forge=True)  # no raise
+
+    def test_require_forge_missing_token_exits(self) -> None:
+        from src.shared.core import config
+        with (
+            mock.patch.object(config.shutil, "which", return_value="/usr/bin/x"),
+            mock.patch.dict(os.environ, {"GEMINI_API_KEY": "k"}, clear=False),
+        ):
+            os.environ.pop("GITHUB_TOKEN", None)
+            with self.assertRaises(SystemExit):
+                config.check_environment(require_forge=True)
+
+    def test_default_does_not_require_gh(self) -> None:
+        from src.shared.core import config
+
+        def which(tool):
+            return None if tool == "gh" else "/usr/bin/x"
+
+        with (
+            mock.patch.object(config.shutil, "which", side_effect=which),
+            mock.patch.dict(os.environ, {"GEMINI_API_KEY": "k"}, clear=False),
+        ):
+            config.check_environment()  # gh missing, but not required → no raise
 
 
 class TopBlockCommentScannerTests(unittest.TestCase):

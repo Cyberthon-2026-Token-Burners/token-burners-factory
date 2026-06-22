@@ -28,6 +28,7 @@ key — then you **plan a project** and **execute its tickets**.
 | Claude Code CLI (**logged in once**) | The agentic Developer; auth is a login, **not** an API key | Step 6 |
 | Sandbox images (`sdlc-sandbox/*`) | Per-language gate runtimes + Semgrep; **no auto-pull** | Step 7 |
 | `GEMINI_API_KEY` | Credential for every structured agent | Step 8 |
+| GitHub CLI (`gh`) + `GITHUB_TOKEN` — **only for `--auto-merge`** | Opens & squash-merges the success PR into the base branch (E2) | Step 9 (optional) |
 
 > **The engine enforces this at startup.** `check_environment()` (`src/shared/core/config.py`) exits with a
 > `🚨 CRITICAL` error unless `docker`, `claude`, and `bandit` are all on PATH **and** `GEMINI_API_KEY` is
@@ -180,6 +181,60 @@ other knobs (budgets, timeouts, retry caps) are optional with sane defaults — 
 
 ---
 
+## 9. (Optional) GitHub CLI for `--auto-merge`
+
+Skip this unless you want the engine to **close the loop to the base branch**: with `--auto-merge` (E2) a
+successful ticket opens a PR from `feat/ticket-<id>` and squash-merges it. That path shells out to the
+**`gh` CLI** and authenticates with **`GITHUB_TOKEN`**; the pre-flight check fails fast (`🚨 CRITICAL`) if
+either is missing. Plain runs (`--run`, `--push`, `--auto-execute`) never need `gh`.
+
+**Install `gh` inside WSL2** (Linux package, like every other tool — not a Windows `gh.exe`):
+
+```bash
+# Official apt repo (https://github.com/cli/cli/blob/trunk/docs/install_linux.md):
+sudo mkdir -p -m 755 /etc/apt/keyrings
+wget -qO- https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo tee /etc/apt/keyrings/githubcli-archive-keyring.gpg >/dev/null
+sudo chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+  | sudo tee /etc/apt/sources.list.d/github-cli.list >/dev/null
+sudo apt update && sudo apt install -y gh
+which gh    # expected: /usr/bin/gh
+```
+
+**Authenticate** — `gh` reads `GITHUB_TOKEN` straight from the environment (no `gh auth login` needed for a
+headless run). Reuse the same token you set for git auth, or set it now:
+
+```bash
+echo 'export GITHUB_TOKEN=ghp_your_token' >> ~/.bashrc && source ~/.bashrc
+gh auth status    # confirms gh sees the token
+```
+
+The token needs the **`repo`** scope (create branches/PRs, merge) on the target repository. For an
+unprotected repo this is all you need: the default `--admin` squash-merge lands immediately.
+
+**Protected repos (optional extras):**
+
+- **`GITHUB_REVIEWER_TOKEN`** — a *second* identity's PAT used to **approve** the PR before merge. GitHub
+  forbids a PR author from approving their **own** PR, so a real approval requires a different account/token
+  than `GITHUB_TOKEN`. Generate a PAT (classic or fine-grained) with the **`repo`** scope under the reviewer
+  account, then:
+
+  ```bash
+  echo 'export GITHUB_REVIEWER_TOKEN=ghp_reviewer_account_token' >> ~/.bashrc && source ~/.bashrc
+  ```
+
+  Best-effort: if it's unset (or the token lacks permission) approval is skipped and the run relies on the
+  `--admin` merge — it never aborts the run.
+- **`GITHUB_MERGE_STRATEGY=auto`** — queue the squash-merge to land automatically once required status
+  checks pass, instead of merging immediately. (The engine also auto-falls-back to this when an immediate
+  `--admin` merge is blocked by pending checks.)
+
+> ⚠️ **Running inside GitHub Actions?** The built-in `secrets.GITHUB_TOKEN` deliberately does **not**
+> trigger other workflows from the commits/PR/merge it makes (GitHub's loop-prevention). If a merge to
+> `main` must fire a release pipeline, pass a real **PAT** as `GITHUB_TOKEN` instead of the built-in token.
+
+---
+
 ## Pre-flight self-check
 
 Run this from the project root with the venv active. It mirrors what the engine validates at startup, so if
@@ -192,9 +247,12 @@ which node claude | grep -q /home && echo "node/claude on Linux fs ✓"
 docker images | grep sdlc-sandbox                       # expect 5 images
 claude -p "ping" >/dev/null 2>&1 && echo "claude authenticated ✓"
 source venv/bin/activate && python3 -c "import instructor, google.genai, pydantic, jsonref" && echo "python deps ✓"
+# Only if you'll use --auto-merge (Step 9): gh on PATH + a token.
+which gh && [ -n "$GITHUB_TOKEN" ] && echo "gh + GITHUB_TOKEN ready (for --auto-merge) ✓"
 ```
 
-If any line is silent or errors, fix it before running — the engine exits `🚨 CRITICAL` on the first miss.
+If any line is silent or errors, fix it before running — the engine exits `🚨 CRITICAL` on the first miss
+(the `gh`/`GITHUB_TOKEN` line only when you pass `--auto-merge`).
 
 ---
 
@@ -223,6 +281,12 @@ python3 main.py --run <slug> -f TASK-01
 The Executor shallow-clones `--repo` into the run's `repo/` on a `feat/ticket-TASK-01` branch, runs the
 build/test/SAST/review cycle, and makes one **atomic commit** on success. Add **`--push`** to push the
 feature branch to `origin` after that commit.
+
+> **Close the loop to the base branch (`--auto-merge`, E2):** add **`--auto-merge`** to open a PR from
+> `feat/ticket-<id>` and **squash-merge** it into the base branch on success. It implies `--push` and needs
+> the **`gh` CLI** on PATH plus **`GITHUB_TOKEN`** — set both up in
+> [Step 9 (optional)](#9-optional-github-cli-for---auto-merge), which also covers the
+> `GITHUB_REVIEWER_TOKEN` / `GITHUB_MERGE_STRATEGY` extras for protected repos.
 
 **3. Resume** — after a crash or a halt, continue where the checkpoint left off:
 
@@ -286,7 +350,10 @@ wsl -e bash -lc "cd /mnt/c/code/async-agentic-sdlc && source venv/bin/activate &
 |---|---|---|
 | **`GEMINI_API_KEY`** | — (**required**) | Credential for every structured agent (TechLead/QA/Reviewer/TechWriter/Arbiter + Nexus PO/SA/TPM). |
 | `CLAUDE_CLI_BIN` | `claude` | Path to the Claude CLI binary; pin to the nvm Linux build under WSL. |
-| `GITHUB_TOKEN` | (unset) | Read by an env-backed git credential helper (if you configure one) to clone/push **private** HTTPS repos, so you can pass a token-free `--repo` URL — see [Git auth (private repos)](#git-auth-private-repos). |
+| `GITHUB_TOKEN` | (unset) | Read by an env-backed git credential helper (if you configure one) to clone/push **private** HTTPS repos, so you can pass a token-free `--repo` URL — see [Git auth (private repos)](#git-auth-private-repos). Also the auth `gh` uses for `--auto-merge` (then **required**). |
+| `GITHUB_REVIEWER_TOKEN` | (unset) | A *separate* identity's token for `--auto-merge` PR approval (GitHub forbids approving your own PR). Best-effort: unset → approval skipped, relying on the `--admin` merge. |
+| `GITHUB_MERGE_STRATEGY` | `admin` | `--auto-merge` squash strategy: `admin` merges immediately (unprotected repos); `auto` queues the merge to land once required checks pass (protected repos). |
+| `GH_NETWORK_TIMEOUT` | `300` | Hard wall-clock ceiling (s) for each `gh` PR/merge call. |
 | `DEVELOPER_CLI_TIMEOUT` | `900` | Hard wall-clock ceiling (s) per Developer CLI session; child is killed+reaped on expiry. |
 | `DEVELOPER_CLI_IDLE_TIMEOUT` | `120` | Inactivity ceiling (s); kills the child if it emits no output for this long. |
 | `PIPELINE_BUDGET_USD` | `10.00` | Primary Financial Circuit Breaker gate (authoritative for Claude, estimated for Gemini). |
@@ -307,8 +374,9 @@ wsl -e bash -lc "cd /mnt/c/code/async-agentic-sdlc && source venv/bin/activate &
 
 | Problem | Fix |
 |---|---|
-| `🚨 CRITICAL: Binary '<x>' not found in PATH` | Install the missing tool (`docker`/`claude`/`bandit`) and ensure it's on PATH — re-run the [pre-flight self-check](#pre-flight-self-check). |
+| `🚨 CRITICAL: Binary '<x>' not found in PATH` | Install the missing tool (`docker`/`claude`/`bandit`, or `gh` if you passed `--auto-merge`) and ensure it's on PATH — re-run the [pre-flight self-check](#pre-flight-self-check). |
 | `🚨 CRITICAL: GEMINI_API_KEY is not set` | `export GEMINI_API_KEY=…` and persist it in `~/.bashrc` (Step 8). |
+| `🚨 CRITICAL: --auto-merge requires GITHUB_TOKEN …` | `--auto-merge` needs `gh` + `GITHUB_TOKEN` — set them up in [Step 9](#9-optional-github-cli-for---auto-merge), or drop `--auto-merge` to stop at the pushed feature branch. |
 | `Unable to find image 'sdlc-sandbox/…'` / image pull fails | You skipped Step 7 — run `bash scripts/build_sandbox_images.sh`. There is no auto-pull; behind a corp proxy see [docker-on-windows.md](docker-on-windows.md) §6. |
 | git `could not read Password … terminal prompts disabled` | The clone needs non-interactive creds. **Best:** an env-backed credential helper + clean URL — see [Git auth (private repos)](#git-auth-private-repos). One-off: `https://<user>:<token>@github.com/…` (a **bare** `https://<token>@…` fails — token is the password, not the user), or SSH. ⚠ A token in the URL persists into `project.json` + the clone's `.git/config`. |
 | Run halts with `CIRCUIT BREAKER` + `incident_report.json` | Diagnose with `/analyze-run`. If the cause was a transient network/API blip, retry with `--resume <slug> <NNN> --reset-attempts`. |
