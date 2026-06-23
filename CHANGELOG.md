@@ -35,6 +35,16 @@ ADR: [0022-application-wide-finops-budget](./docs/decisions/0022-application-wid
 - The E4 DevOps phase (`run_devops_scaffold`) enforces the remaining budget and folds its (even partial)
   spend into the app total via a `finally`-merge, so a budget halt mid-self-heal stays accounted for.
 
+### Fixed
+- **GRAND TOTAL / `finops_report.json` now render against the effective `--budget` ceiling, not the
+  `PIPELINE_APP_BUDGET_USD` default.** The per-ticket and Nexus summaries hard-coded the module default
+  (e.g. `/ $25.00`) even under `--budget 8.50` — the breaker always *enforced* the real ceiling, only the
+  *displayed* denominator was wrong. The effective ceiling is published via a runtime-only
+  `EFFECTIVE_BUDGET_USD` `ContextVar` (`effective_budget_usd()` SSOT, never persisted, so re-budgeting is
+  unaffected): set to the app budget in `main()` and to each ticket's *remaining* ceiling in `run_executor`
+  / `run_devops_scaffold`, and read by the report/summary wrappers in `src/nexus/runner.py` +
+  `src/nexus/nexus_runner.py`. Enforcement behaviour is unchanged.
+
 ## [v0.21.0] - 2026-06-23 — Physical Three-Plane Split: nexus / development / deployment
 
 ADR: [0021-physical-three-plane-split](./docs/decisions/0021-physical-three-plane-split.md)

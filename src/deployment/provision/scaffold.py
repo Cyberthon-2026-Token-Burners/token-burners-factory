@@ -13,7 +13,7 @@ from decimal import Decimal
 from pathlib import Path
 
 from src.shared.core.observability import log, reconfigure_logging
-from src.shared.core.config import PIPELINE_APP_BUDGET_USD
+from src.shared.core.config import PIPELINE_APP_BUDGET_USD, EFFECTIVE_BUDGET_USD
 from src.shared.core.models import GlobalPipelineContext, PipelineTelemetry
 from src.shared.core.runs import Projects
 from src.shared.core.environments import SUPPORTED_ENVIRONMENTS
@@ -99,6 +99,9 @@ async def run_devops_scaffold(projects: Projects, project, cfg: RunConfig, nexus
     application-wide total before propagating, and the batch's app report stays accurate."""
     devops_branch = "chore/devops-scaffold"
     budget_usd = budget_usd_ceiling if budget_usd_ceiling is not None else PIPELINE_APP_BUDGET_USD
+    # Publish the deploy phase's effective ceiling so its FinOps GRAND TOTAL / halt report render against
+    # the same remaining budget the breaker gates on (parity with run_executor). Never persisted.
+    EFFECTIVE_BUDGET_USD.set(budget_usd)
     cfg.repo = cfg.repo or project.repo
     cfg.base_branch = project.base_branch
     run_dir = projects.allocate(project.slug, "devops", "scaffold")

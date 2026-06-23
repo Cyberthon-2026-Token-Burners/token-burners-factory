@@ -3,6 +3,7 @@ import sys
 import shutil
 import instructor
 from decimal import Decimal
+from contextvars import ContextVar
 from google import genai
 from google.genai import types
 from google.genai.errors import ClientError
@@ -108,6 +109,23 @@ PIPELINE_APP_BUDGET_FLOOR_USD = Decimal(os.environ.get("PIPELINE_APP_BUDGET_FLOO
 # (fresh input + output; cache read/write are EXCLUDED, see PipelineTelemetry). Retained so the FinOps
 # report can surface the token footprint alongside the money spend; the breaker gates on USD alone.
 PIPELINE_BUDGET_TOKENS = int(os.environ.get("PIPELINE_BUDGET_TOKENS", "1000000"))
+
+# Effective money ceiling for the CURRENT run scope, published as a runtime-only ContextVar (NEVER
+# persisted — re-budgeting depends on re-resolving the ceiling each invocation, ADR 0022). It exists so the
+# FinOps GRAND TOTAL / report render against the real --budget ceiling, not this module default: main() sets
+# it to the app budget (so the Nexus summary shows it) and run_executor overrides it to the *remaining*
+# per-ticket ceiling (so the per-ticket summary matches the breaker). A ContextVar (per-asyncio-task copy)
+# keeps batch tickets isolated and avoids threading the budget through _abort_with_incident's many call
+# sites. Unset → effective_budget_usd() falls back to PIPELINE_APP_BUDGET_USD (so existing callers/tests are
+# unchanged).
+EFFECTIVE_BUDGET_USD: ContextVar = ContextVar("EFFECTIVE_BUDGET_USD", default=None)
+
+
+def effective_budget_usd() -> Decimal:
+    """The effective money ceiling for the current run scope (the EFFECTIVE_BUDGET_USD ContextVar), or
+    PIPELINE_APP_BUDGET_USD when unset. SSOT denominator the FinOps report/summary render against."""
+    current = EFFECTIVE_BUDGET_USD.get()
+    return current if current is not None else PIPELINE_APP_BUDGET_USD
 
 # Role -> (model, human-readable agent name) for structured (instructor) LLM calls.
 ROLE_MODELS = {

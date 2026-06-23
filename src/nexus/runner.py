@@ -14,7 +14,10 @@ from dataclasses import dataclass
 
 from src.shared.core.observability import log, reconfigure_logging
 from src.shared.core.observability import log_finops_summary as _render_finops_summary
-from src.shared.core.config import check_environment, PIPELINE_APP_BUDGET_USD, PIPELINE_APP_BUDGET_FLOOR_USD
+from src.shared.core.config import (
+    check_environment, PIPELINE_APP_BUDGET_USD, PIPELINE_APP_BUDGET_FLOOR_USD,
+    EFFECTIVE_BUDGET_USD, effective_budget_usd,
+)
 from src.shared.core.models import GlobalPipelineContext, WorkspacePaths, RUNS_BASE, BatchState, PipelineTelemetry
 from src.shared.core.runs import Projects
 from src.shared.core.environments import is_test_file, get_qa_profile
@@ -714,7 +717,7 @@ def write_finops_report(ctx: GlobalPipelineContext) -> None:
     with open(report_file, "w", encoding="utf-8") as f:
         # default=str serialises Decimal money as exact strings (json can't encode Decimal natively).
         json.dump(
-            ctx.telemetry.finops_report(PIPELINE_APP_BUDGET_USD),
+            ctx.telemetry.finops_report(effective_budget_usd()),
             f, indent=2, default=str,
         )
     log.debug(f"FinOps report written to {report_file}")
@@ -723,7 +726,7 @@ def write_finops_report(ctx: GlobalPipelineContext) -> None:
 def log_finops_summary(ctx: GlobalPipelineContext) -> None:
     """Print the end-of-run GRAND TOTAL block against the app budget. Thin wrapper over the
     shared telemetry-first renderer (also used by the Nexus control plane) so the block is identical."""
-    _render_finops_summary(ctx.telemetry, PIPELINE_APP_BUDGET_USD)
+    _render_finops_summary(ctx.telemetry, effective_budget_usd())
 
 
 def _abort_with_incident(ctx: GlobalPipelineContext, header: str) -> NoReturn:
@@ -952,6 +955,10 @@ def prepare_ticket_run(projects: Projects, project, cfg: RunConfig, ticket_id: s
 
 async def main():
     cfg = parse_args()
+    # Publish the app-wide ceiling so the FinOps GRAND TOTAL renders against the real --budget (not the
+    # module default). None (no --budget) → effective_budget_usd() falls back to PIPELINE_APP_BUDGET_USD.
+    # run_executor later overrides this with each ticket's remaining ceiling. Never persisted (ADR 0022).
+    EFFECTIVE_BUDGET_USD.set(cfg.budget_usd)
     projects = Projects(RUNS_BASE)
 
     # ---- Nexus planning: a fresh idea starts a NEW project (its --repo, if any, is captured for the
@@ -1074,6 +1081,9 @@ async def run_executor(cfg: RunConfig, run_dir: Path, resume_checkpoint: Path | 
     reconfigure_logging(run_dir / "logs")
     check_environment(require_forge=cfg.auto_merge)
     budget_usd = budget_usd_ceiling if budget_usd_ceiling is not None else PIPELINE_APP_BUDGET_USD
+    # Publish THIS ticket's effective ceiling (the remaining app budget on a batch) so its FinOps GRAND
+    # TOTAL + any halt report render against the same number the breaker gates on. Never persisted.
+    EFFECTIVE_BUDGET_USD.set(budget_usd)
 
     if resume_checkpoint is not None:
         log.info(f"▶️ RESUMING FSM EXECUTION FROM CHECKPOINT: {resume_checkpoint}")

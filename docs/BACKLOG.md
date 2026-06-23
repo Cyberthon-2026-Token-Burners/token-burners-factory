@@ -2,7 +2,7 @@
 
 Two parts:
 
-- **Part I — Capability Roadmap (Epics `E1`–`E5`)**: the forward-looking work to close the autonomy loop
+- **Part I — Capability Roadmap (Epics `E1`–`E6`)**: the forward-looking work to close the autonomy loop
   (idea → working, merged code in `main` → deployable). Larger than a single fix; each has its own
   Goal / Current state / Design / Dependencies / Risks / Acceptance.
 - **Part II — Defects & Refinements (`#4`–`#28`)**: granular fixes surfaced across pipeline runs, grouped by
@@ -36,6 +36,10 @@ Two parts:
 > New follow-ups noted under the lint-gate work: mypy/type-checking and node-eslint auto-provisioning.
 > Added **#27** (Gemini billing-balance exhaustion: 403 billing errors retried silently with no actionable message; fix in `api_retry.py` + `config.py`).
 > Added **#28** (per-role reasoning-effort/thinking routing for both providers — the second cost-tuning axis; surfaced from Cyberthone 2026 dimension-7 prep).
+>
+> Updated 2026-06-24: logged **E6** (autonomous release-tagging behind `--release`, nexus-owned decision +
+> `forge.py` tag-push) — the first open capability epic since E1–E5 shipped; surfaced from the
+> `json-to-csv-python` deploy run where the tag-gated `release` job was skipped on merge-to-`main`.
 
 ---
 
@@ -54,6 +58,7 @@ E1 ✅ Nexus auto-dispatches Executor (one ticket)   — DONE (v0.17.0 / ADR 001
       └─► E2 ✅ Close the loop to main (auto-approved PR + merge)  — DONE (v0.18.0 / ADR 0018)
               └─► E3 ✅ Cyclical multi-ticket orchestration (all tasks, each building on the last)  — DONE (v0.19.0 / ADR 0019)
                       ├─► E4 ✅ DevOps deploy-scaffolding (--scaffold-deploy)  — DONE (v0.20.0 / ADR 0020)
+                      │       └─► E6 ⬜ Autonomous release-tagging (--release; nexus tags main → triggers the E4 workflow)  — PLANNED
                       └─► E5 ✅ Application-wide FinOps budget (one money ceiling, remaining threaded per ticket)  — DONE (v0.22.0 / ADR 0022)
 ```
 
@@ -285,6 +290,55 @@ runs against the remaining unused budget; the batch halts cleanly with an incide
 exhausted, and `--resume` continues with the correct remaining total. A batch can no longer overspend `N×`
 the intended ceiling.
 
+## E6. [⬜ PLANNED] Autonomous release-tagging (`--release`) — close the loop to a published artifact
+
+**Goal:** make the final step of the autonomy loop — cutting the release — agent-driven too. Behind an
+opt-in `--release` flag, after a batch has merged every ticket (and optionally scaffolded deploy), the
+engine resolves the next version and pushes a `v*` tag, which triggers the deploy/release workflow the
+DevOps plane already generated. Turns "idea in → merged app on `main`" into "idea in → **released artifact
+out**, zero human touches" — the last unautomated step (and the first open epic since E1–E5 all shipped).
+
+**Current state:**
+- The E4 deploy-scaffold generates a release workflow that is **tag-gated** (CLI archetype:
+  `if: startsWith(github.ref, 'refs/tags/v')`, per `prompts/skills/devops_cli_tool.md` lines 13/15). A merge
+  to `main` runs tests but **skips** the release job — observed in the `write-a-python-cli-utility-that-takes-a`
+  run (run `009` scaffold; the `release` job rendered "This job was skipped"). Today the operator must push a
+  `v*` tag by hand.
+- No part of the engine pushes tags; `src/shared/utils/forge.py` covers PR open/approve/merge only.
+
+**Design (decision vs mechanism — placement settled, see also [plane-import-direction](../.claude/rules/plane-import-direction.md)):**
+- **nexus owns the decision + trigger.** `run_batch` (the terminal orchestrator that knows the whole build
+  finished) pushes the tag as its **final step**, after all tickets merge (+ optional `run_devops_scaffold`).
+  Versioning is a control-plane lifecycle decision; it needs **no reverse import** (nexus → shared `forge` is
+  free, and `run_batch` already lazy-imports the deployment plane), and it **decouples release from
+  `--scaffold-deploy`** (a release is "the build finished", not "we regenerated CI").
+- **deployment stays a pure config generator** — the DevOps agent emits the workflow the tag triggers; it
+  does not version or tag. Unchanged.
+- **shared `forge.py` gains the tag-push op** (SSOT seam alongside `open_pr`/`merge_pr`), under the same
+  `GH_NETWORK_TIMEOUT` + `sanitize_for_argv` boundary rules ([subprocess-and-external-call-safety](../.claude/rules/subprocess-and-external-call-safety.md)).
+- **Version policy (recommended):** derive from the target repo's existing tags — read `git tag`, find the
+  latest `v*` semver, bump (minor by default); `v0.1.0` on a greenfield repo with no tags. Repo-derived (not
+  invented, not persisted) → idempotent and collision-free across independent builds and `--resume`. The bump
+  level is an env-overridable UPPER_CASE constant ([config-constant-convention](../.claude/rules/config-constant-convention.md)).
+
+**Dependencies:** **E4** (a tag-triggered workflow must exist on `main` or the tag is inert) + **E3** (the
+batch-completion point). Independent of E5.
+
+**Risks / open questions:**
+- **Opt-in, never default:** a release is a deliberate act; `--release` off by default keeps best-practice
+  tag-driven releases for normal runs.
+- **Outward-facing + low reversibility:** a published Release is public — gate behind the explicit flag and
+  log the chosen tag/version. The engine still only pushes a *tag*; the user's Actions performs the actual
+  publish with the user's token (consistent with E4's "engine never holds cloud creds").
+- **Inert tag:** if no tag-triggered workflow exists (scaffold never run), the tag does nothing — acceptable;
+  optionally warn.
+- **Monorepo:** assumes one app/version per repo; revisit if one repo hosts several apps.
+
+**Acceptance:** `--idea "…" --auto-execute --scaffold-deploy --release` ends with a `v*` tag on `main` and
+the release workflow running automatically (no manual tag); the version is the repo's latest `v*` bumped (or
+`v0.1.0` greenfield); `--release` is off by default; re-runs/`--resume` neither duplicate nor collide a tag.
+Likely warrants an ADR (new FSM terminal action).
+
 ---
 
 # Part II — Defects & Refinements
@@ -439,9 +493,22 @@ what the Pay-as-you-go API returns, one of two bad paths fires:
   does NOT match; the error falls through to `_retry_or_raise`, burns 3 retries with exponential
   backoff (6 + 8 + 12 s), then dies with a generic "API call failed after 3 attempts — ClientError"
   and no billing context. The operator has no idea why.
+- **Structured (instructor) calls surface it as `InstructorRetryException`, NOT `ClientError`** —
+  **OBSERVED 2026-06-23** in the `write-a-python-cli-utility-that-takes-a` 4-ticket batch (runs
+  `005`/`006_exec_TASK-04`): the Reviewer Agent (the heaviest Gemini call) died twice with
+  `🚨 CRITICAL: Reviewer Agent API call failed after 3 attempts — InstructorRetryException`, no incident,
+  no billing context. The batch process exited (this is **not** a `PipelineHalt`, so `batch_state.failed`
+  stayed `null` and no `incident_report.json` was written); TASK-04 only completed after a manual
+  `--resume` (run `008`) once the balance was topped up. instructor wraps the underlying 403/429 in its
+  OWN retry, so `api_retry.py`'s `except ClientError` (line 39) never matches — the error lands in the
+  generic `except Exception` (line 46) with no `status_code`, so **both the existing 429 branch AND a new
+  403 branch (fix #1 below) would MISS it**. Every role except the Developer is a structured call, so this
+  is the dominant path.
 **Root cause:** `ClientError` catches ALL 4xx HTTP errors; only 429 is branched as non-retryable. A
 billing 403 is not transient — retrying it is wasteful and misleading. The error message in the 429
-path also does not distinguish rate-limit (true quota) from balance-exhaustion.
+path also does not distinguish rate-limit (true quota) from balance-exhaustion. For structured calls the
+real exception is `InstructorRetryException` wrapping the 403/429, which the `ClientError`-keyed logic
+never inspects.
 **Fix direction:**
 1. `src/shared/utils/api_retry.py` — add a fast-fail branch for 403 alongside 429: billing errors are
    permanent, not transient; retrying them wastes backoff budget and obscures the real cause.
@@ -449,6 +516,12 @@ path also does not distinguish rate-limit (true quota) from balance-exhaustion.
    billing-exhaustion signals in `e.status` or `e.message` (keywords: `BILLING_DISABLED`, `PERMISSION_DENIED`,
    negative balance message) and surface: *"Your Gemini account balance is negative — top up at
    console.cloud.google.com/billing"* vs the rate-limit message for a true 429 quota hit.
+3. **Unwrap the instructor case (the actually-observed path):** in the generic `except Exception` of
+   `api_retry.py`, detect a billing/quota 403/429 wrapped inside `InstructorRetryException` (inspect its
+   `__cause__` / wrapped error) and fast-fail with the same actionable message — otherwise the common
+   structured-call path (every role but the Developer) burns 3 retries and dies contextless, exactly as
+   seen in the TASK-04 run. NB: this is a billing/quota stop, not an FSM defect — the batch itself behaved
+   correctly and completed once funded.
 
 ## 24. [P3] Misleading comment on the QA-self zombie-disposal path
 **Symptom:** [qa.py:231](../src/development/agents/qa.py#L231) labels the `suite.files_to_delete` disposal as

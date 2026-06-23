@@ -2531,6 +2531,31 @@ class FinOpsReportTests(unittest.TestCase):
         self.assertIn("by_plane", report)                    # E5 per-plane rollup present
         self.assertIn("total_duration_seconds", report)
 
+    def test_effective_budget_defaults_to_app_budget_when_unset(self) -> None:
+        # Unset ContextVar → the report/summary denominator falls back to the module app budget.
+        # Reference the LIVE config module (a sibling test reloads it, minting a fresh ContextVar) so we
+        # set/read the same object the wrapper does — the desync is reload-only, never a production path.
+        from src.shared.core import config as cfgmod
+        tok = cfgmod.EFFECTIVE_BUDGET_USD.set(None)
+        try:
+            self.assertEqual(cfgmod.effective_budget_usd(), cfgmod.PIPELINE_APP_BUDGET_USD)
+        finally:
+            cfgmod.EFFECTIVE_BUDGET_USD.reset(tok)
+
+    def test_finops_report_denominator_follows_effective_ceiling(self) -> None:
+        # Regression: a --budget run must render the report against the EFFECTIVE ceiling (e.g. $8.50),
+        # NOT the PIPELINE_APP_BUDGET_USD module default. The wrapper reads EFFECTIVE_BUDGET_USD.
+        from src.shared.core import config as cfgmod
+        tok = cfgmod.EFFECTIVE_BUDGET_USD.set(Decimal("8.50"))
+        try:
+            with TemporaryDirectory() as td:
+                base = Path(td)
+                orchestrator.write_finops_report(self._ctx(base))
+                report = json.loads((base / "reports" / "finops_report.json").read_text(encoding="utf-8"))
+            self.assertEqual(Decimal(str(report["budget_usd"])), Decimal("8.50"))
+        finally:
+            cfgmod.EFFECTIVE_BUDGET_USD.reset(tok)
+
 
 class MissingContractFilesTests(unittest.TestCase):
     """`_missing_contract_files` reports contracted production files absent from the working tree."""
