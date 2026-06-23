@@ -102,7 +102,7 @@ which node    # expected: /home/<you>/.nvm/versions/node/v.../bin/node
 
 ```bash
 mkdir -p ~/projects && cd ~/projects
-git clone <repo-url> async-agentic-sdlc && cd async-agentic-sdlc
+git clone <repo-url> token-burners-factory && cd token-burners-factory
 ```
 
 (See the `/mnt/c/` warning in Step 0 — this is why the project lives under `~/`.)
@@ -339,7 +339,7 @@ Then run with a token-free URL — `--repo https://github.com/<owner>/<repo>.git
 Tests, `bandit`, and the venv `python` are **WSL-only**. Run the suite as a smoke test:
 
 ```bash
-wsl -e bash -lc "cd /mnt/c/code/async-agentic-sdlc && source venv/bin/activate && python3 -m unittest discover -s tests"
+wsl -e bash -lc "cd /mnt/c/code/token-burners-factory && source venv/bin/activate && python3 -m unittest discover -s tests"
 ```
 
 ---

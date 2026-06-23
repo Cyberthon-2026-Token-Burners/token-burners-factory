@@ -1,4 +1,4 @@
-# Async Agentic SDLC Orchestrator (OPS_000)
+# Token Burners Factory
 
 An engineered, deterministic multi-agent workflow engine built to automate the entire Software Development Life Cycle (SDLC) without human intervention.
 
@@ -60,7 +60,7 @@ As determined during the initial research phase, this project intentionally reje
 This repository is strictly organized to provide 100% traceability for evaluation:
 
 ```text
-async-agentic-sdlc/
+token-burners-factory/
 ├── src/                        # Source code, split into 3 physical planes (control / worker / infra) + shared
 │   ├── nexus/                  # Control Plane — orchestration + FSM + planning
 │   │   ├── runner.py           # main() dispatcher + run_executor FSM + run_batch (E3); resume routing, --auto-execute/--scaffold-deploy bridges

@@ -20,8 +20,8 @@ interpreter lacks the dependencies and the venv is WSL-only.
 * **Scaffold deploy config (E4)**: add `--scaffold-deploy` to an `--auto-execute` run → after the batch merges every ticket, the `devops` agent generates + merges the app's CI/CD config (archetype-aware Dockerfile + GitHub Actions deploy workflow, GCP Cloud Run via WIF) on `chore/devops-scaffold` (`run_devops_scaffold`). Needs the forge env (`gh` + `GITHUB_TOKEN`); one-time org setup in `docs/guides/devops_setup.md`.
 * **Resume a run**: `python3 main.py --resume <project> [NNN]`  (slug alone → latest Nexus run; re-pass `--scaffold-deploy` to run the deploy phase)
 * **Legacy direct run**: `python3 main.py --repo <url|path> --ticket <ID> -f <ticket_path>`
-* **Run Tests**: `wsl -e bash -lc "cd /mnt/c/code/async-agentic-sdlc && source venv/bin/activate && python3 -m unittest discover -s tests"`
-* **Check Lint/Security**: `wsl -e bash -lc "cd /mnt/c/code/async-agentic-sdlc && venv/bin/bandit -r src/"`
+* **Run Tests**: `wsl -e bash -lc "cd /mnt/c/code/token-burners-factory && source venv/bin/activate && python3 -m unittest discover -s tests"`
+* **Check Lint/Security**: `wsl -e bash -lc "cd /mnt/c/code/token-burners-factory && venv/bin/bandit -r src/"`
 
 ## Project Knowledge & Procedures
 * Project knowledge lives in `.claude/rules/*.md` — auto-loaded by Claude Code (path-scoped rules load only when you touch matching files; cross-cutting ones load every session). No manual step needed.

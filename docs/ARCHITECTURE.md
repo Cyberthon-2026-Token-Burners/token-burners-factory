@@ -23,7 +23,7 @@ Who operates the engine and which external systems it depends on.
 flowchart TB
     human(["👤 Human Operator<br/>(developer / maintainer)"])
 
-    engine["⚙️ Agentic SDLC Engine<br/>Python asyncio FSM · 3 planes + shared<br/>(control · worker · infra)"]
+    engine["⚙️ Token Burners Factory<br/>Python asyncio FSM · 3 planes + shared<br/>(control · worker · infra)"]
 
     gemini["☁️ Google Gemini API<br/>structured output via instructor"]
     claude["🤖 Claude Code CLI<br/>agentic file-editing (Developer)"]
