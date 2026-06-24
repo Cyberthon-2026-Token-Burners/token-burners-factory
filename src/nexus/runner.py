@@ -21,7 +21,7 @@ from src.shared.core.config import (
 )
 from src.shared.core.models import GlobalPipelineContext, WorkspacePaths, RUNS_BASE, BatchState, PipelineTelemetry
 from src.shared.core.runs import Projects
-from src.shared.core.environments import is_test_file, get_qa_profile, failure_origin_markers, all_comment_prefixes
+from src.shared.core.environments import is_test_file, get_qa_profile, failure_origin_markers, all_comment_prefixes, DEPENDENCY_VENDOR_DIR
 from src.shared.core.prompts import generate_repo_map
 from src.shared.utils.git_helpers import get_git_root, get_pipeline_snapshot_files
 from src.shared.utils.redaction import redact
@@ -259,6 +259,17 @@ async def bootstrap_session(cfg: RunConfig, run_dir: Path, branch: str | None = 
         ["git", "-C", str(repo_dir), "fetch", "--depth", "1", "origin", f"{cfg.base_branch}:{cfg.base_branch}"],
         "git fetch base branch", timeout=GIT_NETWORK_TIMEOUT,
     )
+
+    # Keep the engine's vendored-deps dir out of every `git add -A` (the agents stage the whole tree each
+    # cycle). A gate's restore installs third-party packages into /workspace/<DEPENDENCY_VENDOR_DIR>; without
+    # this they would be committed + pushed into the PR. `.git/info/exclude` is the per-clone, never-committed
+    # gitignore — language-agnostic (one engine constant), and it also makes ruff/semgrep skip the dir for
+    # free (both honor git ignore files), independent of any agent-authored `.gitignore`.
+    exclude_path = repo_dir / ".git" / "info" / "exclude"
+    exclude_path.parent.mkdir(parents=True, exist_ok=True)
+    with exclude_path.open("a", encoding="utf-8") as fh:
+        fh.write(f"\n{DEPENDENCY_VENDOR_DIR}/\n")
+
     log.info(f"   [GIT] Shallow-cloned {redact(cfg.repo)} -> {repo_dir} (branch: {branch})")
 
     return WorkspacePaths.for_run(run_dir, repo_dir)

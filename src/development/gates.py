@@ -58,15 +58,26 @@ _ENV_BUILD_FAILURE_MARKERS = (
     # restore failure as environmental and mask real code/config defects as false NU1301 network halts.
     # Match only the underlying tool's genuine network signatures above.
 )
+# Word-boundary matching, NOT naive substring. The short alnum error-code tokens (Node's `enotfound`/
+# `eai_again`/`etimedout`/`econnreset`, NuGet's `nu1301`, …) collide as substrings of ordinary diagnostic
+# words — e.g. `enotfound` ⊂ python `ModulENOTFOUNDError`, which would tag EVERY missing-module failure as
+# a phantom network error. `\b…\b` requires the marker to stand alone as a token (spaces in multi-word
+# phrases are already boundaries; `re.escape` keeps regex metachars literal), so a real `ENOTFOUND` from a
+# DNS failure still matches while `ModuleNotFoundError` does not. Stays language-agnostic: one shared
+# network-signature set matched uniformly across every stack, no per-language branch.
+_ENV_BUILD_FAILURE_RE = re.compile(
+    r"\b(?:" + "|".join(re.escape(m) for m in _ENV_BUILD_FAILURE_MARKERS) + r")\b"
+)
 
 
 def build_failure_is_environmental(environment_id: str, log_lines: list[str]) -> bool:
     """True iff the build/restore output bears a network/feed-unreachable signature (and is therefore
     NOT a code defect). Used by the runner to fail FAST with a clear environment incident instead of
     rerouting the Developer to "fix" an unreachable package feed. Conservative: requires an explicit
-    network/restore marker, so genuine compiler errors fall through to the normal compile-gate reroute."""
+    network/restore marker on a WORD BOUNDARY, so genuine compiler errors (and substrings like
+    `ModuleNotFoundError` ⊃ `enotfound`) fall through to the normal compile-gate reroute."""
     blob = "\n".join(log_lines).lower()
-    return any(marker in blob for marker in _ENV_BUILD_FAILURE_MARKERS)
+    return _ENV_BUILD_FAILURE_RE.search(blob) is not None
 
 
 def classify_lint_findings(environment_id: str, log_lines: list[str]) -> tuple[list[str], list[str]]:

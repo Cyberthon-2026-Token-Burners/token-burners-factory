@@ -44,10 +44,25 @@
 
 from pathlib import Path
 
+# Engine-universal "vendored dependencies" dir (SSOT name). A stack whose package manager would otherwise
+# install into an EPHEMERAL location installs into THIS dir under /workspace instead. The motivating case is
+# python: pip, run as the sandbox's non-root --user, defaults to a `--user` install under $HOME=/tmp, which
+# is a per-container `--tmpfs` — so packages restored in the network-ON restore container VANISH before the
+# separate network-OFF execute container runs, and every third-party import (`ModuleNotFoundError: No module
+# named 'click'`) fails. Installing into /workspace/<this> fixes it: the repo bind mount PERSISTS across the
+# restore→execute containers and is per-run isolated (no cross-project leakage, unlike the shared cache
+# volume). NOT a per-language concept — any stack with the same ephemeral-install problem reuses it (today
+# only python; go/node/dotnet already persist via the cache volume or an in-workspace node_modules). It is a
+# DOTDIR, so the repo-map walker and pytest skip it for free; the build/lint/SAST gates and git staging
+# exclude it explicitly (they walk the tree regardless of a leading dot).
+DEPENDENCY_VENDOR_DIR = ".sdlc_deps"
+
 SUPPORTED_ENVIRONMENTS = {
     "python-3.12-core": {
         "image": "sdlc-sandbox/python:latest",
-        "build_cmd": "python -m compileall -q .",
+        # `-x` excludes the vendored-deps dir so compileall doesn't waste time (or surface spurious
+        # warnings) compiling third-party packages installed under it by `setup_cmd`.
+        "build_cmd": rf"python -m compileall -q -x '(^|/)\{DEPENDENCY_VENDOR_DIR}(/|$)' .",
         # `python -m pytest` (not the bare `pytest` console script) so the sandbox cwd (/workspace) is
         # on sys.path[0] — lets QA's topology imports (`from src.converter import …`) resolve against
         # the repo-root `src` package (PEP 420 namespace; no __init__.py needed). The bare script would
@@ -56,19 +71,26 @@ SUPPORTED_ENVIRONMENTS = {
         # Compile-only check of the QA-generated tests (imports/collects, runs NOTHING) — surfaces
         # ImportError/SyntaxError before the Reviewer. Drives the pre-Reviewer QA test-compile gate.
         "test_compile_cmd": "python -m pytest --collect-only -q",
-        "setup_cmd": "pip install -r requirements.txt 2>/dev/null || true",
         # lint_cmd: the HARD lint gate (run_lint_gate). `ruff check` catches lint rules format_cmd's
         # autofix could not apply (e.g. F841 unused-local — an *unsafe* fix ruff won't auto-apply), and
         # `ruff format --check` catches formatter drift. --no-cache on the check so ruff never leaves a
         # `.ruff_cache/` in the tree for a later `git add -A` to commit. SSOT shared with the generated CI.
-        "lint_cmd": "ruff check --no-cache . && ruff format --check .",
+        "lint_cmd": f"ruff check --no-cache --extend-exclude={DEPENDENCY_VENDOR_DIR} . && ruff format --check --extend-exclude={DEPENDENCY_VENDOR_DIR} .",
         # format_cmd: deterministic cleanup pass — strips unused imports, autofixes safe lint, AND applies
         # the formatter (ruff format) so the lint gate's `ruff format --check` passes without rerouting the
         # (expensive) Developer for pure formatting. --exit-zero keeps a residual unfixable finding from
         # logging a spurious non-fatal warning; the pass is cleanup, not a gate. --no-cache: one-shot pass,
         # so skip the cache — otherwise ruff writes a `.ruff_cache/` into the repo that `git add -A` commits.
-        "format_cmd": "ruff check --fix --exit-zero --quiet --no-cache . ; ruff format --quiet .",
-        "sandbox_env": {"HOME": "/tmp", "XDG_CACHE_HOME": "/tmp/.cache", "PYTHONDONTWRITEBYTECODE": "1"},  # nosec B108 — in-container tmpfs paths
+        "format_cmd": f"ruff check --fix --exit-zero --quiet --no-cache --extend-exclude={DEPENDENCY_VENDOR_DIR} . ; ruff format --quiet --extend-exclude={DEPENDENCY_VENDOR_DIR} .",
+        # setup_cmd installs the project's requirements into the vendored-deps dir (--target) instead of the
+        # default `--user` site, because under the sandbox's non-root --user pip lands in $HOME=/tmp — a
+        # per-container tmpfs that is WIPED before the separate network-OFF execute container, so every
+        # third-party import failed (see DEPENDENCY_VENDOR_DIR). /workspace persists across those containers.
+        # PYTHONPATH (sandbox_env, below) puts the --target dir on sys.path so `python -m pytest`/`compileall`
+        # can import the restored packages. `2>/dev/null || true`: a "target already exists" warning on a
+        # later gate's re-restore is benign; never fail the restore on it.
+        "setup_cmd": f"pip install --target=/workspace/{DEPENDENCY_VENDOR_DIR} -r requirements.txt 2>/dev/null || true",
+        "sandbox_env": {"HOME": "/tmp", "XDG_CACHE_HOME": "/tmp/.cache", "PYTHONDONTWRITEBYTECODE": "1", "PYTHONPATH": f"/workspace/{DEPENDENCY_VENDOR_DIR}"},  # nosec B108 — in-container tmpfs paths
         # Persistent download cache (survives the separate restore/build/test containers + across runs);
         # mounted RW only on the network-ON restore phase. Overrides the tmpfs pip cache.
         "cache_volume": {"name": "sdlc-cache-python", "mount": "/cache", "env": {"PIP_CACHE_DIR": "/cache/pip"}},
@@ -194,7 +216,10 @@ SUPPORTED_ENVIRONMENTS = {
 # call semgrep.dev and fail behind a corporate TLS proxy. `--metrics off` suppresses the telemetry
 # call; `--error` makes findings a non-zero (gate-failing) exit. Keep tag in sync with the build script.
 SAST_IMAGE = "sdlc-sandbox/semgrep:latest"
-SAST_CMD = "semgrep scan --error --metrics off --config /opt/semgrep-rules /workspace"
+# --exclude skips the engine's vendored-deps dir so SAST never scans (or flags findings in) third-party
+# packages a gate restored into /workspace/<DEPENDENCY_VENDOR_DIR>. Generic flag + engine-universal dir name
+# — no per-language coupling.
+SAST_CMD = f"semgrep scan --error --metrics off --exclude={DEPENDENCY_VENDOR_DIR} --config /opt/semgrep-rules /workspace"
 
 
 # ==========================================================================================
