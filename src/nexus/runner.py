@@ -2,6 +2,7 @@ import os
 import re
 import sys
 import json
+import time
 import uuid
 import argparse
 import asyncio
@@ -1156,6 +1157,19 @@ async def main():
     await run_executor(cfg, run_dir, resume_checkpoint, budget_usd_ceiling=cfg.budget_usd)
 
 
+async def _timed_phase(telemetry, phase: str, coro):
+    """Await ``coro`` (a non-LLM infra step — a docker gate, the SAST scan, git clone, a forge op) and
+    record its wall-clock into ``telemetry.by_phase[phase]`` (``record_phase``), so the FinOps TOTAL
+    reflects real end-to-end time — the gates/SAST/git that run BETWEEN agent calls were previously
+    untimed (the TOTAL counted LLM time only). Timing wraps the FULL call, so container startup counts;
+    the elapsed is recorded even if the step raises."""
+    t0 = time.perf_counter()
+    try:
+        return await coro
+    finally:
+        telemetry.record_phase(phase, time.perf_counter() - t0)
+
+
 async def run_executor(cfg: RunConfig, run_dir: Path, resume_checkpoint: Path | None = None,
                        budget_usd_ceiling: Decimal | None = None) -> GlobalPipelineContext:
     """Execute ONE ticket end-to-end in a prepared run dir: bootstrap (or resume) → TechLead → the FSM
@@ -1190,7 +1204,9 @@ async def run_executor(cfg: RunConfig, run_dir: Path, resume_checkpoint: Path | 
             ctx.current_attempt = 1
             log.info("🔄 State mutated: attempt counter reset to 1.")
     else:
-        # Bootstrap an isolated git-anchored session into the pre-bound run dir.
+        # Bootstrap an isolated git-anchored session into the pre-bound run dir. Timed manually (ctx —
+        # hence ctx.telemetry — does not exist yet) and recorded as the "git:clone" infra phase below.
+        _clone_t0 = time.perf_counter()
         paths = await bootstrap_session(cfg, run_dir)
         ctx = GlobalPipelineContext(
             pr_description=cfg.description or "",
@@ -1198,6 +1214,7 @@ async def run_executor(cfg: RunConfig, run_dir: Path, resume_checkpoint: Path | 
             ticket=cfg.ticket or "",
             workspace_paths=paths,
         )
+        ctx.telemetry.record_phase("git:clone", time.perf_counter() - _clone_t0)
 
         # Context routing: feed the architectural blueprint (sibling of the ticket file) into the
         # TechLead's input. TechLead is the SOLE router — it reads ticket + blueprint and distributes
@@ -1363,8 +1380,9 @@ async def run_executor(cfg: RunConfig, run_dir: Path, resume_checkpoint: Path | 
                 # Compile gate: give the Developer REAL build feedback before the expensive QA/Reviewer
                 # cycle. Build/run-only (never tests). A clean build → proceed; a failure fast-fail
                 # reroutes to the Developer (no functional-budget spent), exactly like the doc guardrail.
-                build_ok, build_lines = await run_build_gate(
-                    ctx.contract.environment_id, str(ctx.workspace_paths.repo_dir)
+                build_ok, build_lines = await _timed_phase(
+                    ctx.telemetry, "build",
+                    run_build_gate(ctx.contract.environment_id, str(ctx.workspace_paths.repo_dir)),
                 )
                 if build_ok:
                     break  # documented + compiles → proceed to gates/Reviewer
@@ -1375,8 +1393,9 @@ async def run_executor(cfg: RunConfig, run_dir: Path, resume_checkpoint: Path | 
                 # transient blip; a persistent outage fails FAST with a precise, retry-later incident.
                 if build_failure_is_environmental(ctx.contract.environment_id, build_lines):
                     log.warning("🔶 Compile gate failed on a NETWORK/restore error (not a code defect) — retrying the build once before judging.")
-                    build_ok, build_lines = await run_build_gate(
-                        ctx.contract.environment_id, str(ctx.workspace_paths.repo_dir)
+                    build_ok, build_lines = await _timed_phase(
+                        ctx.telemetry, "build",
+                        run_build_gate(ctx.contract.environment_id, str(ctx.workspace_paths.repo_dir)),
                     )
                     if build_ok:
                         break
@@ -1426,8 +1445,9 @@ async def run_executor(cfg: RunConfig, run_dir: Path, resume_checkpoint: Path | 
         #     not clearly test-only (env/network, or a production-referencing failure) falls through to
         #     the Reviewer unchanged, so real production bugs are never misrouted to QA.
         for qa_gate_retries in range(QA_GATE_MAX_REROUTES + 1):
-            tc_ok, tc_lines = await run_test_compile_gate(
-                ctx.contract.environment_id, str(ctx.workspace_paths.repo_dir)
+            tc_ok, tc_lines = await _timed_phase(
+                ctx.telemetry, "test-compile",
+                run_test_compile_gate(ctx.contract.environment_id, str(ctx.workspace_paths.repo_dir)),
             )
             if tc_ok:
                 break
@@ -1468,9 +1488,13 @@ async def run_executor(cfg: RunConfig, run_dir: Path, resume_checkpoint: Path | 
         lint_test_findings: list[str] = []
         prev_lint_findings: tuple | None = None
         for lint_retries in range(LINT_GATE_MAX_REROUTES + 1):
-            await run_format_pass(ctx.contract.environment_id, str(ctx.workspace_paths.repo_dir))
-            lint_ok, lint_lines = await run_lint_gate(
-                ctx.contract.environment_id, str(ctx.workspace_paths.repo_dir)
+            await _timed_phase(
+                ctx.telemetry, "format",
+                run_format_pass(ctx.contract.environment_id, str(ctx.workspace_paths.repo_dir)),
+            )
+            lint_ok, lint_lines = await _timed_phase(
+                ctx.telemetry, "lint",
+                run_lint_gate(ctx.contract.environment_id, str(ctx.workspace_paths.repo_dir)),
             )
             if lint_ok:
                 break
@@ -1521,14 +1545,19 @@ async def run_executor(cfg: RunConfig, run_dir: Path, resume_checkpoint: Path | 
         #    purging, no cycle skipping. All runner logs (stdout+stderr) flow to the Reviewer, the sole
         #    node that semantically judges failures (incl. ImportError) and routes the fix.
         log.debug("Triggering parallel validation gates (QA & Security)")
-        qa_result, sec_result = await asyncio.gather(
-            run_qa_unit_tests(
-                environment_id=ctx.contract.environment_id,
-                repo_root=str(ctx.workspace_paths.repo_dir),
-            ),
-            run_security_scan(
-                environment_id=ctx.contract.environment_id,
-                repo_root=str(ctx.workspace_paths.repo_dir),
+        # Timed as ONE "qa+sast" phase = the gather's true wall-clock (= max of the two, they run in
+        # parallel), so the parallel work is NOT double-counted in the infra total.
+        qa_result, sec_result = await _timed_phase(
+            ctx.telemetry, "qa+sast",
+            asyncio.gather(
+                run_qa_unit_tests(
+                    environment_id=ctx.contract.environment_id,
+                    repo_root=str(ctx.workspace_paths.repo_dir),
+                ),
+                run_security_scan(
+                    environment_id=ctx.contract.environment_id,
+                    repo_root=str(ctx.workspace_paths.repo_dir),
+                ),
             ),
         )
         qa_success, qa_lines = qa_result
@@ -1663,7 +1692,7 @@ async def run_executor(cfg: RunConfig, run_dir: Path, resume_checkpoint: Path | 
             # SystemExit) still persists + surfaces the FinOps report — spend stays auditable.
             try:
                 if cfg.auto_merge:
-                    await finalize_pr(ctx, cfg)
+                    await _timed_phase(ctx.telemetry, "forge:pr", finalize_pr(ctx, cfg))
             finally:
                 write_finops_report(ctx)
                 log_finops_summary(ctx)

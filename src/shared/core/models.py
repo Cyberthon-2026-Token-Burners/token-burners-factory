@@ -136,6 +136,13 @@ class AgentUsage(BaseModel):
     duration_seconds: float = 0.0  # cumulative wall-clock spent in this agent's LLM/CLI calls
     calls: int = 0
 
+class PhaseUsage(BaseModel):
+    """Wall-clock for a non-LLM infra phase (a docker gate, git clone, PR/merge) — see
+    ``PipelineTelemetry.record_phase``. Infra phases spend NO tokens/money, so this carries time only;
+    it makes the previously-invisible gate/SAST/git time auditable next to the per-agent LLM time."""
+    duration_seconds: float = 0.0  # cumulative wall-clock spent in this infra phase
+    calls: int = 0                 # how many times the phase ran (e.g. a gate re-run per cycle)
+
 class PipelineTelemetry(BaseModel):
     """Cumulative, checkpoint-persisted token/cost/time telemetry across all agent calls.
 
@@ -152,8 +159,17 @@ class PipelineTelemetry(BaseModel):
     total_cache_read_tokens: int = 0
     total_cache_write_tokens: int = 0
     total_cost_usd: Decimal = Decimal("0")
-    total_duration_seconds: float = 0.0  # cumulative wall-clock across all recorded agent calls
+    total_duration_seconds: float = 0.0  # cumulative wall-clock across all recorded agent (LLM/CLI) calls
+    total_infra_seconds: float = 0.0     # cumulative wall-clock across all non-LLM infra phases (gates/SAST/git)
     by_agent: dict[str, AgentUsage] = Field(default_factory=dict)
+    by_phase: dict[str, PhaseUsage] = Field(default_factory=dict)  # infra phase → wall-clock (record_phase)
+
+    @property
+    def total_wall_seconds(self) -> float:
+        """Real end-to-end wall-clock ≈ LLM/CLI time + measured infra (gate/SAST/git) time. The historical
+        ``total_duration_seconds`` counted LLM time ONLY, hiding ~40%+ of the build (the gates/SAST/git that
+        run between agent calls); this is the honest figure surfaced in the FinOps TOTAL."""
+        return self.total_duration_seconds + self.total_infra_seconds
 
     def record(self, agent: str, input_tokens: int, output_tokens: int,
                cost_usd: Decimal | float = Decimal("0"), provider: str = "gemini",
@@ -179,6 +195,16 @@ class PipelineTelemetry(BaseModel):
         self.total_cache_write_tokens += cache_write_tokens
         self.total_cost_usd += cost
         self.total_duration_seconds += duration_seconds
+
+    def record_phase(self, phase: str, duration_seconds: float) -> None:
+        """Accumulate wall-clock for a non-LLM infra phase (a docker gate, the SAST scan, git clone, a
+        PR/merge). Token/money-free — it only makes the gate/SAST/git time visible alongside the per-agent
+        LLM time. Callers (the FSM in ``runner.py``) time the full call (incl. container startup) and pass
+        the elapsed; a step that runs N times (e.g. a gate re-run per cycle) coalesces into one slot."""
+        slot = self.by_phase.setdefault(phase, PhaseUsage())
+        slot.duration_seconds += duration_seconds
+        slot.calls += 1
+        self.total_infra_seconds += duration_seconds
 
     def by_provider(self) -> dict[str, dict]:
         """Aggregate tokens + cost per provider (e.g. ``{"gemini": {...}, "claude": {...}}``)."""
@@ -223,11 +249,16 @@ class PipelineTelemetry(BaseModel):
             slot.cost_usd += ou.cost_usd
             slot.duration_seconds += ou.duration_seconds
             slot.calls += ou.calls
+        for phase, op in other.by_phase.items():
+            pslot = self.by_phase.setdefault(phase, PhaseUsage())
+            pslot.duration_seconds += op.duration_seconds
+            pslot.calls += op.calls
         self.total_tokens += other.total_tokens
         self.total_cache_read_tokens += other.total_cache_read_tokens
         self.total_cache_write_tokens += other.total_cache_write_tokens
         self.total_cost_usd += other.total_cost_usd
         self.total_duration_seconds += other.total_duration_seconds
+        self.total_infra_seconds += other.total_infra_seconds
 
     def finops_report(self, budget_usd: Decimal | float = Decimal("0")) -> dict:
         """Serializable FinOps summary: money spend vs the budget, plus per-plane/-provider/-agent breakdown.
@@ -246,9 +277,12 @@ class PipelineTelemetry(BaseModel):
             "total_cache_read_tokens": self.total_cache_read_tokens,
             "total_cache_write_tokens": self.total_cache_write_tokens,
             "total_duration_seconds": round(self.total_duration_seconds, 3),
+            "total_infra_seconds": round(self.total_infra_seconds, 3),
+            "total_wall_seconds": round(self.total_wall_seconds, 3),
             "by_plane": self.by_plane(),
             "by_provider": self.by_provider(),
             "by_agent": {name: usage.model_dump() for name, usage in self.by_agent.items()},
+            "by_phase": {phase: usage.model_dump() for phase, usage in self.by_phase.items()},
         }
 
 class SkillRelevance(BaseModel):

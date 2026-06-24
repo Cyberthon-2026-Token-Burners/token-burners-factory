@@ -376,6 +376,44 @@ class PipelineTelemetryTests(unittest.TestCase):
         self.assertIsInstance(restored.telemetry, PipelineTelemetry)
         self.assertEqual(restored.telemetry.total_tokens, 0)
 
+    def test_record_phase_accumulates_infra_and_real_wall(self) -> None:
+        # Infra phases (docker gates / SAST / git) carry wall-clock ONLY — no tokens/cost — and feed the
+        # real end-to-end TOTAL the FinOps summary now reports (it previously counted LLM time only).
+        tel = PipelineTelemetry()
+        tel.record("Developer Agent", 100, 20, Decimal("0.05"), provider="claude", duration_seconds=10.0)
+        tel.record_phase("build", 1.5)
+        tel.record_phase("qa+sast", 130.0)
+        tel.record_phase("build", 0.5)  # a gate re-run coalesces into the same slot
+        # LLM time is unchanged; infra is tracked separately and bumps the wall-clock total.
+        self.assertAlmostEqual(tel.total_duration_seconds, 10.0)
+        self.assertAlmostEqual(tel.total_infra_seconds, 132.0)   # 1.5 + 130.0 + 0.5
+        self.assertAlmostEqual(tel.total_wall_seconds, 142.0)    # LLM + infra = real wall-clock
+        self.assertEqual(tel.by_phase["build"].calls, 2)
+        self.assertAlmostEqual(tel.by_phase["build"].duration_seconds, 2.0)
+        self.assertEqual(tel.by_phase["qa+sast"].calls, 1)
+        # Infra phases spend NO money/tokens — the breaker stays money-only, unaffected.
+        self.assertEqual(tel.total_cost_usd, Decimal("0.05"))
+        self.assertEqual(tel.total_tokens, 120)
+
+    def test_finops_report_carries_infra_and_wall_and_by_phase(self) -> None:
+        tel = PipelineTelemetry()
+        tel.record("QA Agent", 50, 10, Decimal("0.01"), provider="gemini", duration_seconds=2.0)
+        tel.record_phase("lint", 3.0)
+        report = tel.finops_report(budget_usd=Decimal("1.00"))
+        self.assertAlmostEqual(report["total_duration_seconds"], 2.0)
+        self.assertAlmostEqual(report["total_infra_seconds"], 3.0)
+        self.assertAlmostEqual(report["total_wall_seconds"], 5.0)
+        self.assertEqual(report["by_phase"]["lint"]["calls"], 1)
+        self.assertAlmostEqual(report["by_phase"]["lint"]["duration_seconds"], 3.0)
+
+    def test_by_phase_survives_checkpoint_round_trip(self) -> None:
+        ctx = GlobalPipelineContext(pr_description="x")
+        ctx.telemetry.record_phase("qa+sast", 42.0)
+        restored = GlobalPipelineContext.model_validate_json(ctx.model_dump_json())
+        self.assertAlmostEqual(restored.telemetry.total_infra_seconds, 42.0)
+        self.assertEqual(restored.telemetry.by_phase["qa+sast"].calls, 1)
+        self.assertAlmostEqual(restored.telemetry.total_wall_seconds, 42.0)
+
 
 class NeedsTestRegenerationTests(unittest.TestCase):
     """Initial recovery decision: regenerate tests on rejection or when no snapshot exists."""
@@ -550,6 +588,20 @@ class PipelineTelemetryMergeTests(unittest.TestCase):
         self.assertEqual(app.by_agent["Developer Agent"].calls, 2)
         self.assertEqual(app.by_agent["Developer Agent"].cost_usd, Decimal("0.30"))
         self.assertIn("QA Agent", app.by_agent)
+
+    def test_merge_folds_infra_phases_and_wall(self) -> None:
+        app = PipelineTelemetry()
+        app.record_phase("build", 1.0)
+        app.record_phase("qa+sast", 100.0)
+        ticket = PipelineTelemetry()
+        ticket.record_phase("build", 2.0)        # same phase coalesces across runs
+        ticket.record_phase("git:clone", 5.0)    # a new phase is added
+        app.merge(ticket)
+        self.assertAlmostEqual(app.total_infra_seconds, 108.0)
+        self.assertEqual(app.by_phase["build"].calls, 2)
+        self.assertAlmostEqual(app.by_phase["build"].duration_seconds, 3.0)
+        self.assertIn("git:clone", app.by_phase)
+        self.assertAlmostEqual(app.total_wall_seconds, 108.0)  # no LLM time recorded here → wall == infra
 
 
 class DevOpsManifestsModelTests(unittest.TestCase):

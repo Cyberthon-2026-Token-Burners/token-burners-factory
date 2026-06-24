@@ -565,3 +565,30 @@ high effort.
 (Architect/TechLead/Reviewer/Arbiter) run high-effort; the level is recorded per agent; an A/B comparison
 across two re-runs is capturable for the cost report. (Surfaced from the Cyberthone 2026 dimension-7 prep;
 see [docs/hackathon/agentic-sdlc-specification-v1.md](hackathon/agentic-sdlc-specification-v1.md) §7.)
+
+### Performance / wall-clock
+
+## 29. [P2] SAST/semgrep is the dominant infra time sink (~130s/cycle) — narrow ruleset + exclude build output
+**Why:** the SAST scan (`SAST_CMD = "semgrep scan --error --metrics off --config /opt/semgrep-rules /workspace"`,
+[environments.py](../src/shared/core/environments.py)) runs once per FSM cycle and measured ~130s/run on a
+tiny .NET CLI (audit log, run 003) — the single largest *infra* (non-LLM) sink, compounded by cycle count.
+It was invisible until the wall-clock telemetry surfaced it (the FinOps TOTAL had counted LLM time only; the
+`by_phase` accumulator in [models.py](../src/shared/core/models.py) `PipelineTelemetry` now times it as the
+`qa+sast` phase).
+**Current state:** the scan walks the whole `/workspace` (post-build, so `obj/`/`bin/` with generated
+`AssemblyInfo.cs` + DLLs are present) and loads the FULL vendored ruleset (`/opt/semgrep-rules`) regardless
+of the ticket's language. For a 2-file project, rule-load + scanning build artifacts dominates the wall.
+**Fix direction (behind a measurement spike — security-sensitive, keep coverage):**
+1. Exclude build output / VCS dirs (`--exclude obj --exclude bin --exclude .git`, or a vendored
+   `.semgrepignore`) so semgrep never walks generated/compiled files.
+2. Scope the ruleset to the ticket's language (select the `/opt/semgrep-rules/<lang>` subset keyed off the
+   env's `language_id`) instead of loading every rule for every stack.
+3. Raise scan parallelism if still CPU-bound after (1)/(2) — `--jobs` tied to the sandbox CPU cap
+   (`SANDBOX_CPUS`, env-overridable since the wall-clock work; default 4).
+**Guardrails:** preserve the offline `--network none` + vendored-rules posture (`--config auto` is forbidden
+behind the corporate TLS proxy — see [deploy-scaffolding-and-ci-parity](../.claude/rules/deploy-scaffolding-and-ci-parity.md)
+and [qa-sandbox-hardening](../.claude/rules/qa-sandbox-hardening.md)), `--error` (findings -> non-zero gate),
+and zero-finding coverage parity — prove with a before/after on a repo with a planted finding. Quantify the
+win via the `by_phase` telemetry (`qa+sast`). Distinct from #28 (model routing).
+**Acceptance:** the `qa+sast` infra phase drops materially with no loss of true-positive coverage; the scan
+still runs fully offline and fails on a planted finding.
