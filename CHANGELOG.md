@@ -7,12 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Each release maps to a completed SDLC iteration; the corresponding Architecture
 Decision Record (ADR) is linked from the version heading.
 
-## [Unreleased] — QA-convergence hardening: behavioral oracle, raw-runner feedback, repo-aware test topology
+## [Unreleased] — Convergence hardening: behavioral oracle, raw-runner feedback, repo-aware test topology, routing-coherence reconciler
 
-Three independent root-causes behind QA loops / weak tests (surfaced by the `json-to-csv` python & .NET runs),
+Root-causes behind QA loops / weak tests / wasted reroutes (surfaced by the `json-to-csv` python & .NET runs),
 fixed in the engine/prompts — never the generated clone.
 
 ### Added
+- **Routing-coherence reconciler & evidence citation (#11/#18/#25).** A single engine SSOT
+  (`reconcile_feedback_routing`, `src/nexus/runner.py`) now assigns the two isolated feedback channels: it
+  feeds a channel ONLY for a genuinely-rejected side (#18) and lets an Arbiter `developer`/`qa` verdict
+  **override** a Reviewer misroute (#25, previously advisory — it cost a Gemini call and changed nothing).
+  Paired with a new `ReviewReport.dev_evidence_citation` field the Reviewer MUST fill (verbatim gate line or
+  code excerpt) to reject production code, closing the phantom-defect reroute (#11). See ADR 0024.
 - **Behavioral oracle in the contract (A).** `TechLeadContract.acceptance_examples: list[BehaviorExample]`
   (`{input, expected, raises}`) — the TechLead now pins the few decisive golden cases where the answer is
   non-obvious (empty/degenerate inputs, library-defined output, boundaries). QA asserts these **verbatim**
@@ -36,6 +42,20 @@ fixed in the engine/prompts — never the generated clone.
   when that payload came back thin (`src/nexus/runner.py`).
 
 ### Fixed
+- **#11 — Reviewer hallucinates production defects (P1).** A production rejection
+  (`code_quality_approved=false`) now REQUIRES a non-empty `dev_evidence_citation` (a verbatim gate-output
+  line or `FILE:`+code excerpt), code-enforced by the `ReviewReport` validator; `reviewer.md` additionally
+  defaults the production verdict to approved when every failing reference points into a test file. A soft
+  engine log flags a citation absent from the gate output / snapshot. Stops a phantom structural defect (e.g.
+  "rename the go.mod module") from burning a Developer reroute.
+- **#18 — feedback-channel isolation was prompt-only (P2).** The `ReviewReport` validator is now a full
+  **biconditional** (`payload non-empty ⟺ approval false`): an approved side may no longer carry a payload, so
+  the router can never feed a defect-free channel and make the Developer + QA fight. Code-enforced, replacing
+  the LLM-trust invariant.
+- **#25 — Arbiter `developer`/`qa` routes were advisory (P2).** Those routes now authoritatively select the
+  next cycle's feedback channel (and force the matching regeneration), overriding a Reviewer misroute instead
+  of falling through to it. The Arbiter's (correct) diagnosis finally changes control flow on the channels too,
+  not only on `contract`/`halt`.
 - **#17 — rejection without guidance (P1).** New `ReviewReport` model validator: rejecting a side
   (`code_quality_approved`/`test_integrity_approved` = false) while leaving its diagnostic payload empty now
   fails fast (instructor re-prompts the Reviewer) instead of silently burning the whole retry budget to

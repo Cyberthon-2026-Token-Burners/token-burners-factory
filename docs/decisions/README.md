@@ -54,6 +54,7 @@ with the `/adr-generation` skill (next free sequence number).
 | ADR | Decision |
 |---|---|
 | [0016](0016-arbiter-contract-self-healing.md) | Arbiter agent — autonomous contract self-healing (a third FSM route); fail-fast RECITATION + engine-injected baseline files. |
+| [0024](0024-routing-coherence-reconciler.md) | Routing-coherence reconciler — code-enforces the feedback-routing invariant: `ReviewReport` biconditional validator (`payload ⟺ rejection`) + required `dev_evidence_citation` on a production rejection (#11/#18), and `reconcile_feedback_routing` makes Arbiter `developer`/`qa` routes authoritative over a Reviewer misroute (#25). |
 
 ## Orchestration & Entrypoint
 | ADR | Decision |

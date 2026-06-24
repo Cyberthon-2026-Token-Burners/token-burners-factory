@@ -43,8 +43,8 @@ flaw, then recommend a fix in `src/`/`prompts/` — NEVER edit the generated clo
    `contract` (the TechLead spec — `instruction`, `function_signatures`, `architectural_constraints`,
    `files_to_modify`, `environment_id`, `topology_contract`), `review_report`
    (`code_quality_approved`/`test_integrity_approved` + `code_quality_analysis`/`test_integrity_analysis`/
-   `log_verification_analysis` + `dev_diagnostic_payload`/`qa_diagnostic_payload`), `error_trace`/
-   `qa_error_trace`, and the Arbiter fields `arbiter_verdict{root_cause_class,route,reasoning,
+   `log_verification_analysis` + `dev_diagnostic_payload`/`qa_diagnostic_payload`/`dev_evidence_citation`),
+   `error_trace`/`qa_error_trace`, and the Arbiter fields `arbiter_verdict{root_cause_class,route,reasoning,
    contract_amendment_directive}` + `contract_amendments`. Nexus (`NexusState`): `completed_phase`,
    `epic_text`/`blueprint_text`/`tasks`.
 2. **Audit log** — tail `logs/sdlc_audit.log` (last ~50–100 lines): trace the FSM transitions and which
@@ -88,7 +88,12 @@ Map the evidence to one class (decisive — pick the dominant one and say so):
   `--resume <project> --budget <larger>` (the ceiling is never persisted, so it continues past the marker).
   Possibly a starvation signal: one expensive early ticket drained the shared pool.
 - **Stuck retry loop** — same failure repeated across cycles until "Retries exhausted"; inspect WHY no
-  channel/Arbiter route resolved it (often a mis-route, an empty diagnostic payload, or a contract flaw).
+  channel/Arbiter route resolved it. An empty diagnostic payload and a Reviewer payload-on-an-approved-side
+  are now structurally impossible (the `_require_routing_coherence` validator), and once the Arbiter fires
+  (`attempt ≥ ARBITER_TRIGGER_ATTEMPT`) a `developer`/`qa` mis-route is auto-corrected by
+  `reconcile_feedback_routing` (ADR 0024). So a genuine stuck loop now points at: a contract flaw the Arbiter
+  didn't route to `contract`, a correct-but-unfixable repeated failure, or a mis-route that recurred on cycle 1
+  (before the Arbiter is eligible) or that the Arbiter agreed with.
 - **Loop-closure (forge / `--auto-merge`) failure** — the cycle *succeeded* (all gates passed, atomic
   commit + push done) but `finalize_pr` failed at the GitHub seam (`src/shared/utils/forge.py`): a genuine
   `gh pr merge` failure (`sys.exit(1)`, no incident), a missing `gh`/`GITHUB_TOKEN` (preflight), an
@@ -117,7 +122,7 @@ Map the evidence to one class (decisive — pick the dominant one and say so):
 ## Step 4 — Trace to the systemic flaw (never blame "the LLM")
 Look for engine/prompt causes per the debugging-protocol: path-routing conflicts, strict-validation
 contradictions in `prompts/system/`, broken parsing/glob in `src/shared/utils/`, contract gaps
-(see `docs/BACKLOG.md` #17–#26), missing error precedence, or boilerplate-recitation triggers.
+(see `docs/BACKLOG.md` #19–#28), missing error precedence, or boilerplate-recitation triggers.
 
 ## Output Format
 A concise, scannable report:

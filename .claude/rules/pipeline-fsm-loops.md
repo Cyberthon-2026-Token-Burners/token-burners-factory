@@ -40,10 +40,11 @@ tests **OR no test snapshot exists yet**. So on **cycle 1 QA generates tests BEF
 (contract-first); `production_code_snapshot` is empty then — QA works from the contract + topology only.
 
 `all_gates_passed = qa_success ∧ sec_success ∧ lint_success ∧ code_quality_approved ∧ test_integrity_approved`.
-On `not all_gates_passed`: `error_trace ← dev_diagnostic_payload`, `qa_error_trace ← qa_diagnostic_payload`
-(both `_cap_text`-capped); if `not test_integrity_approved` → `regenerate_tests = True` for next cycle. When
-lint stayed red after its fast-fail budget, the classified lint findings are **re-applied** to the channels
-after the Reviewer routes (the Reviewer is lint-blind), so the next budgeted cycle gets real feedback.
+On `not all_gates_passed`: `(error_trace, qa_error_trace) ← reconcile_feedback_routing(review_report,
+arbiter_verdict_this_cycle)` (the routing-coherence SSOT, ADR 0024 — see below; both `_cap_text`-capped); if
+`not test_integrity_approved` → `regenerate_tests = True` for next cycle (and an Arbiter `qa` route aligns the
+flag too). When lint stayed red after its fast-fail budget, the classified lint findings are **re-applied** to
+the channels after the reconciler routes (the Reviewer is lint-blind), so the next budgeted cycle gets real feedback.
 
 ## The six loops
 Only the **outer retry** loop consumes functional budget; the five inner loops are FREE fast-fail
@@ -59,9 +60,15 @@ reroutes that bypass the (expensive) Reviewer until they clear or hit their cap.
 `ctx.error_trace` → Developer only (from `ReviewReport.dev_diagnostic_payload`); `ctx.qa_error_trace` →
 QA only (from `qa_diagnostic_payload`). Reset every cycle; consumed by `run_developer_node` /
 `run_qa_agent_node`. The Developer can't edit tests and QA can't edit production code, so mis-routing
-deadlocks the run. NOTE: the isolation is enforced by the Reviewer prompt, not by code — the router
-copies both payloads unconditionally (hardening: docs/BACKLOG.md #18). Distinct from the
-CLAUDE.md-vs-prompts boundary in [feedback-context-isolation](feedback-context-isolation.md).
+deadlocks the run. Channel assignment is **code-enforced** by `reconcile_feedback_routing` (`runner.py`, the
+SSOT, ADR 0024), not prompt-trusted: (1) a channel is fed ONLY for a genuinely-rejected side — the
+deterministic backstop to the `ReviewReport` biconditional validator (`_require_routing_coherence`:
+`payload non-empty ⟺ approval false`, so an approved side can't carry a payload, resolved #18); and (2) an
+Arbiter `developer`/`qa` verdict is **authoritative** — when it disagrees with which side the Reviewer
+rejected (a misroute), the fix text moves into the Arbiter-chosen channel, the other is cleared, and
+`regenerate_tests` is aligned to that channel (resolved #25; agreement passes the Reviewer payloads through).
+A production rejection additionally requires a verbatim `dev_evidence_citation` (resolved #11). Distinct from
+the CLAUDE.md-vs-prompts boundary in [feedback-context-isolation](feedback-context-isolation.md).
 
 ## Termination states
 - **Success** — `run_techwriter_node` (updates the living ADR) → `finalize_transaction` (atomic commit + optional push) → (E2, only with `--auto-merge`) `finalize_pr` (open → best-effort approve → squash-merge the PR into base, via `src/shared/utils/forge.py`) → return. `finalize_pr` is wrapped so the FinOps report/summary still print on a merge failure; a *genuine* `merge_pr` failure `sys.exit(1)`s **without** an `incident_report.json` (it is not an FSM halt — the gates already passed). A halted ticket never reaches the PR step (no PR on failure).

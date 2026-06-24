@@ -178,10 +178,10 @@ flowchart TB
     decide -->|"no"| dlg{"deadlock guard<br/>gate failed yet<br/>both approved?"}
     dlg -->|"yes"| halt(["🛑 incident: env/runner misconfig"])
     dlg -->|"no"| arb{"attempt ≥ ARBITER_TRIGGER_ATTEMPT?"}
-    arb -->|"no (early cycle)"| route["route reviewer diagnostics<br/>→ Developer / QA channels"]
+    arb -->|"no (early cycle)"| route["reconcile_feedback_routing<br/>→ Developer / QA channel(s)<br/><i>coherence floor + Arbiter authority</i>"]
     arb -->|"yes"| arbiter["run_arbiter_node<br/><i>triage root cause</i>"]
 
-    arbiter -->|"developer / qa"| route
+    arbiter -->|"developer / qa (authoritative)"| route
     arbiter -->|"contract (≤ cap)"| amend["TechLead amend contract<br/><i>env_id pinned · +retry bonus</i>"]
     arbiter -->|"halt / cap reached"| halt2(["🛑 incident: unrecoverable spec conflict"])
 
@@ -202,8 +202,12 @@ flowchart TB
 - **Contract once, loop many:** `run_techlead_node` runs before the loop; the contract is the single
   source of truth all downstream agents inherit. Cycle 1 generates tests *before* the Developer
   (contract-first).
-- **Two isolated channels:** a rejection routes `dev_diagnostic_payload` → Developer (`error_trace`) and
-  `qa_diagnostic_payload` → QA (`qa_error_trace`); mis-routing deadlocks the run.
+- **Two isolated channels — routing-coherence enforced (ADR [0024](decisions/0024-routing-coherence-reconciler.md)):**
+  `reconcile_feedback_routing` assigns the channels — `dev_diagnostic_payload` → Developer (`error_trace`),
+  `qa_diagnostic_payload` → QA (`qa_error_trace`) — but only for a genuinely-rejected side (the `ReviewReport`
+  biconditional validator `_require_routing_coherence` forbids a payload on an approved side), and a
+  production rejection must carry a verbatim `dev_evidence_citation`. A Reviewer mis-route no longer
+  deadlocks the run: the Arbiter's `developer`/`qa` verdict is **authoritative** and overrides it.
 - **Free fast-fail reroutes** (QA signature-lint, Developer doc/compile guardrails, QA test-compile gate,
   and the **lint gate** — step 3.6: prod findings → Developer, test findings → QA) bypass the expensive
   Reviewer without spending the functional retry budget. The HARD lint gate's per-env `lint_cmd` is the SSOT
@@ -211,7 +215,10 @@ flowchart TB
 - **Arbiter (ADR [0016](decisions/0016-arbiter-contract-self-healing.md)):** on a stuck cycle it adds a
   third route — amend the **contract** — for failures no worker can fix (contradictory spec, missing error
   precedence, NFR-violating "fix"). Bounded: `environment_id` pinned, `MAX_CONTRACT_AMENDMENTS` cap, a
-  retry-budget bonus per amendment.
+  retry-budget bonus per amendment. Its `developer`/`qa` routes are now **authoritative** (ADR
+  [0024](decisions/0024-routing-coherence-reconciler.md)): when they disagree with which side the Reviewer
+  rejected, `reconcile_feedback_routing` moves the fix into the Arbiter-chosen channel and aligns
+  `regenerate_tests` — overriding a Reviewer misroute instead of falling through to it.
 - **Terminals:** SUCCESS (commit), deadlock-guard incident, Arbiter halt, or the Financial Circuit Breaker
   / "retries exhausted" hard-halt — each writes `reports/incident_report.json`.
 - **Money-only breaker (E5, ADR [0022](decisions/0022-application-wide-finops-budget.md)):** the 💰 checkpoints
@@ -330,12 +337,12 @@ for the full module map and [agent-contracts](../.claude/rules/agent-contracts.m
 | Entry | CLI / router | `main.py` → `src/nexus/runner.py` `main()` | Parse args; route to planning vs. ticket execution; `--resume` dispatch (incl. batch re-entry); on `--idea --auto-execute`, drive ALL tickets to `main` via `run_batch` (`prepare_ticket_run` + `run_executor` per ticket, `get_tasks_for_nexus_run` for order, `BatchState` checkpoint). |
 | Nexus | PO / SA / TPM | `src/nexus/agents/{po,sa,tpm}.py` | Idea → Epic → Blueprint → task tickets (structured Gemini). |
 | Nexus | Runner / State | `src/nexus/nexus_runner.py`, `state.py` | Drive PO→SA→TPM; `NexusState` checkpoint + resume. |
-| Nexus | FSM driver | `src/nexus/runner.py` | `main()` dispatch/resume; per-ticket FSM (`run_executor`) — outer cycle, reroutes, breaker, routing, commit; E3 batch loop (`run_batch`). |
+| Nexus | FSM driver | `src/nexus/runner.py` | `main()` dispatch/resume; per-ticket FSM (`run_executor`) — outer cycle, reroutes, breaker, routing (`reconcile_feedback_routing` — coherence floor + Arbiter authority, ADR 0024), commit; E3 batch loop (`run_batch`). |
 | Nexus | Release-tag | `src/nexus/runner.py` `finalize_release` + `compute_next_tag` | Post-batch terminal phase (`--release`, E6): clone `main` → resolve the next `v*` (repo-derived, `RELEASE_VERSION_BUMP`) → push an annotated tag via the forge seam; idempotent via `BatchState.released_tag`. |
 | Development | TechLead | `src/development/agents/techlead.py` | Derive (and, in amendment mode, re-derive) the `TechLeadContract`. |
 | Development | Developer | `src/development/agents/developer.py` | Implement code in the clone (Claude CLI, agentic). |
 | Development | QA | `src/development/agents/qa.py` | Generate per-module tests (contract-first). |
-| Development | Reviewer | `src/development/agents/reviewer.py` | Code + test verdict; isolated dev/QA diagnostics. |
+| Development | Reviewer | `src/development/agents/reviewer.py` | Code + test verdict; isolated dev/QA diagnostics + `dev_evidence_citation` (verbatim proof for a production rejection); coherence-validated by `_require_routing_coherence` (ADR 0024). |
 | Development | Arbiter | `src/development/agents/arbiter.py` | Triage stuck cycle → developer/qa/contract/halt. |
 | Development | TechWriter | `src/development/agents/techwriter.py` | Maintain the living ADR (`docs/architecture_state.md` in the clone). |
 | Development | Gates | `src/development/gates.py` | Build / unit-test / **lint** (`run_lint_gate` + `classify_lint_findings`) / SAST in the sandbox. |
@@ -356,5 +363,7 @@ for the full module map and [agent-contracts](../.claude/rules/agent-contracts.m
 *Diagrams reflect the engine as of the autonomous release-tagging iteration ([CHANGELOG](../CHANGELOG.md)
 v0.23.0 — `--release` pushes a repo-derived `v*` tag as the build's final step, ADR
 [0023](decisions/0023-autonomous-release-tagging.md); over the application-wide FinOps budget of v0.22.0, ADR
-[0022](decisions/0022-application-wide-finops-budget.md)). For the "why" behind each decision see
-[decisions/](decisions/README.md); for what's still open see [BACKLOG.md](BACKLOG.md).*
+[0022](decisions/0022-application-wide-finops-budget.md)), plus the unreleased routing-coherence hardening
+(ADR [0024](decisions/0024-routing-coherence-reconciler.md): code-enforced feedback-channel coherence +
+authoritative Arbiter routes). For the "why" behind each decision see [decisions/](decisions/README.md); for
+what's still open see [BACKLOG.md](BACKLOG.md).*

@@ -436,6 +436,7 @@ class MainCheckpointWritePointsTests(unittest.IsolatedAsyncioTestCase):
                         code_quality_approved=False,
                         test_integrity_approved=True,
                         dev_diagnostic_payload="fix implementation",
+                        dev_evidence_citation="AssertionError in test run output",
                     )
                     return
                 ctx.review_report = ReviewReport(
@@ -601,6 +602,7 @@ class ResumeFsmRecoveryTests(unittest.IsolatedAsyncioTestCase):
                 code_quality_approved=False,
                 test_integrity_approved=True,
                 dev_diagnostic_payload="fix prod",
+                dev_evidence_citation="ValueError raised in runner output",
             )
 
             async def _approve(*_args, **_kwargs) -> None:
@@ -847,6 +849,7 @@ class ArbiterRoutingTests(unittest.IsolatedAsyncioTestCase):
             code_quality_analysis="x", test_integrity_analysis="ok", log_verification_analysis="x",
             code_quality_approved=code_ok, test_integrity_approved=True,
             dev_diagnostic_payload="" if code_ok else "fix prod", qa_diagnostic_payload="",
+            dev_evidence_citation="" if code_ok else "AssertionError in runner output",
         )
 
     def _patches(self, ctx, reviewer_effect, arbiter_effect, techlead):
@@ -967,6 +970,125 @@ class ArbiterRoutingTests(unittest.IsolatedAsyncioTestCase):
                     await orchestrator.main()
             techlead.assert_not_awaited()                        # cap reached → no 2nd amendment
             self.assertEqual(ctx.contract_amendments, 1)
+
+    async def test_qa_route_overrides_reviewer_misroute_and_regenerates(self) -> None:
+        # BACKLOG #25: the Reviewer blames PRODUCTION (dev channel, with a citation), but at cycle 2 the
+        # Arbiter rules it a TEST bug and routes `qa`. The override must move the fix into the QA channel,
+        # clear the Developer channel, and force test regeneration so QA actually re-runs on cycle 3.
+        with TemporaryDirectory() as td:
+            ctx = self._ctx(Path(td))
+            n = {"c": 0}
+            qa_feedback: list[str] = []
+
+            async def reviewer(c, *_a, **_k):
+                n["c"] += 1
+                if n["c"] >= 3:
+                    c.review_report = self._reject(code_ok=True)     # cycle 3 approves → success
+                else:
+                    c.review_report = ReviewReport(                  # the misroute: blames production
+                        code_quality_analysis="x", test_integrity_analysis="ok",
+                        log_verification_analysis="x", code_quality_approved=False,
+                        test_integrity_approved=True, dev_diagnostic_payload="the test mock is inert",
+                        qa_diagnostic_payload="", dev_evidence_citation="AssertionError: ran 0 tests",
+                    )
+
+            async def arbiter(c, *_a, **_k):
+                c.arbiter_verdict = ArbiterVerdict(
+                    root_cause_class="test_bug", route="qa", reasoning="ARBITER: the mock is inert")
+
+            async def qa_node(c, feedback="", *_a, **_k):
+                qa_feedback.append(feedback)
+
+            with ExitStack() as stack:
+                for p in self._patches(ctx, reviewer, arbiter, AsyncMock()):
+                    stack.enter_context(p)
+                stack.enter_context(mock.patch.object(orchestrator, "run_qa_agent_node",
+                                                      new=AsyncMock(side_effect=qa_node)))
+                stack.enter_context(mock.patch.object(orchestrator, "run_test_compile_gate",
+                                                      new=AsyncMock(return_value=(True, []))))
+                await orchestrator.main()
+
+            # QA re-ran on cycle 3 carrying BOTH the Arbiter's reasoning AND the fix text the Reviewer had
+            # misrouted to the Developer channel — proving the override re-routed the content and the
+            # regeneration flag flipped to QA.
+            self.assertTrue(
+                any("ARBITER: the mock is inert" in f and "the test mock is inert" in f for f in qa_feedback),
+                f"QA never received the overridden channel content; saw: {qa_feedback!r}",
+            )
+
+
+class ReconcileFeedbackRoutingTests(unittest.TestCase):
+    """The routing-coherence reconciler (BACKLOG #18/#25) is the single SSOT that assigns the two isolated
+    feedback channels: it feeds a channel only for a genuinely-rejected side (#18) and lets an Arbiter
+    developer/qa verdict override a Reviewer misroute (#25)."""
+
+    @staticmethod
+    def _report(code_ok: bool, test_ok: bool, dev: str = "", qa: str = "", cite: str = "") -> ReviewReport:
+        return ReviewReport(
+            code_quality_analysis="a", test_integrity_analysis="b", log_verification_analysis="c",
+            code_quality_approved=code_ok, test_integrity_approved=test_ok,
+            dev_diagnostic_payload=dev, qa_diagnostic_payload=qa, dev_evidence_citation=cite,
+        )
+
+    @staticmethod
+    def _verdict(route: str) -> ArbiterVerdict:
+        return ArbiterVerdict(
+            root_cause_class="test_bug" if route == "qa" else "production_bug",
+            route=route, reasoning=f"arbiter says {route}")
+
+    def test_passthrough_without_arbiter(self) -> None:
+        rep = self._report(False, True, dev="fix prod", cite="ValueError (x.py:1)")
+        dev, qa = orchestrator.reconcile_feedback_routing(rep, None)
+        self.assertEqual(dev, "fix prod")
+        self.assertEqual(qa, "")
+
+    def test_both_rejected_passthrough(self) -> None:
+        rep = self._report(False, False, dev="fix prod", qa="fix tests", cite="AssertionError (x.py:1)")
+        dev, qa = orchestrator.reconcile_feedback_routing(rep, None)
+        self.assertEqual(dev, "fix prod")
+        self.assertEqual(qa, "fix tests")
+
+    def test_coherence_floor_drops_payload_on_approved_side(self) -> None:
+        # Defensive (#18): a payload that slips onto an approved side (validator-bypassing model_construct)
+        # must NOT drive the next cycle.
+        rep = ReviewReport.model_construct(
+            code_quality_analysis="a", test_integrity_analysis="b", log_verification_analysis="c",
+            code_quality_approved=True, test_integrity_approved=False,
+            dev_diagnostic_payload="stray", qa_diagnostic_payload="fix tests",
+            dev_evidence_citation="", zombie_tests_to_delete=[],
+        )
+        dev, qa = orchestrator.reconcile_feedback_routing(rep, None)
+        self.assertEqual(dev, "")                       # approved side floored out
+        self.assertEqual(qa, "fix tests")
+
+    def test_arbiter_agreement_passes_through(self) -> None:
+        rep = self._report(False, True, dev="fix prod", cite="ValueError (x.py:1)")
+        dev, qa = orchestrator.reconcile_feedback_routing(rep, self._verdict("developer"))
+        self.assertEqual(dev, "fix prod")               # the Reviewer payload kept, not the Arbiter reasoning
+        self.assertEqual(qa, "")
+
+    def test_arbiter_overrides_reviewer_misroute_to_qa(self) -> None:
+        rep = self._report(False, True, dev="actually a test mock issue", cite="AssertionError (x.py:1)")
+        dev, qa = orchestrator.reconcile_feedback_routing(rep, self._verdict("qa"))
+        self.assertEqual(dev, "")
+        self.assertIn("arbiter says qa", qa)
+        self.assertIn("actually a test mock issue", qa)  # the fix text moved into the QA channel
+
+    def test_arbiter_overrides_reviewer_misroute_to_developer(self) -> None:
+        rep = self._report(True, False, qa="actually a production bug")
+        dev, qa = orchestrator.reconcile_feedback_routing(rep, self._verdict("developer"))
+        self.assertEqual(qa, "")
+        self.assertIn("arbiter says developer", dev)
+        self.assertIn("actually a production bug", dev)
+
+    def test_contract_route_verdict_is_ignored_by_reconciler(self) -> None:
+        # contract/halt never reach the reconciler with authority; a stray one is ignored (passthrough).
+        rep = self._report(False, True, dev="fix prod", cite="ValueError (x.py:1)")
+        verdict = ArbiterVerdict(root_cause_class="contract_conflict", route="contract",
+                                 reasoning="spec", contract_amendment_directive="x")
+        dev, qa = orchestrator.reconcile_feedback_routing(rep, verdict)
+        self.assertEqual(dev, "fix prod")
+        self.assertEqual(qa, "")
 
 
 class IdeaAutoExecuteDispatchTests(unittest.IsolatedAsyncioTestCase):
@@ -2437,6 +2559,7 @@ class TestCollectionTriageRoutingTests(unittest.IsolatedAsyncioTestCase):
                     code_quality_approved=not first,      # reject on the import-failure cycle only
                     test_integrity_approved=True,         # tests are fine — never a QA regen
                     dev_diagnostic_payload="" if not first else "Fix the broken import in cli.py.",
+                    dev_evidence_citation="" if not first else "ImportError: cannot import name 'x' (cli.py)",
                 )
 
             with (

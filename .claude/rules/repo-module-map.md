@@ -28,7 +28,10 @@ the **money-only** breaker (ADR 0022 / E5), gated on the *remaining* application
 cleanly at `PIPELINE_APP_BUDGET_FLOOR_USD`, and `write_app_finops_report` writes `app_finops_report.json`
 (per-role/plane/time) in a `finally` + `PipelineHalt` — the catchable FSM-halt exception
 `_abort_with_incident` raises (so the batch records `failed` and stops; `main.py` maps an uncaught one to
-exit 1) + the step-3.6 lint loop (`LINT_GATE_MAX_REROUTES`, `_LINT_FEEDBACK_PREAMBLE`); `run_batch` lazily
+exit 1) + the step-3.6 lint loop (`LINT_GATE_MAX_REROUTES`, `_LINT_FEEDBACK_PREAMBLE`) + `reconcile_feedback_routing(review_report, arbiter_verdict)` —
+the routing-coherence SSOT (ADR 0024) that assigns the two isolated feedback channels: a coherence floor
+(feed a channel only for a rejected side, #18) + Arbiter `developer`/`qa` authority over a Reviewer misroute
+(#25); `run_batch` lazily
 imports `run_devops_scaffold` to break the `deployment → nexus` cycle, ADR 0021. + `finalize_release` /
 `compute_next_tag` — the E6 `--release` terminal phase (after the optional deploy-scaffold): clone `main`,
 resolve the next `v*` (`compute_next_tag`, repo-derived via `forge.list_remote_tags`), push an annotated tag

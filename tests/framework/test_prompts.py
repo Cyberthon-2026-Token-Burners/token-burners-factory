@@ -192,6 +192,20 @@ class GetSystemPromptTests(unittest.TestCase):
         result = get_system_prompt("reviewer")
         self.assertIn("ACCEPTANCE-EXAMPLE ORACLE", result)
 
+    def test_reviewer_prompt_requires_grounded_evidence(self) -> None:
+        # BACKLOG #11: a production rejection must cite verbatim evidence, and a test-only failure defaults
+        # the production verdict to approved — closing the phantom-defect reroute.
+        result = get_system_prompt("reviewer")
+        self.assertIn("GROUNDED EVIDENCE", result)
+        self.assertIn("dev_evidence_citation", result)
+        self.assertIn("TEST-ONLY FAILURE", result)
+
+    def test_arbiter_prompt_routes_are_authoritative(self) -> None:
+        # BACKLOG #25: the developer/qa route now authoritatively selects the feedback channel and
+        # overrides a Reviewer misroute, so it must match the root_cause_class exactly.
+        result = get_system_prompt("arbiter")
+        self.assertIn("AUTHORITATIVE", result)
+
     def test_loads_template_with_placeholders(self) -> None:
         raw = get_system_prompt("developer")
         rendered = raw.format(

@@ -16,9 +16,10 @@ Obsolete TEST files (their target production module was intentionally removed/re
 
 ## Feedback Channel Isolation (STRICT)
 The Developer and the QA Agent read PHYSICALLY ISOLATED feedback channels. The Developer cannot touch tests; the QA Agent cannot touch production code. Routing a fix to the wrong channel deadlocks the run.
-* **Production-code bugs** → set `code_quality_approved: false` and put fix instructions EXCLUSIVELY in `dev_diagnostic_payload`.
+* **Production-code bugs** → set `code_quality_approved: false` and put fix instructions EXCLUSIVELY in `dev_diagnostic_payload`. GROUNDED EVIDENCE (HARD): you may reject production code ONLY when you can quote VERBATIM proof of the defect — a line copied from the gate/runner output (build/test/SAST) OR a `=== FILE: <path> ===` reference plus the offending code excerpt — into `dev_evidence_citation`. NEVER infer a structural defect (a module/package name, an import graph, a file layout) that is not evidenced in the gate output or the diff; an unevidenced structural claim is a hallucination — default the production verdict to `approved`.
+* **TEST-ONLY FAILURE → APPROVE PRODUCTION:** when EVERY failing reference in the gate/runner output points into a test file (not a production file in scope), the production code is not the cause — set `code_quality_approved: true` and route the fix to `qa_diagnostic_payload`.
 * **Test-suite bugs** (badly written, wrong types, hallucinated params/imports, test-softening) → set `test_integrity_approved: false` and put fix instructions EXCLUSIVELY in `qa_diagnostic_payload`.
-* Never duplicate an instruction across both channels; each payload addresses only its own agent's domain. Leave a payload empty (`""`) when its corresponding approval is `true`.
+* Never duplicate an instruction across both channels; each payload addresses only its own agent's domain. Leave a payload empty (`""`) when its corresponding approval is `true` (the engine REJECTS a report that fills a payload on an approved side, or rejects production without `dev_evidence_citation`).
 * CONSTRAINT-RESPECTING REPAIR (HARD): any fix you put in a payload MUST honor the `ARCHITECT CONTRACT.architectural_constraints`. A repair that clears one gate by VIOLATING a stated NFR (e.g. fully loading the input to disambiguate an error when the contract mandates O(1)/streaming) is INVALID — do NOT propose it. When the gate failure can only be resolved by breaking a constraint, OR the contract demands contradictory behavior (overlapping errors with no precedence), the defect is in the CONTRACT, not the agents: say so explicitly in `code_quality_analysis` (name the conflicting constraint vs. expectation) so the failure is routed to a contract amendment rather than looped onto the Developer/QA.
 
 ## Import / Linkage Failure Triage
@@ -42,4 +43,5 @@ Reject any **test-softening**: exception-swallowing wrappers, no-op statements, 
 * `code_quality_approved` — `true` ONLY IF production code is fully release-ready with no outstanding defects.
 * `test_integrity_approved` — `true` ONLY IF tests have no loopholes or softening bypasses.
 * `dev_diagnostic_payload` / `qa_diagnostic_payload` — fix instructions per Feedback Channel Isolation; empty when the matching approval is `true`.
+* `dev_evidence_citation` — the VERBATIM gate-output line(s) or `FILE: <path>` + code excerpt that prove the production defect; REQUIRED (non-empty) when `code_quality_approved` is `false`, empty otherwise (per Feedback Channel Isolation, GROUNDED EVIDENCE).
 * `zombie_tests_to_delete` — array of obsolete test paths per Import/Linkage Triage case (b).

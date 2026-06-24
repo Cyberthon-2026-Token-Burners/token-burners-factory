@@ -678,6 +678,39 @@ def _cap_text(text: str, max_chars: int = FEEDBACK_MAX_CHARS) -> str:
     return f"{text[:half]}\n…[truncated]…\n{text[-half:]}"
 
 
+def reconcile_feedback_routing(review_report, arbiter_verdict):
+    """Single SSOT for assigning the two isolated feedback channels (BACKLOG #18/#25).
+
+    Returns ``(dev_trace, qa_trace)``, both ``_cap_text``-capped. Language-agnostic: it operates only on
+    approval booleans and opaque diagnostic text.
+
+    * #18 coherence floor — feed a channel ONLY if its own side was rejected, so a payload that landed on
+      an approved side never drives the next cycle (the Developer and QA cannot fight over a defect-free
+      side). The model validator makes an incoherent report rare; this is the deterministic backstop.
+    * #25 Arbiter authority — when a stuck-cycle verdict routes ``developer``/``qa`` and DISAGREES with
+      which side the Reviewer rejected (a Reviewer misroute), the Arbiter wins: its reasoning plus whatever
+      fix text the Reviewer wrote is moved into the Arbiter-chosen channel and the other is cleared. On
+      AGREEMENT the coherence-floored Reviewer payloads pass through unchanged.
+    """
+    dev = review_report.dev_diagnostic_payload if not review_report.code_quality_approved else ""
+    qa = review_report.qa_diagnostic_payload if not review_report.test_integrity_approved else ""
+    if arbiter_verdict and arbiter_verdict.route in ("developer", "qa"):
+        dev_rejected = not review_report.code_quality_approved
+        qa_rejected = not review_report.test_integrity_approved
+        agrees = (
+            (arbiter_verdict.route == "developer" and dev_rejected and not qa_rejected)
+            or (arbiter_verdict.route == "qa" and qa_rejected and not dev_rejected)
+        )
+        if not agrees:
+            merged = "\n\n".join(
+                p for p in (review_report.dev_diagnostic_payload, review_report.qa_diagnostic_payload)
+                if p.strip()
+            )
+            directive = (arbiter_verdict.reasoning + ("\n\n" + merged if merged else "")).strip()
+            dev, qa = (directive, "") if arbiter_verdict.route == "developer" else ("", directive)
+    return _cap_text(dev), _cap_text(qa)
+
+
 # Registry-derived comment lead-ins — each env declares its own ``comment_prefixes``; the union
 # covers every supported stack without any hardcoded language knowledge here.
 _COMMENT_PREFIXES = all_comment_prefixes()
@@ -1608,6 +1641,9 @@ async def run_executor(cfg: RunConfig, run_dir: Path, resume_checkpoint: Path | 
             regenerate_tests = True
 
         if not all_gates_passed:
+            # Authoritative only for the cycle the Arbiter actually ran (ctx.arbiter_verdict persists across
+            # cycles, so it must NOT leak into a later cycle's routing). Set just below at the fall-through.
+            arbiter_verdict_this_cycle = None
             # Arbiter (contract self-healing): once a cycle is demonstrably stuck (a prior fix already
             # failed), classify the root cause. Beyond the Developer/QA channels it can route to the
             # CONTRACT — re-deriving the TechLead spec — for failures no downstream agent can fix
@@ -1644,21 +1680,32 @@ async def run_executor(cfg: RunConfig, run_dir: Path, resume_checkpoint: Path | 
                         f"\n🚨 ARBITER: unrecoverable spec conflict (amendments "
                         f"{ctx.contract_amendments}/{MAX_CONTRACT_AMENDMENTS}) — {verdict.reasoning}",
                     )
-                # route in {developer, qa}: fall through to the normal isolated channel routing below.
+                # route in {developer, qa}: authoritative for THIS cycle — hand the verdict to the
+                # reconciler below so it can override a Reviewer misroute (BACKLOG #25).
+                arbiter_verdict_this_cycle = verdict
 
-            # Isolated routing: production-code fixes → Developer channel; test fixes → QA channel.
-            ctx.error_trace = _cap_text(ctx.review_report.dev_diagnostic_payload)
-            ctx.qa_error_trace = _cap_text(ctx.review_report.qa_diagnostic_payload)
+            # Isolated routing (BACKLOG #18/#25): the reconciler is the single SSOT — it feeds a channel
+            # only for a genuinely-rejected side and lets an Arbiter developer/qa verdict override a
+            # Reviewer misroute. Replaces the prior unconditional copy of BOTH payloads.
+            ctx.error_trace, ctx.qa_error_trace = reconcile_feedback_routing(
+                ctx.review_report, arbiter_verdict_this_cycle
+            )
+            # When the Arbiter authoritatively routed (BACKLOG #25), align the regeneration flag with its
+            # chosen channel so the right agent actually re-runs: a `qa` route MUST re-run QA next cycle; a
+            # `developer` route must NOT (overriding a Reviewer test-rejection). On agreement this matches
+            # the Reviewer-driven flag exactly. A later lint finding can still force regeneration below.
+            if arbiter_verdict_this_cycle is not None:
+                regenerate_tests = arbiter_verdict_this_cycle.route == "qa"
             log.warning(f"🔶 Cycle {attempt} failed. Routing reviewer diagnostics to isolated channels.")
 
             # Never route QA blind: when the test suite ACTUALLY failed at runtime, append the authoritative
-            # runner output (the verbatim expected-vs-actual) to whatever the Reviewer transcribed. The raw
+            # runner output (the verbatim expected-vs-actual) to whatever the reconciler routed. The raw
             # slice is the highest-fidelity diagnostic and was already computed for the Reviewer; relying on
             # the LLM's re-derivation alone loops the run when that payload comes back thin/empty.
             if not qa_success and regenerate_tests:
                 raw_qa = _extract_failure_context(qa_lines, ctx.contract.environment_id)
                 ctx.qa_error_trace = _cap_text(
-                    (ctx.review_report.qa_diagnostic_payload
+                    (ctx.qa_error_trace
                      + "\n\n=== RAW TEST RUNNER OUTPUT ===\n" + raw_qa).strip()
                 )
 

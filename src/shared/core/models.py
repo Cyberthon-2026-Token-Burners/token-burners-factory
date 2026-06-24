@@ -343,21 +343,38 @@ class ReviewReport(BaseModel):
     test_integrity_approved: bool = Field(description="Boolean flag indicating test integrity approval status.")
     qa_diagnostic_payload: str = Field(default="", description="Instructions ONLY for the QA Agent to fix incorrect, hallucinated, or broken tests.")
     dev_diagnostic_payload: str = Field(default="", description="Instructions ONLY for the Developer to fix production code bugs.")
+    dev_evidence_citation: str = Field(
+        default="",
+        description="VERBATIM evidence for a production rejection: a line quoted from the gate/runner output "
+                    "OR a `FILE: <path>` + code excerpt from the production snapshot. Required (non-empty) "
+                    "when code_quality_approved is false; empty otherwise.",
+    )
     zombie_tests_to_delete: list[str] = Field(
         default_factory=list,
         description="List of specific obsolete or zombie test filenames that must be physically deleted from disk.",
     )
 
     @model_validator(mode="after")
-    def _require_payload_on_rejection(self) -> "ReviewReport":
-        """A rejection MUST carry actionable guidance (BACKLOG #17): rejecting a side while leaving its
-        diagnostic payload empty routes the agent next cycle with ZERO signal — it reproduces the same
-        output and the loop silently burns the whole retry budget to "Retries exhausted". instructor
-        re-prompts the Reviewer on this ValueError, forcing it to articulate the defect."""
+    def _require_routing_coherence(self) -> "ReviewReport":
+        """Code-enforce the feedback-routing invariant the prompt alone could not guarantee (BACKLOG
+        #11/#17/#18): the channel(s) driving the next cycle must be fed only on a genuinely-rejected side,
+        and a production rejection must point at real evidence. instructor re-prompts the Reviewer on any
+        ValueError below, forcing a coherent report instead of a silent retry-budget burn."""
+        # #17 — a rejection must carry actionable guidance (forward direction).
         if not self.code_quality_approved and not self.dev_diagnostic_payload.strip():
             raise ValueError("code_quality_approved=false requires a non-empty dev_diagnostic_payload.")
         if not self.test_integrity_approved and not self.qa_diagnostic_payload.strip():
             raise ValueError("test_integrity_approved=false requires a non-empty qa_diagnostic_payload.")
+        # #18 — converse: an approved side must NOT carry a payload (else the router feeds a channel for a
+        # defect-free side and the Developer + QA fight). Biconditional: payload non-empty <=> rejection.
+        if self.code_quality_approved and self.dev_diagnostic_payload.strip():
+            raise ValueError("code_quality_approved=true forbids a non-empty dev_diagnostic_payload.")
+        if self.test_integrity_approved and self.qa_diagnostic_payload.strip():
+            raise ValueError("test_integrity_approved=true forbids a non-empty qa_diagnostic_payload.")
+        # #11 — a production rejection must cite verbatim evidence (a gate line or a code excerpt), so the
+        # Reviewer cannot reroute the Developer onto a phantom structural defect.
+        if not self.code_quality_approved and not self.dev_evidence_citation.strip():
+            raise ValueError("code_quality_approved=false requires a non-empty dev_evidence_citation.")
         return self
 
 

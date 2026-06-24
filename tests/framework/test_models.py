@@ -328,11 +328,14 @@ class ContractModelTests(unittest.TestCase):
 
 
 class ReviewReportPayloadValidatorTests(unittest.TestCase):
-    """BACKLOG #17: a rejection MUST carry an actionable diagnostic payload, or the agent re-runs with zero
-    guidance and the loop silently burns the retry budget. The model validator fails fast instead (instructor
-    re-prompts the Reviewer)."""
+    """The routing-coherence validator (`_require_routing_coherence`) code-enforces the feedback-channel
+    invariant the prompt alone could not: BACKLOG #17 (a rejection MUST carry an actionable payload), #18
+    (the converse — an approved side must NOT carry a payload, so the router never feeds a defect-free
+    channel), and #11 (a production rejection must cite verbatim evidence). instructor re-prompts the
+    Reviewer on the resulting ValueError instead of the loop silently burning the retry budget."""
 
     _base = dict(code_quality_analysis="a", test_integrity_analysis="b", log_verification_analysis="c")
+    _cite = "AssertionError: expected 0 got 1 (writer.py:42)"
 
     def test_rejecting_code_without_dev_payload_raises(self) -> None:
         with self.assertRaises(ValidationError):
@@ -351,7 +354,8 @@ class ReviewReportPayloadValidatorTests(unittest.TestCase):
 
     def test_rejection_with_payload_passes(self) -> None:
         ok = ReviewReport(**self._base, code_quality_approved=False, test_integrity_approved=False,
-                          dev_diagnostic_payload="fix prod", qa_diagnostic_payload="fix tests")
+                          dev_diagnostic_payload="fix prod", qa_diagnostic_payload="fix tests",
+                          dev_evidence_citation="AssertionError: expected 0 got 1 (writer.py:42)")
         self.assertFalse(ok.code_quality_approved)
         self.assertFalse(ok.test_integrity_approved)
 
@@ -359,6 +363,36 @@ class ReviewReportPayloadValidatorTests(unittest.TestCase):
         ok = ReviewReport(**self._base, code_quality_approved=True, test_integrity_approved=True)
         self.assertTrue(ok.code_quality_approved)
         self.assertEqual(ok.qa_diagnostic_payload, "")
+
+    # --- #18 converse: an approved side must NOT carry a payload ---
+    def test_approved_code_with_dev_payload_raises(self) -> None:
+        with self.assertRaises(ValidationError):
+            ReviewReport(**self._base, code_quality_approved=True, test_integrity_approved=True,
+                         dev_diagnostic_payload="sneaky note on approved code")
+
+    def test_approved_tests_with_qa_payload_raises(self) -> None:
+        with self.assertRaises(ValidationError):
+            ReviewReport(**self._base, code_quality_approved=True, test_integrity_approved=True,
+                         qa_diagnostic_payload="sneaky note on approved tests")
+
+    # --- #11: a production rejection must cite verbatim evidence ---
+    def test_rejecting_code_without_evidence_citation_raises(self) -> None:
+        with self.assertRaises(ValidationError):
+            ReviewReport(**self._base, code_quality_approved=False, test_integrity_approved=True,
+                         dev_diagnostic_payload="fix prod", dev_evidence_citation="")
+
+    def test_rejecting_code_with_evidence_citation_passes(self) -> None:
+        ok = ReviewReport(**self._base, code_quality_approved=False, test_integrity_approved=True,
+                          dev_diagnostic_payload="fix prod", dev_evidence_citation=self._cite)
+        self.assertFalse(ok.code_quality_approved)
+        self.assertEqual(ok.dev_evidence_citation, self._cite)
+
+    def test_rejecting_tests_only_needs_no_evidence_citation(self) -> None:
+        # A test-only rejection leaves production approved, so no production evidence is required.
+        ok = ReviewReport(**self._base, code_quality_approved=True, test_integrity_approved=False,
+                          qa_diagnostic_payload="rewrite the suite")
+        self.assertFalse(ok.test_integrity_approved)
+        self.assertEqual(ok.dev_evidence_citation, "")
 
 
 class BehaviorExampleModelTests(unittest.TestCase):
