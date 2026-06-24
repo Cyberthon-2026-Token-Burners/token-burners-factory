@@ -75,13 +75,17 @@ SUPPORTED_ENVIRONMENTS = {
         # autofix could not apply (e.g. F841 unused-local — an *unsafe* fix ruff won't auto-apply), and
         # `ruff format --check` catches formatter drift. --no-cache on the check so ruff never leaves a
         # `.ruff_cache/` in the tree for a later `git add -A` to commit. SSOT shared with the generated CI.
-        "lint_cmd": f"ruff check --no-cache --extend-exclude={DEPENDENCY_VENDOR_DIR} . && ruff format --check --extend-exclude={DEPENDENCY_VENDOR_DIR} .",
+        # `ruff check` accepts --extend-exclude (adds to config excludes); `ruff format` does NOT — it only
+        # has --exclude (passing --extend-exclude makes it exit 2 with "unexpected argument", which a lint
+        # gate reads as a permanent style failure the agents can never clear). Use the flag each subcommand
+        # actually supports.
+        "lint_cmd": f"ruff check --no-cache --extend-exclude={DEPENDENCY_VENDOR_DIR} . && ruff format --check --exclude={DEPENDENCY_VENDOR_DIR} .",
         # format_cmd: deterministic cleanup pass — strips unused imports, autofixes safe lint, AND applies
         # the formatter (ruff format) so the lint gate's `ruff format --check` passes without rerouting the
         # (expensive) Developer for pure formatting. --exit-zero keeps a residual unfixable finding from
         # logging a spurious non-fatal warning; the pass is cleanup, not a gate. --no-cache: one-shot pass,
         # so skip the cache — otherwise ruff writes a `.ruff_cache/` into the repo that `git add -A` commits.
-        "format_cmd": f"ruff check --fix --exit-zero --quiet --no-cache --extend-exclude={DEPENDENCY_VENDOR_DIR} . ; ruff format --quiet --extend-exclude={DEPENDENCY_VENDOR_DIR} .",
+        "format_cmd": f"ruff check --fix --exit-zero --quiet --no-cache --extend-exclude={DEPENDENCY_VENDOR_DIR} . ; ruff format --quiet --exclude={DEPENDENCY_VENDOR_DIR} .",
         # setup_cmd installs the project's requirements into the vendored-deps dir (--target) instead of the
         # default `--user` site, because under the sandbox's non-root --user pip lands in $HOME=/tmp — a
         # per-container tmpfs that is WIPED before the separate network-OFF execute container, so every

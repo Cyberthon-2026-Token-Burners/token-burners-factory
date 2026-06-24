@@ -32,7 +32,7 @@ from src.development.agents.developer import run_developer_node
 from src.development.agents.reviewer import run_reviewer_node
 from src.development.agents.arbiter import run_arbiter_node
 from src.development.agents.techwriter import run_techwriter_node
-from src.development.gates import run_qa_unit_tests, run_security_scan, run_build_gate, run_test_compile_gate, build_failure_is_test_only, build_failure_is_environmental, run_lint_gate, classify_lint_findings, run_format_pass
+from src.development.gates import run_qa_unit_tests, run_security_scan, run_build_gate, run_test_compile_gate, build_failure_is_test_only, build_failure_is_environmental, run_lint_gate, classify_lint_findings, lint_failure_is_tooling, run_format_pass
 
 # ==========================================
 # CONTROL-FLOW SIGNALS
@@ -1515,8 +1515,11 @@ async def run_executor(cfg: RunConfig, run_dir: Path, resume_checkpoint: Path | 
         #     — production → Developer, test → QA — with NO functional-retry consumed. `lint_success` folds
         #     into all_gates_passed below, so anything still red after LINT_GATE_MAX_REROUTES rides the
         #     budgeted cycle (the classified findings are re-applied to the channels AFTER the Reviewer's
-        #     routing). Deliberately NOT in the deadlock guard: a lint nit is always agent-fixable in
-        #     principle, never an environment misconfiguration.
+        #     routing). A genuine lint NIT is always agent-fixable in principle, so it is NOT in the
+        #     deadlock guard and rides the budgeted cycle. The ONE exception is a lint TOOL-invocation
+        #     error (lint_failure_is_tooling: bad flag / unknown subcommand / missing binary) — the linter
+        #     could not run at all, an engine `lint_cmd` misconfig the agents cannot fix — which fails fast
+        #     with an environment incident below, like build_failure_is_environmental.
         lint_success = True
         lint_prod_feedback = ""
         lint_test_feedback = ""
@@ -1534,6 +1537,21 @@ async def run_executor(cfg: RunConfig, run_dir: Path, resume_checkpoint: Path | 
             )
             if lint_ok:
                 break
+            # A lint TOOL-invocation error (bad flag / unknown subcommand / missing binary) means the
+            # linter itself could not run — the engine's `lint_cmd`/`format_cmd` is misconfigured, NOT a
+            # code defect. No Developer/QA edit can clear it, so fail FAST with an environment incident
+            # (mirroring build_failure_is_environmental) instead of folding it into the budgeted cycle,
+            # where the lint-blind Reviewer would approve and the Arbiter halt as "unrecoverable".
+            if lint_failure_is_tooling(ctx.contract.environment_id, lint_lines):
+                ctx.error_trace = _cap_text("\n".join(lint_lines))
+                _abort_with_incident(
+                    ctx,
+                    "\n🚨 ENVIRONMENT/LINT-TOOLING HALT: the lint gate could not execute — a CLI-invocation "
+                    "error (bad flag / unknown subcommand / missing binary), NOT a code defect. This is an "
+                    f"engine/registry `lint_cmd` misconfiguration for environment "
+                    f"'{ctx.contract.environment_id}'; the Developer/QA are NOT rerouted. Fix the "
+                    "environment's lint_cmd/format_cmd in src/shared/core/environments.py.",
+                )
             lint_prod_findings, lint_test_findings = classify_lint_findings(
                 ctx.contract.environment_id, lint_lines
             )

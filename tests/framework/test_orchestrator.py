@@ -2716,6 +2716,39 @@ class LintGateLoopTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn("MISCONFIGURATION", abort_msgs[0])         # … the deadlock-guard halt
             self.assertEqual(lint_gate.await_count, 2)                  # no-progress broke the fast-fail loop early
 
+    async def test_lint_tooling_error_halts_fast_without_rerouting(self) -> None:
+        # A lint command that could not RUN (here: `ruff format` rejecting `--extend-exclude`) is an
+        # engine `lint_cmd` misconfig the agents cannot fix. It must FAIL FAST with an environment
+        # incident — never enter the fast-fail reroute loop and never fold into the budgeted cycle
+        # (where the lint-blind Reviewer approves and the Arbiter halts as "unrecoverable").
+        with TemporaryDirectory() as td:
+            ctx = self._resume_ctx(Path(td))
+            tooling = [
+                "error: unexpected argument '--extend-exclude' found",
+                "Usage: ruff format --check [FILES]...",
+            ]
+            lint_gate = AsyncMock(return_value=(False, tooling))
+            abort_msgs: list[str] = []
+
+            def _capture_abort(_ctx, message, *a, **k):
+                abort_msgs.append(message)
+                raise SystemExit(1)
+
+            with ExitStack() as stack:
+                for cm in self._common_patches(ctx, lint_gate, self._approve_both(ctx)):
+                    stack.enter_context(cm)
+                qa = stack.enter_context(mock.patch.object(orchestrator, "run_qa_agent_node", new_callable=AsyncMock))
+                developer = stack.enter_context(mock.patch.object(orchestrator, "run_developer_node", new_callable=AsyncMock))
+                stack.enter_context(mock.patch.object(orchestrator, "_abort_with_incident", side_effect=_capture_abort))
+                with self.assertRaises(SystemExit):
+                    await orchestrator.main()
+
+            self.assertEqual(len(abort_msgs), 1)
+            self.assertIn("LINT-TOOLING", abort_msgs[0])     # fail-fast environment incident, not a reroute
+            self.assertEqual(lint_gate.await_count, 1)        # failed once → immediate halt, no reroute loop
+            developer.assert_awaited_once()                   # only the cycle-1 dev pass — never rerouted for tooling
+            qa.assert_not_awaited()
+
     async def test_no_progress_lint_break_halts_fast_fail_loop_before_budget(self) -> None:
         # Edge Case C (anti-loop): a PROD lint finding the agent never clears must break the step-3.6
         # fast-fail loop on the SECOND iteration — the no-progress guard fires when iteration N's

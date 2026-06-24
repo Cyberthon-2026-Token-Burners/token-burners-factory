@@ -11,8 +11,15 @@ from src.shared.core.docker_adapter import execute_in_sandbox, run_in_image
 # list — so adding a language to the env registry extends these parsers with NO edit here (the engine
 # stays language-agnostic). Sorted longest-first by the helper, so e.g. `tsx` is tried before `ts`.
 _SOURCE_EXT_ALT = "|".join(re.escape(ext.lstrip(".")) for ext in all_source_extensions())
-# Compiler/diagnostic lines reference a source file as `path/to/file.ext:line[:col]:`.
-_FILE_REF_RE = re.compile(rf"^\s*([\w./\\-]+\.(?:{_SOURCE_EXT_ALT})):\d+")
+# Compiler/diagnostic lines reference a source file with the line/col either COLON-style
+# (`path/to/file.ext:line[:col]:` — ruff/gcc/go/eslint) OR MSBuild PARENTHESIS-style
+# (`path/to/file.ext(line,col):` — Roslyn/`dotnet build`, `tsc --pretty false`). Both suffix forms are
+# accepted so the parser stays language-agnostic: a stack whose compiler uses the parenthesis form
+# (.NET) is classified by the SAME registry-derived regex with NO per-language branch. Without the
+# parenthesis alternative, `build_failure_is_test_only`/`classify_lint_findings` silently fail to parse
+# every MSBuild diagnostic (referenced==[] → "not test-only"), misrouting QA-owned test-compile errors
+# to the Developer (who cannot edit tests) until the cycle budget is exhausted.
+_FILE_REF_RE = re.compile(rf"^\s*([\w./\\-]+\.(?:{_SOURCE_EXT_ALT}))(?::\d+|\(\d+,\d+\))")
 # A linter line that is ONLY a relative path with no `:line:col` (e.g. `gofmt -l` output). Kept as a
 # SEPARATE pattern so the compile-error regex above is never loosened (which would risk mis-parsing the
 # build gate's output). Used only by the lint-finding classifier.
@@ -78,6 +85,43 @@ def build_failure_is_environmental(environment_id: str, log_lines: list[str]) ->
     `ModuleNotFoundError` ⊃ `enotfound`) fall through to the normal compile-gate reroute."""
     blob = "\n".join(log_lines).lower()
     return _ENV_BUILD_FAILURE_RE.search(blob) is not None
+
+
+# Signatures of a lint/format TOOL that could not RUN AT ALL — a bad flag, an unknown subcommand, or a
+# missing binary. These mean the engine's own `lint_cmd` is misconfigured (e.g. `ruff format` does not
+# accept `--extend-exclude`), NOT that the code has a style defect: no Developer/QA edit can clear them.
+# The runner must fail FAST with an environment incident rather than fold the gate failure into the
+# budgeted cycle, where the lint-BLIND Reviewer approves the code and the Arbiter then halts with a
+# misleading "unrecoverable" verdict (the exact shape that masked a malformed lint_cmd). Kept to strong
+# CLI-invocation signatures so a genuine lint FINDING (which names a `file:line` and a rule code) is never
+# misread as a tool error. Language-agnostic: one shared set across ruff/eslint/go vet/dotnet — no branch.
+_LINT_TOOL_ERROR_MARKERS = (
+    "unexpected argument",
+    "unrecognized option",
+    "unrecognized arguments",
+    "unrecognized subcommand",
+    "unknown flag",
+    "unknown option",
+    "invalid choice",
+    "no such option",
+    "flag provided but not defined",
+    "usage:",
+    "command not found",
+)
+_LINT_TOOL_ERROR_RE = re.compile(
+    r"\b(?:" + "|".join(re.escape(m) for m in _LINT_TOOL_ERROR_MARKERS) + r")"
+)
+
+
+def lint_failure_is_tooling(environment_id: str, log_lines: list[str]) -> bool:
+    """True iff the lint-gate output bears a CLI-invocation-error signature — the linter/formatter could
+    not execute (bad flag, unknown subcommand, missing binary), so the failure is an environment/registry
+    misconfig (a wrong ``lint_cmd``), NOT an agent-fixable style finding. Used by the runner to fail FAST
+    with an environment incident instead of rerouting agents who cannot fix the engine's own command.
+    Conservative — a real finding (``file:line: RULE message``) carries none of these markers — and
+    symmetric with ``build_failure_is_environmental`` (a tooling failure the agents cannot repair)."""
+    blob = "\n".join(log_lines).lower()
+    return _LINT_TOOL_ERROR_RE.search(blob) is not None
 
 
 def classify_lint_findings(environment_id: str, log_lines: list[str]) -> tuple[list[str], list[str]]:
