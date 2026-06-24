@@ -7,7 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Each release maps to a completed SDLC iteration; the corresponding Architecture
 Decision Record (ADR) is linked from the version heading.
 
-## [Unreleased] — Convergence hardening: behavioral oracle, raw-runner feedback, repo-aware test topology, routing-coherence reconciler
+## [Unreleased]
+
+## [v0.24.0] - 2026-06-24 — Convergence hardening: behavioral oracle, raw-runner feedback, repo-aware test topology, routing-coherence reconciler
+
+ADR: [0024-routing-coherence-reconciler](./docs/decisions/0024-routing-coherence-reconciler.md)
+(extends [0003](./docs/decisions/0003-dual-channel-observability.md),
+[0016](./docs/decisions/0016-arbiter-contract-self-healing.md); resolves BACKLOG #11, #18, #25 — pairs with #17)
 
 Root-causes behind QA loops / weak tests / wasted reroutes (surfaced by the `json-to-csv` python & .NET runs),
 fixed in the engine/prompts — never the generated clone.
