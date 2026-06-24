@@ -13,6 +13,9 @@ system prompt; this skill only maps them to C# idioms.
 - Name the test file `<Name>Tests.cs` colocated with the type under test (e.g. `Converter.cs` →
   `ConverterTests.cs`). Assume the contract provides the test project (a `.csproj` referencing
   `Microsoft.NET.Test.Sdk` + the xUnit packages and the project under test); emit the test class into it.
+- The test project's `.csproj` MUST be registered in the repo's root `.sln` (`dotnet sln add`), or the
+  root-level `dotnet test` gate runs from a directory with no solution and never discovers it. If the
+  contract's test project is missing from the solution, that is a build defect — flag it.
 
 ## Namespace & Placement Fidelity (MANDATORY)
 - The test class's `namespace` MUST match the namespace of the type under test exactly as declared in

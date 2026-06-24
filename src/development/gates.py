@@ -47,7 +47,11 @@ _ENV_BUILD_FAILURE_MARKERS = (
     "proxyerror",
     "etimedout", "enotfound", "eai_again", "econnreset",   # npm/node network errno
     "dial tcp",                            # go module fetch
-    "🚨 dependency restore failed",         # our own restore-phase failure banner (gates setup_cmd)
+    # NOTE: do NOT add the gates' own "🚨 Dependency restore failed:" banner here. It is prepended to
+    # EVERY restore failure (gates.py run_*_gate), network OR not (e.g. MSB1003 "no project/solution",
+    # a bad PackageReference). Matching it makes the classifier self-referential — it would tag every
+    # restore failure as environmental and mask real code/config defects as false NU1301 network halts.
+    # Match only the underlying tool's genuine network signatures above.
 )
 
 

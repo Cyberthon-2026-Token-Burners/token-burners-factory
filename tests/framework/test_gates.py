@@ -295,9 +295,17 @@ class EnvironmentalBuildFailureTests(unittest.TestCase):
         self.assertTrue(build_failure_is_environmental("node-20-web", ["npm error code EAI_AGAIN", "getaddrinfo EAI_AGAIN registry.npmjs.org"]))
         self.assertTrue(build_failure_is_environmental("go-1.23-cli", ["dial tcp: lookup proxy.golang.org: Temporary failure in name resolution"]))
 
-    def test_restore_failed_banner_is_environmental(self) -> None:
-        # The gates' own restore-phase failure banner must be recognised.
-        self.assertTrue(build_failure_is_environmental(self._DOTNET, ["🚨 Dependency restore failed:", "some output"]))
+    def test_restore_banner_without_network_signature_is_not_environmental(self) -> None:
+        # Regression guard: the gates prepend "🚨 Dependency restore failed:" to EVERY restore failure.
+        # A restore that failed for a NON-network reason (here MSB1003 — no project/solution at the
+        # restore CWD) must NOT be misread as a network halt just because that banner is present; it must
+        # fall through to the normal compile-gate reroute so the Developer can fix the real defect.
+        lines = [
+            "🚨 Dependency restore failed:",
+            "MSBUILD : error MSB1003: Specify a project or solution file. The current working "
+            "directory does not contain a project or solution file.",
+        ]
+        self.assertFalse(build_failure_is_environmental(self._DOTNET, lines))
 
     def test_real_compiler_error_is_not_environmental(self) -> None:
         # A genuine code defect must fall through to the normal compile-gate reroute.
