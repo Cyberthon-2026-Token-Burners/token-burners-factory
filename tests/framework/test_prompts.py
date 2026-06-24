@@ -244,6 +244,34 @@ class QASkillFidelityTests(unittest.TestCase):
         self.assertIn("Namespace & Placement Fidelity", raw)
 
 
+class DotnetLayoutMandateTests(unittest.TestCase):
+    """The dotnet skills must mandate the canonical src/+tests/ layout (root holds ONLY the .sln) — the
+    single fix for the MSB1011 / cross-globbed *Tests.cs / CS0579 reroute cascade a root-level .csproj
+    triggers. The QA skill must NOT colocate the test source with the production type."""
+
+    def setUp(self) -> None:
+        get_skill.cache_clear()
+
+    def test_core_mandates_subdir_layout_root_holds_only_sln(self) -> None:
+        raw = get_skill("dotnet_core")
+        self.assertIn("root holds ONLY the .sln", raw)
+        self.assertIn("NEVER place a `.csproj` at the repository root", raw)
+        self.assertIn("src/<Project>/<Project>.csproj", raw)
+        self.assertIn("tests/<Project>.Tests/", raw)
+
+    def test_core_names_the_three_root_csproj_footguns(self) -> None:
+        raw = get_skill("dotnet_core")
+        for marker in ("MSB1011", "CS0579", "InternalsVisibleTo"):
+            self.assertIn(marker, raw, marker)
+
+    def test_qa_does_not_colocate_test_with_production(self) -> None:
+        raw = get_skill("dotnet_qa")
+        # The exact phrasing that put `Models/CliOptionsTests.cs` into the production tree (run 003).
+        self.assertNotIn("colocated with the type under test", raw)
+        self.assertIn("INSIDE the test project directory", raw)
+        self.assertIn("InternalsVisibleTo", raw)
+
+
 class GenerateRepoMapTests(unittest.TestCase):
     """Recursive tree walker prunes noise and gracefully handles a missing root."""
 

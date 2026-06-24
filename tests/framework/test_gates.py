@@ -314,10 +314,11 @@ class EnvironmentalBuildFailureTests(unittest.TestCase):
 
 
 class DotnetFormatWorkspaceTargetingTests(unittest.TestCase):
-    """Regression guard: `dotnet format` hard-crashes ("Both a MSBuild project file and solution file
-    found in '.'", exit 1 in ParseWorkspaceOptions) when the repo root holds BOTH a *.sln and a root
-    *.csproj — unlike build/restore/test, which prefer the .sln. So the dotnet lint/format commands MUST
-    resolve and target the solution explicitly, never invoke a bare `dotnet format` that auto-discovers
+    """Regression guard: `dotnet format` hard-crashes in ParseWorkspaceOptions (exit 1) when the CWD is
+    ambiguous ("Both a MSBuild project file and solution file found in '.'") or empty ("no project or
+    solution file found") — unlike build/restore/test, which prefer the .sln. So the dotnet lint/format
+    commands MUST resolve a SINGLE explicit workspace (the root .sln, else a lone .csproj) and SKIP
+    cleanly when none resolves, never invoke a bare `dotnet format`/`dotnet format .` that auto-discovers
     the CWD. A bare command silently reds the lint gate forever and loops the FSM to the breaker."""
     _SPEC = SUPPORTED_ENVIRONMENTS["dotnet-10-sdk"]
 
@@ -325,9 +326,30 @@ class DotnetFormatWorkspaceTargetingTests(unittest.TestCase):
         for key in ("lint_cmd", "format_cmd"):
             cmd = self._SPEC[key]
             self.assertIn("dotnet format", cmd, key)
-            # Resolves a workspace target rather than relying on CWD auto-discovery (the crash trigger).
+            # Resolves a workspace target rather than relying on CWD auto-discovery (the crash trigger):
+            # prefer the solution, fall back to a lone .csproj, into a quoted "$ws".
+            # MUST match BOTH the newer .slnx (the .NET 10 `dotnet new sln` default) and the classic .sln —
+            # globbing only *.sln would miss a .slnx and silently no-op the lint gate.
+            self.assertIn("*.slnx", cmd, key)
             self.assertIn("*.sln", cmd, key)
-            self.assertIn("${sln", cmd, key)
+            self.assertIn("*.csproj", cmd, key)
+            self.assertIn('"$ws"', cmd, key)
+            # Never targets a bare '.' (the ambiguous-/empty-CWD crash trigger we are guarding against).
+            self.assertNotIn("dotnet format .", cmd, key)
+            self.assertNotIn("${ws:-.}", cmd, key)
+
+    def test_commands_skip_cleanly_when_no_workspace_resolves(self) -> None:
+        # When neither a .sln nor a .csproj exists at the root, both commands exit 0 (a clean no-op)
+        # rather than crashing dotnet format on an empty CWD — the non-fatal format-pass crash fix.
+        for key in ("lint_cmd", "format_cmd"):
+            cmd = self._SPEC[key]
+            self.assertIn('if [ -z "$ws" ]', cmd, key)
+            self.assertIn("exit 0", cmd, key)
+
+    def test_commands_are_single_line(self) -> None:
+        # The docker adapter rejects multi-line commands; the resolver must stay a one-liner.
+        for key in ("lint_cmd", "format_cmd"):
+            self.assertNotIn("\n", self._SPEC[key], key)
 
     def test_lint_is_verify_only_and_format_is_autofix(self) -> None:
         self.assertIn("--verify-no-changes", self._SPEC["lint_cmd"])

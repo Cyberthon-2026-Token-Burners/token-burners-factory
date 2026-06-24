@@ -115,15 +115,22 @@ SUPPORTED_ENVIRONMENTS = {
         # lint_cmd: HARD lint gate. `dotnet format --verify-no-changes` exits non-zero iff the formatter
         # WOULD change anything (style/whitespace/unused usings). --no-restore keeps it network-OFF (the
         # restore phase ran first). format_cmd (dotnet format) auto-applies the same fixes beforehand.
-        # MUST target the solution EXPLICITLY: `dotnet format` (unlike build/restore/test, which prefer the
-        # .sln) hard-crashes with "Both a MSBuild project file and solution file found in '.'" when the repo
-        # root holds BOTH a *.sln AND a root *.csproj — exit 1 in ParseWorkspaceOptions, masking lint as a
-        # permanent red and looping the FSM. Resolve the root .sln (the dotnet_core skill mandates one) and
-        # pass it; fall back to '.' (single-project repos) when none exists. Single line (no-newline adapter
-        # rule); unquoted ${sln} is safe — .sln names carry no spaces.
-        "lint_cmd": "sln=$(ls *.sln 2>/dev/null | head -n1); dotnet format ${sln:-.} --verify-no-changes --no-restore",
-        # Best-effort: --no-restore keeps it network-OFF; removes unused usings where the SDK supports it.
-        "format_cmd": "sln=$(ls *.sln 2>/dev/null | head -n1); dotnet format ${sln:-.} --no-restore",
+        # MUST resolve a SINGLE explicit workspace target: `dotnet format` (unlike build/restore/test,
+        # which prefer the solution) hard-crashes in ParseWorkspaceOptions when the CWD is ambiguous ("Both
+        # a MSBuild project file and solution file found in '.'") OR empty ("no project or solution file
+        # found") — exit 1, masking lint as a permanent red and looping the FSM (the latter also fired the
+        # non-fatal format-pass crash before any solution existed). Resolution: prefer the root solution —
+        # the newer .slnx (the .NET 10 `dotnet new sln` DEFAULT) OR the classic .sln (the dotnet_core skill
+        # mandates exactly one at the root) — else a lone root .csproj (single-project repos); if NEITHER
+        # resolves, SKIP cleanly (exit 0) instead of passing '.' and crashing. `dotnet format` accepts a
+        # .slnx target; globbing only *.sln would MISS a .slnx and silently no-op the gate. The final
+        # `dotnet format` propagates its real exit code (2 = "would change") so the verify gate still fails
+        # on actual findings. Single line (no-newline adapter rule); valid in both `sh -c` (sandbox) and a
+        # GH Actions run step.
+        "lint_cmd": "ws=$(ls *.slnx *.sln 2>/dev/null | head -n1); ws=${ws:-$(ls *.csproj 2>/dev/null | head -n1)}; if [ -z \"$ws\" ]; then echo 'no .slnx/.sln/.csproj at repo root — nothing to verify'; exit 0; fi; dotnet format \"$ws\" --verify-no-changes --no-restore",
+        # Best-effort autofix: same workspace resolution; --no-restore keeps it network-OFF; removes unused
+        # usings where the SDK supports it. Skips cleanly (never crashes) when no workspace resolves.
+        "format_cmd": "ws=$(ls *.slnx *.sln 2>/dev/null | head -n1); ws=${ws:-$(ls *.csproj 2>/dev/null | head -n1)}; if [ -z \"$ws\" ]; then exit 0; fi; dotnet format \"$ws\" --no-restore",
         "sandbox_env": {"HOME": "/tmp", "DOTNET_CLI_HOME": "/tmp", "NUGET_PACKAGES": "/tmp/nuget", "XDG_DATA_HOME": "/tmp/.local"},  # nosec B108 — in-container tmpfs paths
         # Persist the NuGet global-packages folder; overrides the tmpfs NUGET_PACKAGES so a package
         # restored online once is reused offline on every later container/run (the NU1301 cure).

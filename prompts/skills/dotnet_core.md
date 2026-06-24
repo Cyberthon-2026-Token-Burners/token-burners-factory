@@ -10,18 +10,46 @@ LANGUAGE TARGET: .NET (C#) — production-code rules for the .NET tech stack.
 - Target .NET 10, executed in the isolated Docker sandbox (`mcr.microsoft.com/dotnet/sdk:10.0-alpine`).
 - The solution MUST build cleanly under `dotnet build`; treat warnings as defects.
 
-## Solution Layout (MANDATORY — build commands run at the repo ROOT)
-- The gates run bare `dotnet restore` / `dotnet build` / `dotnet test` from the repository ROOT with no
-  project argument, so the repo MUST carry a root `.sln` that references EVERY project (`*.csproj`).
-  Without it the build fails with `MSB1003: Specify a project or solution file. The current working
-  directory does not contain a project or solution file` — a project nested under `src/` is invisible
-  to a root-level `dotnet build`.
-- The repository-initialization ticket MUST create this root `.sln`, and the TechLead MUST list it in
-  `files_to_modify` and the topology contract. Author the `.sln` (one `Project(...)` entry per
-  `.csproj`) or emit `dotnet new sln` + `dotnet sln add <path>/<name>.csproj` for each project.
-- Any later ticket that introduces a NEW project (a new `*.csproj` — INCLUDING the test project) MUST
-  register it in the root `.sln` in the SAME ticket, or a root-level `dotnet build` / `dotnet test`
-  silently skips it.
+## Solution Layout (MANDATORY — root holds ONLY the .sln; projects live in subdirectories)
+The gates run bare `dotnet restore` / `dotnet build` / `dotnet test` from the repository ROOT with no
+project argument, so the repo MUST carry a root `.sln`. The `.sln` is the workspace the bare commands
+resolve; the actual projects MUST sit in their own subdirectories. Use the canonical layout:
+
+```
+<repo root>/
+  <Solution>.sln                                  # the ONLY project/solution file at the root
+  .gitignore  LICENSE  README.md                  # repo metadata only
+  src/<Project>/<Project>.csproj                  # production project + its sources (Models/…, etc.)
+  tests/<Project>.Tests/<Project>.Tests.csproj    # test project + its *Tests.cs sources
+```
+
+- **NEVER place a `.csproj` at the repository root.** A root-level production project is the single
+  biggest source of avoidable build-fail reroutes on this stack — its default recursive `**/*.cs` glob
+  (and `obj/` output) collides with every sibling project. The three failure modes it causes, ALL of
+  which the subdirectory layout eliminates with ZERO `<Compile Remove>` / `DefaultItemExcludes` band-aids:
+  1. **`MSB1011`** ("more than one project or solution file") — a root `.csproj` next to the test
+     `.csproj` (or the `.sln`) makes the bare root command ambiguous.
+  2. **Cross-globbed test sources** — a root project's `**/*.cs` glob compiles `*Tests.cs` that live
+     under it, pulling test-only types/usings into the production assembly.
+  3. **`CS0579` duplicate assembly attributes** — a root project globs a nested project's generated
+     `obj/**/*.AssemblyInfo.cs`, so the same `[Assembly*]` attribute is emitted twice → build break.
+- The repo MUST carry a root solution file referencing EVERY project, or the build fails with `MSB1003`
+  ("does not contain a project or solution file"). Either the classic `.sln` OR the newer `.slnx` (the
+  XML format that .NET 10's `dotnet new sln` now emits by DEFAULT) is fine — `dotnet build`/`test`/`format`
+  all accept both. A project under `src/`/`tests/` is fully visible to a root-level `dotnet build` **as
+  long as the solution references it** — nesting is correct, not a problem.
+- **TechLead**: lay out `files_to_modify` and the topology with `src/<Project>/…` and
+  `tests/<Project>.Tests/…` paths (never a root `.csproj`), and list the root `.sln`. State the layout in
+  `architectural_constraints` ("root holds only the .sln; production csproj under src/<Project>/; test
+  csproj under tests/<Project>.Tests/"). For white-box tests of `internal` members, require the
+  production `.csproj` to declare `InternalsVisibleTo("<Project>.Tests")` — that, NOT physical colocation,
+  is how the separate test project reaches internals.
+- **Developer**: realize this on the FIRST write — author the `.sln` (one `Project(...)` entry per
+  `.csproj`, with the correct relative subdirectory path) or emit `dotnet new sln` + `dotnet sln add
+  src/<Project>/<Project>.csproj` (and the test project). Put production sources only under
+  `src/<Project>/` and never author a `*Tests.cs` (QA-owned). Any NEW `*.csproj` (INCLUDING the test
+  project) MUST be registered in the root `.sln` in the SAME ticket, or a root-level build/test silently
+  skips it.
 
 ## Project Archetype & Entry Point (MANDATORY — declare it, don't oscillate over it)
 - A .NET project has ONE archetype, and it is fixed by the ticket, not guessed per cycle:
@@ -58,9 +86,11 @@ LANGUAGE TARGET: .NET (C#) — production-code rules for the .NET tech stack.
   after the type. Wire collaborators via constructor Dependency Injection — do not new-up
   dependencies inside domain logic.
 - Manage dependencies and the build in the `.csproj` (`PackageReference`). `dotnet test` requires a
-  test project (`Microsoft.NET.Test.Sdk` + xUnit + a `ProjectReference` to the project under test). The
-  **Developer owns the test PROJECT FILE** (`<Name>.Tests.csproj`) as build glue — create it (with the
-  leading justification comment) and register it in the root `.sln` — but NEVER the test SOURCE
+  test project (`Microsoft.NET.Test.Sdk` + xUnit + a `ProjectReference` to the project under test),
+  living at `tests/<Project>.Tests/<Project>.Tests.csproj` — its own subdirectory, never alongside the
+  production project. The **Developer owns the test PROJECT FILE** (`<Project>.Tests.csproj`) as build
+  glue — create it (with the leading justification comment), `ProjectReference` it to
+  `../../src/<Project>/<Project>.csproj`, and register it in the root `.sln` — but NEVER the test SOURCE
   (`*Tests.cs`), which is QA-owned. Get the test `.csproj` in on the first pass so the QA gate has a
   project to compile into.
 
