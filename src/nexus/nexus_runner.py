@@ -129,14 +129,13 @@ async def run_nexus(
     # Materialise every planned task as a discrete Markdown ticket under artifacts/. TASK-01 (the
     # repository-preparation ticket) gets the engine-curated baseline files appended deterministically
     # — the TPM no longer reproduces the .gitignore/LICENSE verbatim (that tripped Gemini RECITATION).
-    holder = state.run_dir.parent.name  # project slug; license-holder attribution
     written = []
     for i, task in enumerate(state.tasks, start=1):
         ticket_id = _safe_ticket_id(task.get("ticket_id", ""), i)
         title = task.get("title", "").strip() or ticket_id
         description = task.get("description", "").strip()
         if i == 1:
-            description = f"{description}\n\n{build_baseline_block(task.get('environment_id', ''), holder)}"
+            description = f"{description}\n\n{build_baseline_block(task.get('environment_id', ''))}"
         ticket_path = state.artifacts_dir / f"{ticket_id}.md"
         ticket_path.write_text(f"# {title}\n\n{description}\n", encoding="utf-8")
         written.append(ticket_path.name)

@@ -34,7 +34,9 @@ async def run_techwriter_node(ctx: GlobalPipelineContext) -> None:
     code_text = "\n\n".join(
         f"### {path}\n{content}" for path, content in sorted(ctx.production_code_snapshot.items())
     )
+    idea_block = f"=== ORIGINAL USER REQUEST ===\n{ctx.idea}\n\n" if ctx.idea else ""
     user_content = (
+        f"{idea_block}"
         f"=== COMPLETED TASK ===\n{ctx.pr_description}\n\n"
         f"=== TECHLEAD CONTRACT ===\n{contract_text}\n\n"
         f"=== PRODUCTION CODE SNAPSHOT ===\n{code_text}\n\n"

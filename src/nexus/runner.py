@@ -1062,6 +1062,7 @@ def prepare_ticket_run(projects: Projects, project, cfg: RunConfig, ticket_id: s
     cfg.repo = cfg.repo or project.repo
     cfg.base_branch = project.base_branch
     cfg.ticket = ticket_id
+    cfg.idea = cfg.idea or project.idea
     ticket_file = _resolve_ticket_file(projects, project.slug, ticket_id)
     if ticket_file is None:
         return None
@@ -1235,6 +1236,7 @@ async def run_executor(cfg: RunConfig, run_dir: Path, resume_checkpoint: Path | 
             pr_description=cfg.description or "",
             base_branch=cfg.base_branch,
             ticket=cfg.ticket or "",
+            idea=cfg.idea or "",
             workspace_paths=paths,
         )
         ctx.telemetry.record_phase("git:clone", time.perf_counter() - _clone_t0)

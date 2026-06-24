@@ -425,6 +425,7 @@ class GlobalPipelineContext(BaseModel):
     techlead_brief: str = ""
     base_branch: str = "main"
     ticket: str = ""
+    idea: str = ""                   # Original --idea string from project.json; propagated to agents.
     # Bound by the orchestrator via `WorkspacePaths.for_run` once the git-anchored session
     # exists; None until then. Every node accesses it only within a live run.
     workspace_paths: WorkspacePaths | None = None

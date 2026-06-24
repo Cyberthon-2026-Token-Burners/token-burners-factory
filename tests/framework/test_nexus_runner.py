@@ -66,10 +66,10 @@ class NexusRunDirTests(unittest.IsolatedAsyncioTestCase):
             t1 = (run_dir / "artifacts" / "TASK-01.md").read_text(encoding="utf-8")
             t2 = (run_dir / "artifacts" / "TASK-02.md").read_text(encoding="utf-8")
             self.assertIn("Repository Baseline Files (engine-provided", t1)
-            self.assertIn("Permission is hereby granted", t1)        # full MIT body injected
+            self.assertIn("Apache License", t1)                      # full Apache 2.0 body injected
             self.assertIn("```gitignore", t1)
             self.assertNotIn("Repository Baseline Files", t2)        # business ticket untouched
-            self.assertNotIn("Permission is hereby granted", t2)
+            self.assertNotIn("Apache License", t2)
 
     async def test_resume_skips_completed_phases(self) -> None:
         with TemporaryDirectory() as td:
