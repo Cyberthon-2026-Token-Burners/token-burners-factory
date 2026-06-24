@@ -5,7 +5,7 @@ from pathlib import Path
 from src.shared.core.observability import log, log_token_usage
 from src.shared.core.config import QA_MODEL
 from src.shared.core.models import QATestSuite, GlobalPipelineContext
-from src.shared.core.environments import get_qa_profile, is_testable_source, derive_test_target, env_language, is_test_file
+from src.shared.core.environments import get_qa_profile, is_testable_source, derive_test_target, env_language, is_test_file, resolve_test_project_dir
 from src.shared.core.prompts import get_system_prompt_sections, build_agent_context, generate_repo_map
 from src.shared.utils.llm import run_structured_llm
 from src.shared.utils.git_helpers import get_git_root, get_pipeline_snapshot_files
@@ -113,10 +113,22 @@ async def run_qa_agent_node(ctx: GlobalPipelineContext, error_trace: str = "") -
     env_id = ctx.contract.environment_id
     profile = get_qa_profile(env_id)
     repo_dir = ctx.workspace_paths.repo_dir
-    # Colocated stacks (go/node/.NET) write tests next to source under the repo root; the separate
-    # layout (python) keeps them under repo/<test_root> (the profile owns the convention). The zombie
-    # disposer is rooted accordingly.
-    test_root = (repo_dir / profile["test_root"]) if profile["layout"] == "separate" else repo_dir
+    # Test placement by layout (profile owns the convention; the zombie disposer is rooted accordingly):
+    #  - "separate"  (python): a static repo/<test_root> dir.
+    #  - "project"   (.NET):   a separate test PROJECT dir resolved per-run from the contract's
+    #                          *.Tests.csproj (tests/<Name>.Tests/) — writing into src/ would put the
+    #                          *Tests.cs in the production project's glob (no xUnit ref → CS0246).
+    #  - "colocated" (go/node): next to the source, under the repo root.
+    if profile["layout"] == "separate":
+        test_root = repo_dir / profile["test_root"]
+    elif profile["layout"] == "project":
+        proj_dir = resolve_test_project_dir(ctx.contract.files_to_modify)
+        if not proj_dir:
+            log.warning("🔶 QA: no *Tests.csproj in the contract's files_to_modify — placing tests in "
+                        "repo/tests (the test project should be contracted; see the dotnet_core skill).")
+        test_root = repo_dir / (proj_dir or "tests")
+    else:  # colocated
+        test_root = repo_dir
     zombie_root = test_root
     test_name_ok = _test_name_predicate(env_id)
 

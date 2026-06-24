@@ -4,12 +4,15 @@ import os
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
+from unittest import mock
+from unittest.mock import AsyncMock
 
 # qa imports src.shared.core.config at module import time.
 os.environ.setdefault("GEMINI_API_KEY", "test-key")
 
 from src.development.agents import qa
-from src.shared.core.models import QATestSuite
+from src.shared.core.models import QATestSuite, GlobalPipelineContext, WorkspacePaths, TechLeadContract
 from src.shared.core.environments import is_testable_source, derive_test_target, is_test_file, get_qa_profile
 
 # The Python test-name predicate, now supplied explicitly by callers (the engine default was removed).
@@ -133,9 +136,12 @@ class DeriveTestTargetTests(unittest.TestCase):
         path, _ = derive_test_target("node-20-web", "src/app.ts")
         self.assertEqual(path, "src/app.test.ts")
 
-    def test_dotnet_colocated_tests_suffix(self) -> None:
-        path, _ = derive_test_target("dotnet-10-sdk", "src/Converter.cs")
-        self.assertEqual(path, "src/ConverterTests.cs")
+    def test_dotnet_project_layout_returns_flat_name(self) -> None:
+        # "project" layout: the test file name is FLAT (no src/ prefix) — the QA node joins it with the
+        # test PROJECT dir resolved from the contract, so the test lands in tests/<Name>.Tests/, NOT src/.
+        path, ref = derive_test_target("dotnet-10-sdk", "src/JsonToCsv/Converter.cs")
+        self.assertEqual(path, "ConverterTests.cs")
+        self.assertEqual(ref, "src/JsonToCsv/Converter.cs")
 
 
 class TestRootProfileTests(unittest.TestCase):
@@ -148,10 +154,72 @@ class TestRootProfileTests(unittest.TestCase):
         self.assertEqual(prof["test_root"], "tests")
 
     def test_colocated_stacks_have_no_test_root(self) -> None:
-        for env in ("go-1.23-cli", "node-20-web", "dotnet-10-sdk"):
+        for env in ("go-1.23-cli", "node-20-web"):
             prof = get_qa_profile(env)
             self.assertEqual(prof["layout"], "colocated")
             self.assertIsNone(prof["test_root"])
+
+    def test_dotnet_uses_project_layout(self) -> None:
+        # .NET uses the "project" layout (separate test PROJECT dir resolved per-run from the contract),
+        # NOT colocated — a colocated *Tests.cs in src/ hits the production project's glob (CS0246).
+        prof = get_qa_profile("dotnet-10-sdk")
+        self.assertEqual(prof["layout"], "project")
+        self.assertIsNone(prof["test_root"])  # resolved per-run, not static
+
+
+class ResolveTestProjectDirTests(unittest.TestCase):
+    """The .NET test source dir is the parent of the contracted *.Tests.csproj (Developer-owned build glue)."""
+
+    def test_resolves_parent_of_test_csproj(self) -> None:
+        from src.shared.core.environments import resolve_test_project_dir
+        files = [".gitignore", "JsonToCsv.sln", "src/JsonToCsv/JsonToCsv.csproj",
+                 "src/JsonToCsv/Program.cs", "tests/JsonToCsv.Tests/JsonToCsv.Tests.csproj"]
+        self.assertEqual(resolve_test_project_dir(files), "tests/JsonToCsv.Tests")
+
+    def test_returns_none_when_no_test_manifest(self) -> None:
+        from src.shared.core.environments import resolve_test_project_dir
+        self.assertIsNone(resolve_test_project_dir(["src/JsonToCsv/JsonToCsv.csproj", "README.md"]))
+        self.assertIsNone(resolve_test_project_dir([]))
+
+
+class DotnetTestPlacementNodeTests(unittest.IsolatedAsyncioTestCase):
+    """End-to-end placement fix: the QA node writes a .NET *Tests.cs INSIDE the contracted test PROJECT
+    dir (tests/<Name>.Tests/), NOT in src/ next to the source — the CS0246 reroute root cause."""
+
+    async def test_writes_test_into_contract_test_project_dir(self) -> None:
+        with TemporaryDirectory() as td:
+            repo = Path(td)
+            paths = WorkspacePaths(logs_dir=repo / "logs", reports_dir=repo / "reports", repo_dir=repo)
+            ctx = GlobalPipelineContext(pr_description="p", workspace_paths=paths)
+            ctx.contract = TechLeadContract(
+                files_to_modify=[
+                    ".gitignore", "JsonToCsv.sln",
+                    "src/JsonToCsv/JsonToCsv.csproj", "src/JsonToCsv/Program.cs",
+                    "tests/JsonToCsv.Tests/JsonToCsv.Tests.csproj",
+                ],
+                instruction="i", function_signatures="f", strict_type_validation_rules="s",
+                techlead_reasoning="r", topology_contract=[], environment_id="dotnet-10-sdk",
+            )
+            ctx.repository_map = "(repo)"  # skip the generate_repo_map disk walk
+
+            suite = QATestSuite(overwrite_existing=True, new_imports="using Xunit;",
+                                new_test_code="public class ProgramTests { }", files_to_delete=[])
+
+            async def _fake_llm(role, model, messages):
+                return suite, SimpleNamespace(usage_metadata=None)
+
+            with mock.patch.object(qa, "run_structured_llm", new=_fake_llm), \
+                 mock.patch.object(qa, "build_agent_context", new=AsyncMock(return_value="")), \
+                 mock.patch.object(qa, "log_token_usage", new=lambda *a, **k: None), \
+                 mock.patch.object(qa, "run_format_pass", new=AsyncMock(return_value=None)), \
+                 mock.patch.object(qa, "get_git_root", new=AsyncMock(return_value=str(repo))), \
+                 mock.patch.object(qa, "get_pipeline_snapshot_files", new=AsyncMock(return_value=[])):
+                await qa.run_qa_agent_node(ctx)
+
+            # Lands in the contracted test PROJECT dir (compiled by the xUnit test project) ...
+            self.assertTrue((repo / "tests" / "JsonToCsv.Tests" / "ProgramTests.cs").exists())
+            # ... NOT colocated in src/ (where the production project's glob would hit it → CS0246).
+            self.assertFalse((repo / "src" / "JsonToCsv" / "ProgramTests.cs").exists())
 
 
 class StripFencesTests(unittest.TestCase):

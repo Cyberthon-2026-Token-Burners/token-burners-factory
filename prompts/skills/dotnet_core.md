@@ -69,6 +69,23 @@ resolve; the actual projects MUST sit in their own subdirectories. Use the canon
   a scope violation or direct its deletion. If the entry point is genuinely missing from `files_to_modify`
   and that blocks the build, that is a CONTRACT gap to amend (add it to the whitelist), not a Developer bug.
 
+## Scaffolding / init ticket completeness (MANDATORY — the buildable+testable skeleton ships in ONE ticket)
+The ticket that CREATES the project skeleton (the `.csproj`/`.sln`) MUST leave the repo BUILDABLE and
+TESTABLE the moment it merges — never a config-only shell that defers the entry point or the test project
+to a later ticket. A bare `.sln` + production `.csproj` with neither is the recurring first-ticket failure:
+it `CS5001`-reroutes (Exe with no entry point) AND leaves QA's `*Tests.cs` orphaned (no test project in the
+solution → `dotnet test` discovers ZERO tests and exits green with no coverage). In the SAME contract:
+- **Production entry point** — for an `Exe`, `src/<Project>/Program.cs` (real `Main`/top-level statement)
+  in `files_to_modify` (per Archetype above).
+- **Test project skeleton** — `tests/<Project>.Tests/<Project>.Tests.csproj` (Microsoft.NET.Test.Sdk +
+  xUnit + a `ProjectReference` to the production project) in `files_to_modify`, with BOTH projects
+  registered in the root `.sln`. This is the compile target QA writes its `*Tests.cs` into; the test SOURCE
+  itself stays QA-owned (never list `*Tests.cs`).
+- **TechLead**: NEVER write "do not create C# source code files" into a scaffold contract for an `Exe`
+  app — that instruction is exactly what strands the entry point and the test project out of scope. The
+  entry point and the test `.csproj` are build glue: they are IN scope for the skeleton ticket even when
+  the ticket text frames itself as "configuration only". Expand the contract to include them.
+
 ## Types & Guards
 - Enable nullable reference types (`<Nullable>enable</Nullable>`) and honor the annotations. Guard
   arguments explicitly: throw `ArgumentNullException`/`ArgumentException` (or use `ArgumentNullException

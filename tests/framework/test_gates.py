@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, call
 
 from src.development.gates import (
     run_qa_unit_tests, run_security_scan, run_build_gate, run_format_pass, run_test_compile_gate,
-    run_lint_gate, classify_lint_findings, _has_eslint_config,
+    run_lint_gate, classify_lint_findings, _has_eslint_config, ran_zero_tests,
     build_failure_is_test_only, build_failure_is_environmental, _has_test_files, _FILE_REF_RE,
 )
 from src.shared.core.environments import SUPPORTED_ENVIRONMENTS, SAST_IMAGE, SAST_CMD
@@ -81,6 +81,50 @@ class RunQaUnitTestsTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertFalse(ok)
         self.assertEqual(log_lines, ["out line", "err line"])
+
+
+class ZeroTestsGuardTests(unittest.IsolatedAsyncioTestCase):
+    """Orphan-test backstop: when test files ARE present but the runner executed ZERO tests (the suite is
+    not wired into a build/execute target — e.g. a .NET test project missing from the solution), the gate
+    FAILS instead of merging a zero-coverage green that exited 0. See `ran_zero_tests`. Asymmetric-safe:
+    it fires ONLY on an explicit 'ran zero' marker, so a real run can never trip it."""
+
+    _DOTNET = "dotnet-10-sdk"
+
+    def test_ran_zero_tests_dotnet_no_test_available(self) -> None:
+        self.assertTrue(ran_zero_tests(self._DOTNET, ["Build succeeded.", "No test is available in JsonToCsv.dll."]))
+
+    def test_ran_zero_tests_suppressed_when_a_sibling_target_ran(self) -> None:
+        # Multi-target run: one assembly had no tests, another ran — the 'ran' marker suppresses the fail.
+        self.assertFalse(ran_zero_tests(self._DOTNET, ["No test is available in Empty.dll.", "Passed!  - Failed: 0, Passed: 5"]))
+
+    def test_ran_zero_tests_false_on_real_run(self) -> None:
+        self.assertFalse(ran_zero_tests(self._DOTNET, ["Passed!  - Failed: 0, Passed: 3, Skipped: 0, Total: 3"]))
+        self.assertFalse(ran_zero_tests(_ENV, ["===== 5 passed in 0.10s ====="]))
+
+    def test_ran_zero_tests_python_no_tests_ran(self) -> None:
+        self.assertTrue(ran_zero_tests(_ENV, ["collected 0 items", "no tests ran in 0.01s"]))
+
+    def test_go_is_exempt_from_the_guard(self) -> None:
+        # Go has no entry in the signal map → the check never fires (its `[no test files]` is per-package,
+        # and colocated Go tests cannot be orphaned the way a separate .NET test project can).
+        self.assertFalse(ran_zero_tests("go-1.23-cli", ["?   pkg   [no test files]"]))
+
+    @mock.patch("src.development.gates._has_test_files", return_value=True)
+    @mock.patch("src.development.gates.execute_in_sandbox", new_callable=AsyncMock)
+    async def test_orphan_tests_fail_the_gate(self, mock_sandbox: AsyncMock, _has: mock.Mock) -> None:
+        # Restore OK, then `dotnet test` discovers nothing (orphaned test source) and exits 0 → gate FAILS.
+        mock_sandbox.side_effect = [(0, "restored", ""), (0, "No test is available in JsonToCsv.dll.", "")]
+        ok, log_lines = await run_qa_unit_tests(environment_id=self._DOTNET, repo_root=_REPO)
+        self.assertFalse(ok)
+        self.assertTrue(any("executed ZERO tests" in ln for ln in log_lines))
+
+    @mock.patch("src.development.gates._has_test_files", return_value=True)
+    @mock.patch("src.development.gates.execute_in_sandbox", new_callable=AsyncMock)
+    async def test_real_run_still_passes(self, mock_sandbox: AsyncMock, _has: mock.Mock) -> None:
+        mock_sandbox.side_effect = [(0, "restored", ""), (0, "Passed!  - Failed: 0, Passed: 1, Total: 1", "")]
+        ok, log_lines = await run_qa_unit_tests(environment_id=self._DOTNET, repo_root=_REPO)
+        self.assertTrue(ok)
 
 
 class RunFormatPassTests(unittest.IsolatedAsyncioTestCase):

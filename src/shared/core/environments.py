@@ -155,8 +155,11 @@ SAST_CMD = "semgrep scan --error --metrics off --config /opt/semgrep-rules /work
 # for the ticket's environment_id to decide test file extension, placement, framework idioms,
 # and which contract files are even testable source (vs docs/config/package markers).
 #
-#   layout         "separate"  -> tests live in a dedicated tests/ dir (pytest discovery)
-#                  "colocated" -> tests sit NEXT TO the source file (go test ./..., jest, dotnet test)
+#   layout         "separate"  -> tests live in a dedicated tests/ dir (pytest discovery), flat under test_root
+#                  "colocated" -> tests sit NEXT TO the source file (go test ./..., jest)
+#                  "project"   -> tests live INSIDE a separate test PROJECT dir resolved per-run from the
+#                                 contract's test build-manifest (.NET: tests/<Name>.Tests/; see
+#                                 resolve_test_project_dir) — NOT next to source, NOT a static root
 #   source_exts    extensions QA generates tests for; everything else (.md, LICENSE, .gitignore,
 #                  lockfiles, package markers) is filtered out.
 # Assembly is language-neutral: the QA agent always returns the COMPLETE test file (skills-driven,
@@ -194,8 +197,13 @@ QA_LANGUAGE_PROFILES = {
         "package_markers": ("package.json", "package-lock.json", "tsconfig.json", "yarn.lock"),
     },
     "dotnet": {
-        "layout": "colocated",
-        "test_root": None,      # colocated: tests sit next to source, no separate root
+        # "project" layout: tests live INSIDE a separate test PROJECT directory (tests/<Name>.Tests/),
+        # NOT next to the source. The dir is build-defined (varies by solution name) and is resolved at
+        # runtime from the TechLead contract's `*.Tests.csproj` (resolve_test_project_dir); colocating a
+        # `*Tests.cs` in src/ would put it in the PRODUCTION project's glob (no xUnit ref → CS0246) and
+        # contradicts the mandated src/+tests/ split. test_root stays None (resolved per-run, not static).
+        "layout": "project",
+        "test_root": None,
         "source_exts": (".cs",),
         "test_prefix": "",
         "test_suffix": "Tests.cs",
@@ -356,12 +364,34 @@ def derive_test_target(environment_id: str, rel_source_path: str) -> tuple[str, 
         slug = path_no_ext.replace("/", "_")
         return f"{profile['test_prefix']}{slug}{profile['test_suffix']}", module_ref
 
-    # Colocated: test file sits next to the source file.
+    if profile["layout"] == "project":
+        # Test source lives FLAT inside a separate test project dir (resolved by the QA node from the
+        # contract via resolve_test_project_dir) — return just the bare filename, no source-dir prefix.
+        return f"{profile['test_prefix']}{stem}{profile['test_suffix']}", module_ref
+
+    # Colocated: test file sits next to the source file (go/node).
     if env_language(environment_id) == "node":
         test_name = f"{stem}.test{src_ext}"          # foo.ts -> foo.test.ts
     else:
-        test_name = f"{profile['test_prefix']}{stem}{profile['test_suffix']}"  # go: foo_test.go / .NET: fooTests.cs
+        test_name = f"{profile['test_prefix']}{stem}{profile['test_suffix']}"  # go: foo_test.go
     return (f"{directory}/{test_name}" if directory else test_name), module_ref
+
+
+def resolve_test_project_dir(files_to_modify: list[str]) -> str | None:
+    """For a ``layout == "project"`` stack (.NET), find the test project's directory from the contract.
+
+    The test build manifest (``*.Tests.csproj``) is Developer-owned build glue listed in the TechLead
+    contract's ``files_to_modify`` (e.g. ``tests/JsonToCsv.Tests/JsonToCsv.Tests.csproj``). Return its
+    posix PARENT dir (``tests/JsonToCsv.Tests``) so the QA node writes ``*Tests.cs`` INSIDE the project the
+    test runner compiles. Returns ``None`` when no test manifest is contracted (the QA node then falls
+    back to a plain ``tests/`` dir and warns — the dotnet_core skill mandates the manifest, so this is rare).
+    """
+    for entry in files_to_modify or []:
+        path = _posix(entry)
+        if path.rsplit("/", 1)[-1].endswith("Tests.csproj"):
+            directory, _, _ = path.rpartition("/")
+            return directory or None
+    return None
 
 
 # Node test files use a separate naming convention (jest/vitest) than the prefix/suffix profile.

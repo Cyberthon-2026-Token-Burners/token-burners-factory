@@ -73,11 +73,42 @@ class GetSystemPromptTests(unittest.TestCase):
         self.assertIn("go build ./...", result)                 # real go env command injected
         self.assertIn("python -m pytest", result)               # real python env command injected
 
+    def test_tpm_test_project_scaffold_is_build_glue_not_a_test_case(self) -> None:
+        # The test-PROJECT scaffold (dir + build manifest) is Developer-owned build glue allocated to the
+        # scaffolding ticket; only the test-CASE source files stay QA-owned and out of every ticket. This
+        # is the fix for the dropped test project (QA's tests landed orphaned, never compiled/run).
+        result = get_system_prompt("tpm")
+        self.assertIn("TEST-PROJECT SCAFFOLD IS BUILD GLUE", result)
+        self.assertIn("test-CASE source file", result)
+        self.assertIn("KEEP the test-project manifest", result)
+
+    def test_tpm_scaffold_ticket_ships_buildable_testable_skeleton(self) -> None:
+        # TASK-01 must leave the repo buildable+testable (entry point for an executable + the test project),
+        # never a config-only shell that strands the build into a reroute / zero-coverage merge.
+        result = get_system_prompt("tpm")
+        self.assertIn("BUILDABLE, TESTABLE SKELETON", result)
+        self.assertIn("ENTRY POINT", result)
+
+    def test_tpm_forbids_over_decomposition(self) -> None:
+        # Atomicity must not become one-file-per-ticket for a trivial app (4 thin tickets = 4 build/merge
+        # cycles). The prompt explicitly balances atomicity against over-splitting.
+        result = get_system_prompt("tpm")
+        self.assertIn("OVER-DECOMPOSITION", result)
+
     def test_sa_prompt_honors_user_mandated_stack(self) -> None:
         # An explicitly user-mandated language/platform must not be overridden by the architect.
         result = get_system_prompt("sa")
         self.assertIn("HONOR THE USER'S MANDATED STACK", result)
         self.assertIn("ORIGINAL USER REQUEST", result)
+
+    def test_sa_topology_includes_test_scaffold_excludes_test_cases(self) -> None:
+        # The File Topology must declare the test-PROJECT scaffold (build glue/architecture) but keep
+        # individual test-CASE source files out (QA's exclusive domain). Reconciles the upgrade with the
+        # QA-domain boundary; language-neutral.
+        result = get_system_prompt("sa")
+        self.assertIn("test-project scaffold", result)
+        self.assertIn("test-CASE source files", result)
+        self.assertIn("QA agent's exclusive domain", result)
 
     def test_techlead_prompt_scopes_contract_to_current_task(self) -> None:
         # The contract scope is the CURRENT TASK ticket, not the whole Blueprint (the SOLE router must
@@ -270,6 +301,14 @@ class DotnetLayoutMandateTests(unittest.TestCase):
         self.assertNotIn("colocated with the type under test", raw)
         self.assertIn("INSIDE the test project directory", raw)
         self.assertIn("InternalsVisibleTo", raw)
+
+    def test_core_scaffold_ticket_contracts_entry_point_and_test_project(self) -> None:
+        # The scaffold/init ticket must ship a buildable+testable skeleton in ONE contract — the Exe entry
+        # point AND the test project — never a config-only shell (the CS5001-reroute + orphaned-tests bug).
+        raw = get_skill("dotnet_core")
+        self.assertIn("buildable+testable skeleton ships in ONE ticket", raw)
+        self.assertIn("do not create C# source code files", raw)   # the anti-pattern it forbids
+        self.assertIn("Test project skeleton", raw)
 
 
 class GenerateRepoMapTests(unittest.TestCase):

@@ -88,6 +88,47 @@ def classify_lint_findings(environment_id: str, log_lines: list[str]) -> tuple[l
     return prod, test
 
 
+# Per-language signals that the functional-test runner executed ZERO tests even though the suite is
+# NON-empty (test files exist on disk). The orphan-test bug: QA-authored tests that aren't wired into a
+# build/execute target — e.g. a .NET `*Tests.cs` with no test `.csproj` in the solution — so `dotnet test`
+# discovers nothing and exits 0: a SILENT green with no coverage. We fail that explicitly. Each entry is
+# (empty_markers, ran_markers): fire ONLY when an empty marker is present AND no ran marker is — the
+# ran-marker guard prevents a false positive on a multi-target run where one target legitimately has no
+# tests while siblings ran. Substring match over the lowercased output. The check is asymmetric-safe: it
+# fires ONLY on an explicit "ran zero" marker, so a real run (which never prints one) can't trip it.
+# Languages whose default runner has no reliable per-run signal are omitted (their check never fires):
+# Go's `go test ./...` prints `[no test files]` per package even when siblings ran, and its passing line
+# is tab-formatted — unsafe to parse — and Go's colocated tests can't be orphaned like a separate .NET
+# test project can.
+_ZERO_TEST_SIGNALS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
+    "dotnet": (
+        ("no test is available", "no test source files were specified", "no test projects were found"),
+        ("passed!", "failed!"),
+    ),
+    "python": (("no tests ran",), (" passed", " failed", " error")),
+    "node": (("no tests found", "no test files found"), ("tests:", " passing", " passed")),
+}
+
+
+def ran_zero_tests(environment_id: str, log_lines: list[str]) -> bool:
+    """True iff the functional-test output proves the runner executed ZERO tests for a NON-empty suite.
+
+    Backstop for the orphan-test failure mode: test files exist on disk but aren't wired into any
+    compiled/executed target (e.g. a .NET test project missing from the solution), so the runner silently
+    discovers nothing and exits 0 — a green merge with no coverage. Conservative: only fires when the stack
+    has known zero-run signals AND an explicit empty marker is present AND no 'tests ran' marker is — so a
+    real run, or a multi-target run where one target has no tests while siblings ran, never trips it.
+    Unknown stacks (no entry) always return False, leaving gate behaviour unchanged."""
+    signals = _ZERO_TEST_SIGNALS.get(env_language(environment_id))
+    if not signals:
+        return False
+    empty_markers, ran_markers = signals
+    blob = "\n".join(log_lines).lower()
+    if any(m in blob for m in ran_markers):
+        return False
+    return any(m in blob for m in empty_markers)
+
+
 def _has_test_files(environment_id: str, repo_root: str) -> bool:
     """True if the workspace holds ≥1 test file for the target stack (language-aware, via the
     is_test_file SSOT). Runner-agnostic empty-suite detection: rather than special-casing each
@@ -142,6 +183,18 @@ async def run_qa_unit_tests(environment_id: str, repo_root: str) -> tuple[bool, 
     returncode, stdout, stderr = await execute_in_sandbox(environment_id, test_cmd, repo_root, network="none")
     log_lines = (stdout + "\n" + stderr).strip().splitlines()
     log.debug(f"QA Runtime Gate completed with exit code: {returncode}")
+    # Orphan-test backstop: test files exist (we passed the empty-suite short-circuit above) yet the runner
+    # executed ZERO tests — the suite isn't wired into a compiled/executed target (e.g. a .NET test project
+    # missing from the solution). Fail explicitly instead of merging a zero-coverage green that exited 0.
+    if ran_zero_tests(environment_id, log_lines):
+        log.warning(f"🔶 Functional-test gate [{environment_id}]: test files present but the runner executed "
+                    "ZERO tests — the suite is not wired into a build/execute target (missing/unregistered "
+                    "test project).")
+        return False, [
+            "🚨 Test files are present but the test runner executed ZERO tests — the suite is not wired into "
+            "a compiled/executed target (e.g. the test project is missing from the solution or not "
+            "registered in the build). Register the test project so the contracted tests actually run.",
+        ] + log_lines
     return returncode == 0, log_lines
 
 
