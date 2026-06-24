@@ -11,11 +11,13 @@ system prompt; this skill only maps them to C# idioms.
 ## Testing Framework & Layout
 - Use xUnit (`[Fact]` / `[Theory]`). Do NOT mix in NUnit or MSTest.
 - Name the test file `<Name>Tests.cs` colocated with the type under test (e.g. `Converter.cs` →
-  `ConverterTests.cs`). Assume the contract provides the test project (a `.csproj` referencing
-  `Microsoft.NET.Test.Sdk` + the xUnit packages and the project under test); emit the test class into it.
-- The test project's `.csproj` MUST be registered in the repo's root `.sln` (`dotnet sln add`), or the
-  root-level `dotnet test` gate runs from a directory with no solution and never discovers it. If the
-  contract's test project is missing from the solution, that is a build defect — flag it.
+  `ConverterTests.cs`). Emit ONLY test SOURCE (`*Tests.cs`) into the existing test project.
+- **Ownership boundary**: the test PROJECT FILE (`<Name>.Tests.csproj`, referencing `Microsoft.NET.Test
+  .Sdk` + xUnit + a `ProjectReference` to the project under test, and registered in the root `.sln`) is
+  **Developer-owned build glue** — do NOT create, edit, author, or `dotnet sln add` any `.csproj`.
+- If the test project is MISSING or absent from the solution, that is a Developer/contract build defect:
+  do NOT delete, prune, or regenerate your tests to work around it, and do NOT try to fix it from QA. The
+  Reviewer routes a missing test project to the Developer channel; your tests stay as written.
 
 ## Namespace & Placement Fidelity (MANDATORY)
 - The test class's `namespace` MUST match the namespace of the type under test exactly as declared in

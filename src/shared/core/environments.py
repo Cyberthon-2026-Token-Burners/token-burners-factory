@@ -115,9 +115,15 @@ SUPPORTED_ENVIRONMENTS = {
         # lint_cmd: HARD lint gate. `dotnet format --verify-no-changes` exits non-zero iff the formatter
         # WOULD change anything (style/whitespace/unused usings). --no-restore keeps it network-OFF (the
         # restore phase ran first). format_cmd (dotnet format) auto-applies the same fixes beforehand.
-        "lint_cmd": "dotnet format --verify-no-changes --no-restore",
+        # MUST target the solution EXPLICITLY: `dotnet format` (unlike build/restore/test, which prefer the
+        # .sln) hard-crashes with "Both a MSBuild project file and solution file found in '.'" when the repo
+        # root holds BOTH a *.sln AND a root *.csproj — exit 1 in ParseWorkspaceOptions, masking lint as a
+        # permanent red and looping the FSM. Resolve the root .sln (the dotnet_core skill mandates one) and
+        # pass it; fall back to '.' (single-project repos) when none exists. Single line (no-newline adapter
+        # rule); unquoted ${sln} is safe — .sln names carry no spaces.
+        "lint_cmd": "sln=$(ls *.sln 2>/dev/null | head -n1); dotnet format ${sln:-.} --verify-no-changes --no-restore",
         # Best-effort: --no-restore keeps it network-OFF; removes unused usings where the SDK supports it.
-        "format_cmd": "dotnet format --no-restore",
+        "format_cmd": "sln=$(ls *.sln 2>/dev/null | head -n1); dotnet format ${sln:-.} --no-restore",
         "sandbox_env": {"HOME": "/tmp", "DOTNET_CLI_HOME": "/tmp", "NUGET_PACKAGES": "/tmp/nuget", "XDG_DATA_HOME": "/tmp/.local"},  # nosec B108 — in-container tmpfs paths
         # Persist the NuGet global-packages folder; overrides the tmpfs NUGET_PACKAGES so a package
         # restored online once is reused offline on every later container/run (the NU1301 cure).

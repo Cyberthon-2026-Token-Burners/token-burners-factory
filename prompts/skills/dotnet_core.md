@@ -23,6 +23,24 @@ LANGUAGE TARGET: .NET (C#) — production-code rules for the .NET tech stack.
   register it in the root `.sln` in the SAME ticket, or a root-level `dotnet build` / `dotnet test`
   silently skips it.
 
+## Project Archetype & Entry Point (MANDATORY — declare it, don't oscillate over it)
+- A .NET project has ONE archetype, and it is fixed by the ticket, not guessed per cycle:
+  - **CLI utility / application** → `<OutputType>Exe</OutputType>` PLUS exactly one entry point — a
+    `Program.cs` with top-level statements (or a single `static Main`) that actually invokes the parser.
+  - **Library** → `<OutputType>Library</OutputType>` (or omit it) and NO entry point file.
+- **TechLead**: decide the archetype from the ticket/blueprint and state it in `architectural_constraints`
+  (e.g. "OutputType=Exe; entry point in Program.cs"). For an **Exe**, you MUST list the entry-point file
+  (`Program.cs`) in `files_to_modify` and the topology — an Exe is not buildable without one, so it is
+  IN scope, never an out-of-whitelist extra. Do not declare `OutputType=Exe` while omitting the entry point.
+- **Developer**: an `Exe` `.csproj` REQUIRES a real entry point — write it on the FIRST pass. A
+  `Program.cs` that holds only the architectural-justification comment (no `Main`/top-level statements)
+  fails to build with `CS5001` ("does not contain a static 'Main' method") and wastes a reroute. Include
+  the leading justification comment AND working entry-point code in the same write.
+- **Reviewer / Arbiter**: a minimal entry point that a contracted **Exe** `.csproj` needs to compile is
+  legitimate, in-scope build glue (the Developer is authorized to add it) — APPROVE it; never flag it as
+  a scope violation or direct its deletion. If the entry point is genuinely missing from `files_to_modify`
+  and that blocks the build, that is a CONTRACT gap to amend (add it to the whitelist), not a Developer bug.
+
 ## Types & Guards
 - Enable nullable reference types (`<Nullable>enable</Nullable>`) and honor the annotations. Guard
   arguments explicitly: throw `ArgumentNullException`/`ArgumentException` (or use `ArgumentNullException
@@ -40,7 +58,11 @@ LANGUAGE TARGET: .NET (C#) — production-code rules for the .NET tech stack.
   after the type. Wire collaborators via constructor Dependency Injection — do not new-up
   dependencies inside domain logic.
 - Manage dependencies and the build in the `.csproj` (`PackageReference`). `dotnet test` requires a
-  test project (`Microsoft.NET.Test.Sdk` + xUnit) — ensure that scaffolding exists for the QA gate.
+  test project (`Microsoft.NET.Test.Sdk` + xUnit + a `ProjectReference` to the project under test). The
+  **Developer owns the test PROJECT FILE** (`<Name>.Tests.csproj`) as build glue — create it (with the
+  leading justification comment) and register it in the root `.sln` — but NEVER the test SOURCE
+  (`*Tests.cs`), which is QA-owned. Get the test `.csproj` in on the first pass so the QA gate has a
+  project to compile into.
 
 ## Security
 - `dotnet list package --vulnerable --include-transitive` runs before review — zero tolerance for

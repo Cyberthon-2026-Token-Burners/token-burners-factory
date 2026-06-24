@@ -339,6 +339,19 @@ class BuildAgentContextADRTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("LIVING ARCHITECTURE DOCUMENT", out)
 
 
+class ArbiterTriageSkillTests(unittest.IsolatedAsyncioTestCase):
+    """The arbiter node now receives a global `arbiter_triage` skill via build_agent_context('arbiter',…)
+    — arbiter.py already calls it — giving the failure triager the build-glue / contract-gap routing
+    guardrails WITHOUT touching the off-limits arbiter system prompt. Hermetic: no skill is `domain` for
+    arbiter, so no LLM relevance fallback fires; no workspace, so the ADR block is skipped."""
+
+    async def test_arbiter_node_receives_triage_skill(self) -> None:
+        out = await build_agent_context("arbiter", GlobalPipelineContext(pr_description="t"))
+        self.assertIn("ARBITER TRIAGE GUARDRAILS", out)
+        self.assertIn("Build glue is legitimate", out)         # entrypoint/glue is not a scope violation
+        self.assertIn("CONTRACT gap", out)                     # missing required-to-build file → contract route
+
+
 class PerLanguageCoreRoutingTests(unittest.IsolatedAsyncioTestCase):
     """Each language's `*_core` skill gates into the techlead/developer/reviewer nodes by domain tag,
     and the other languages' cores stay out. The LLM relevance fallback is mocked to False so a tag

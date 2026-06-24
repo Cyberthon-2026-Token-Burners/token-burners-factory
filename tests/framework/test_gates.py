@@ -313,6 +313,27 @@ class EnvironmentalBuildFailureTests(unittest.TestCase):
         self.assertFalse(build_failure_is_environmental("go-1.23-cli", ["internal/converter/processor.go:10:2: undefined: Foo"]))
 
 
+class DotnetFormatWorkspaceTargetingTests(unittest.TestCase):
+    """Regression guard: `dotnet format` hard-crashes ("Both a MSBuild project file and solution file
+    found in '.'", exit 1 in ParseWorkspaceOptions) when the repo root holds BOTH a *.sln and a root
+    *.csproj — unlike build/restore/test, which prefer the .sln. So the dotnet lint/format commands MUST
+    resolve and target the solution explicitly, never invoke a bare `dotnet format` that auto-discovers
+    the CWD. A bare command silently reds the lint gate forever and loops the FSM to the breaker."""
+    _SPEC = SUPPORTED_ENVIRONMENTS["dotnet-10-sdk"]
+
+    def test_lint_and_format_resolve_and_target_the_solution(self) -> None:
+        for key in ("lint_cmd", "format_cmd"):
+            cmd = self._SPEC[key]
+            self.assertIn("dotnet format", cmd, key)
+            # Resolves a workspace target rather than relying on CWD auto-discovery (the crash trigger).
+            self.assertIn("*.sln", cmd, key)
+            self.assertIn("${sln", cmd, key)
+
+    def test_lint_is_verify_only_and_format_is_autofix(self) -> None:
+        self.assertIn("--verify-no-changes", self._SPEC["lint_cmd"])
+        self.assertNotIn("--verify-no-changes", self._SPEC["format_cmd"])
+
+
 class RunLintGateTests(unittest.IsolatedAsyncioTestCase):
     """The HARD lint gate restores deps (network ON) then runs the registry `lint_cmd` (network OFF);
     no-op pass when the env has no `lint_cmd`, and (node) when the clone carries no eslint config."""
