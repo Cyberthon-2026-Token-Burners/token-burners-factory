@@ -41,8 +41,14 @@ gcloud config set project $PROJECT_ID
 ```bash
 gcloud services enable iam.googleapis.com \
     iamcredentials.googleapis.com \
-    artifactregistry.googleapis.com
+    artifactregistry.googleapis.com \
+    run.googleapis.com \
+    cloudbuild.googleapis.com
 ```
+
+> **Note:** `run.googleapis.com` is required for Cloud Run deployments. Even with correct IAM
+> bindings, `gcloud run deploy` returns `PERMISSION_DENIED: SERVICE_DISABLED` if this API is not
+> enabled. `cloudbuild.googleapis.com` is often co-required by Cloud Run's internal build pipeline.
 
 ### 1.3 Create the shared Artifact Registry
 
@@ -66,6 +72,16 @@ gcloud iam service-accounts create sa-github-devops \
 gcloud projects add-iam-policy-binding $PROJECT_ID \
     --member="serviceAccount:sa-github-devops@$PROJECT_ID.iam.gserviceaccount.com" \
     --role="roles/artifactregistry.writer"
+
+# Grant Cloud Run deploy rights (required to create/update Cloud Run services)
+gcloud projects add-iam-policy-binding $PROJECT_ID \
+    --member="serviceAccount:sa-github-devops@$PROJECT_ID.iam.gserviceaccount.com" \
+    --role="roles/run.admin"
+
+# Grant permission to act as the runtime service account (required by Cloud Run)
+gcloud projects add-iam-policy-binding $PROJECT_ID \
+    --member="serviceAccount:sa-github-devops@$PROJECT_ID.iam.gserviceaccount.com" \
+    --role="roles/iam.serviceAccountUser"
 ```
 
 ### 1.5 Create the Workload Identity pool and OIDC provider (with an attribute condition)

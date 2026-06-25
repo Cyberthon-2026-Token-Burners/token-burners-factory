@@ -2,10 +2,10 @@
 
 Two parts:
 
-- **Part I — Capability Roadmap (Epics `E1`–`E7`)**: the forward-looking work to close the autonomy loop
+- **Part I — Capability Roadmap (Epics `E1`–`E10`)**: the forward-looking work to close the autonomy loop
   (idea → working, merged code in `main` → deployable). Larger than a single fix; each has its own
   Goal / Current state / Design / Dependencies / Risks / Acceptance.
-- **Part II — Defects & Refinements (`#4`–`#28`)**: granular fixes surfaced across pipeline runs, grouped by
+- **Part II — Defects & Refinements (`#4`–`#34`)**: granular fixes surfaced across pipeline runs, grouped by
   theme. Resolved items have been removed — their fixes live in the code, tests, and `CHANGELOG.md`; only
   outstanding work remains. **Original item numbers are preserved** so existing cross-references (from
   `.claude/rules/*` and ADRs) stay valid. The `E#` epic namespace is deliberately separate from the `#NN`
@@ -51,6 +51,14 @@ Two parts:
 > run / app FinOps report (report-only, no gating). **E9 (hard coverage gate)** — a `COVERAGE_FLOOR` threshold
 > that fails the gate and reroutes to QA — is **deferred**, to roll out only after E8's numbers are trustworthy
 > across stacks. E9 depends on E8.
+>
+> Updated 2026-06-25: logged **E10** (user-selectable build quality tier — `--quality fast/balanced/optimal/premium`
+> flag; SA/TPM emit a `complexity_tier` per ticket; engine maps `quality_preset × complexity_tier → (model, effort)`
+> at dispatch time). Addresses Cyberthone dim 7.3 (A/B evidence in-run, no second run needed) and #28 (per-role
+> reasoning-effort routing — E10 is the product surface #28 is the mechanism). Added **#31** (deployment
+> reachability gap — `--scaffold-deploy` generates CI/CD config but no live URL is proven for judges), **#33**
+> (only Python sandbox images are production-ready; other stacks are stub entries), **#34** (deployment failure
+> recovery path not demoed for dim 4.2).
 
 ---
 
@@ -76,6 +84,9 @@ E7 ⬜ Distribute the factory as an installable CLI + factory self-release CI pi
 
 E8 ⬜ Code-coverage of the generated app — measure + report (report-only, no gating)   — OPEN
       └─► E9 ⬜ Hard coverage gate (COVERAGE_FLOOR threshold → fail gate + reroute to QA)   — OPEN
+
+E10 ⬜ User-selectable build quality tier (--quality flag; SA/TPM-driven complexity_tier → model routing)   — OPEN
+       depends on: #28 (per-role reasoning-effort routing — the mechanism E10 exposes as a product surface)
 ```
 
 E3 depends on E2 for a hard structural reason (see E3): each ticket clones `main` **fresh**, so TASK-02 only
@@ -634,6 +645,47 @@ E8 proves the numbers are stable across stacks.
 by the reroute cap, no FSM loop to the breaker); at/above the floor it passes; the floor is off by default so
 E8's report-only behavior is unchanged when unset.
 
+## E10. [⬜ OPEN] User-selectable build quality tier — dynamic model routing based on task complexity
+
+**Goal:** let the operator choose a quality/cost trade-off at invocation time via a `--quality` flag (or
+`PIPELINE_QUALITY_TIER` env var). The SA and TPM assess the complexity of each ticket and emit a
+`complexity_tier` (`low/medium/high`). The engine maps `quality_preset × complexity_tier → (model, effort)`
+and overrides `ROLE_MODELS` at dispatch time — no hardcoded per-role flat assignment.
+
+**Presets:**
+
+| Preset | Flag | Philosophy | Model selection |
+|--------|------|------------|-----------------|
+| `fast` | `--quality fast` | Minimize cost + time | smallest model, minimal effort for all roles |
+| `balanced` | `--quality balanced` | Satisfactory quality, reasonable cost | mid-tier models; simple tickets → small, complex → mid |
+| `optimal` | *(default)* | SA/TPM-driven: model matches ticket complexity | SA/TPM classify `complexity_tier`; Architect/Reviewer stay large |
+| `premium` | `--quality premium` | Maximum quality, cost unconstrained | largest model + high effort for all reasoning roles |
+
+**Key design insight:** in `optimal` mode the TPM emits a `complexity_tier` per ticket (new field on
+`TaskTicket`). `run_batch` / `prepare_ticket_run` resolves `QUALITY_MODEL_MATRIX[preset][complexity_tier][role]`
+before calling `run_executor` for each ticket — same threading pattern as `budget_usd_ceiling`. Simple CRUD
+tickets → Flash + low effort; complex algorithmic tickets → Pro/Opus + high effort. The planning agents
+determine what "skill level" the execution team needs.
+
+**Why this matters for dim 7.3 (A/B evidence):** a single `optimal` run on a mixed-complexity project
+automatically produces per-ticket model routing evidence: "TASK-01 (low) → Flash $0.03 | TASK-03 (high) → Pro
+$0.28". No second run needed — the comparison is implicit in the run report.
+
+**Design sketch:**
+1. `TaskTicket` — add `complexity_tier: Literal["low", "medium", "high"] = "medium"` (default preserves behavior).
+2. `tpm.md` prompt — instruct TPM to assess per-ticket complexity (lines of code, file count, algorithmic depth,
+   integration surface) and populate the field.
+3. `QUALITY_MODEL_MATRIX` (`config.py`) — nested dict `preset → complexity → role → (model, effort)`.
+4. `run_batch` / `prepare_ticket_run` — resolve and thread the overrides before `run_executor`. Add `--quality`
+   to `parse_args`; default `optimal`.
+5. `PipelineTelemetry` / FinOps — record `model_tier` and `quality_preset` per agent call for the report.
+
+**Dependencies:** #28 (per-role reasoning-effort routing — E10 is the product surface, #28 is the mechanism).
+
+**Acceptance:** `--quality fast` and `--quality premium` produce visibly different `finops_report.json` cost
+breakdowns for the same idea; `optimal` shows different models for low vs. high complexity tickets; quality
+preset and per-ticket model choice are recorded in the report and printed in console output.
+
 ---
 
 # Part II — Defects & Refinements
@@ -838,3 +890,41 @@ read and strip its UTF-8 contents; otherwise return the string unchanged. All do
 (`run_nexus`, `projects.create`, `GlobalPipelineContext`, `techwriter.py`) already receive a plain string
 and need no changes. Update the `--idea` help text to document the dual mode.
 **Scope:** one file (`src/nexus/runner.py`), ~10 lines. No new dependencies.
+
+### Hackathon readiness (Cyberthone 2026)
+
+## 31. [P1] Deployment reachability gap: `--scaffold-deploy` generates CI/CD config but no live service URL is proven
+**Symptom:** `--scaffold-deploy` commits a `Dockerfile` + GHA workflow to the generated app repo and merges it,
+but nothing boots a running service. Judges scoring criterion 3.5 ("service reachable") may deduct if they
+expect a live URL at demo time.
+**Cause:** E4 chose mechanism **(a) generate CI/CD config** (lowest infra risk) and deferred **(b) build+push
+image** and **(c) live cloud deploy**. The demo proves the workflow was generated and merged, but cannot show
+`curl https://<app>.run.app/health` returning 200 without a pre-configured GCP project.
+**Fix direction:**
+- **Option A (recommended, ~30 min, no engine change):** pre-wire a GCP project with the WIF setup
+  (`docs/guides/devops_setup.md`) on the demo org, run `--auto-execute --scaffold-deploy --release` on the demo
+  app, let the tag-triggered GHA deploy to Cloud Run, screenshot the live URL.
+- **Option B (future E4 extension):** extend `run_devops_scaffold` to `docker build && docker push` and
+  optionally `gcloud run deploy` as an inlined post-merge step. Requires cloud credentials in the engine
+  run environment; out of scope for the hackathon.
+
+## 33. [P1] Only Python sandbox images are production-ready; other stacks are stub registry entries
+**Symptom:** judges may ask to demo on Go, Node, or .NET. Only `python-3.12-core` has a validated Docker image
+and QA profile; other stacks have `SUPPORTED_ENVIRONMENTS` entries but the images have not been exercised
+through a full `--auto-execute` run.
+**Cause:** Docker images are built via `scripts/build_sandbox_images.sh`; non-Python Dockerfiles exist but have
+not been validated through the full gate chain (build → test → lint → SAST → Reviewer).
+**Fix direction:** before the hackathon, run `bash scripts/build_sandbox_images.sh` and execute one full
+`--auto-execute` run for at least one non-Python stack (Go or Node) to validate the image + `QA_LANGUAGE_PROFILES`
++ gate chain. At minimum, restrict the live demo to the Python stack and communicate that constraint proactively.
+
+## 34. [P2] Deployment failure recovery path not scripted for live demo injection (dim 4.2)
+**Symptom:** the resilience demo proves lint-gate auto-recovery and test-failure QA regen. It does not prove
+recovery from a *deployment* failure (e.g. bad Dockerfile, invalid GHA YAML). Judges scoring 4.2 may inject
+this as the second required failure type.
+**Cause:** E4's `run_devops_scaffold` has a 1-retry self-heal loop (`DEVOPS_MAX_RETRIES`) and `run_devops_gate`
+static-lints the manifests, but this path is not exercised in any existing demo run.
+**Fix direction:** prepare a scripted failure injection — deliberately pass a malformed `Dockerfile` trigger to
+the DevOps agent (or corrupt the generated one before the static lint), run `--scaffold-deploy`, and show
+`run_devops_gate` failure → DevOps agent rewrite → second attempt succeeds. No engine change needed; this is a
+demo preparation step. Document the scenario in `docs/hackathon/`.
