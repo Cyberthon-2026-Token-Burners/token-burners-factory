@@ -697,10 +697,21 @@ class DevOpsPromptTests(unittest.TestCase):
         self.assertIn("${{ vars.* }}", prompt)
 
     def test_deploy_gcp_skill_grants_public_invocation(self) -> None:
-        # The 403-class fix: the GCP platform skill must instruct the public-invoker grant.
+        # The 403-class fix: the GCP platform skill must instruct the public-invoker grant — both the
+        # `--allow-unauthenticated` flag AND the mode-independent explicit IAM binding (the authoritative
+        # grant that survives a manifest/`services replace` deploy where the flag is inert).
         gcp = get_skill("deploy_gcp")
         self.assertIn("--allow-unauthenticated", gcp)
         self.assertIn("403", gcp)
+        self.assertIn("add-iam-policy-binding", gcp)
+        self.assertIn("roles/run.invoker", gcp)
+
+    def test_deploy_gcp_skill_derives_service_name_from_repo(self) -> None:
+        # Overwrite-collision fix: the service name must come from the repository context, never a hardcoded
+        # literal — else one app's deploy silently takes over another's Cloud Run service (same name+region).
+        gcp = get_skill("deploy_gcp")
+        self.assertIn("github.event.repository.name", gcp)
+        self.assertNotIn("fastapi-echo-service", gcp)   # no hardcoded example name leaks into the guidance
 
     def test_platform_skills_target_devops_node(self) -> None:
         # The extracted deploy-target platform skills follow the skill format and load on the devops node.

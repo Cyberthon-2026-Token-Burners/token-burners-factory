@@ -11,14 +11,34 @@ DEPLOY TARGET: Google Cloud Run (web services) via Workload Identity Federation.
 - `permissions: { id-token: write, contents: write }` — `id-token: write` is required for WIF; `contents: write` is required for the post-deploy README commit (below).
 - Secrets vs variables (the org is pre-provisioned this way — see docs/guides/devops_setup.md): `GCP_WIF_PROVIDER` + `GCP_SERVICE_ACCOUNT` are repository **secrets** (`${{ secrets.* }}`); `GCP_PROJECT_ID`, `GCP_REGION`, `GCP_REGISTRY_NAME` are repository **variables** (`${{ vars.* }}`). Never inline a key, project id, or region.
 
+## Service naming — derive it from the repository, NEVER hardcode
+- **FORBIDDEN: a static, hardcoded Cloud Run service name** (`fastapi-app`, `echo-service`, `my-api`, …). Cloud Run keys a service by `(name, region, project)`; deploying a second app under a name already in use does NOT create a new service — it overwrites the existing one with a new revision, silently taking over its URL. In a multi-app factory that means apps clobber each other.
+- **The service name MUST be derived from the GitHub repository context** so every repo gets a distinct, stable service: use `${{ github.event.repository.name }}`. Use that SAME derived value as the `<service>` token in BOTH the image path (below) and the deploy step (so the image repo and the service line up).
+- **Optional branch isolation:** if a workflow ever deploys non-default branches, suffix the branch to keep per-branch services separate — sanitize it first (Cloud Run names are lowercase, `[a-z0-9-]`, ≤63 chars): `echo "BRANCH=$(echo '${{ github.ref_name }}' | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g')" >> "$GITHUB_ENV"`, then `service: ${{ github.event.repository.name }}-${{ env.BRANCH }}`. The default workflow triggers on the default branch only, so the bare repo name is normally sufficient.
+
 ## Build + push the image (Artifact Registry)
 - Configure docker auth for Artifact Registry: `gcloud auth configure-docker ${{ vars.GCP_REGION }}-docker.pkg.dev --quiet`.
-- Build the image tag from `${{ vars.GCP_REGION }}`, `${{ vars.GCP_PROJECT_ID }}`, `${{ vars.GCP_REGISTRY_NAME }}` (e.g. `${REGION}-docker.pkg.dev/${PROJECT}/${REGISTRY}/<service>:${{ github.sha }}`), then `docker build` + `docker push`.
+- Build the image tag from `${{ vars.GCP_REGION }}`, `${{ vars.GCP_PROJECT_ID }}`, `${{ vars.GCP_REGISTRY_NAME }}` and the repo-derived `<service>` name (e.g. `${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/${{ vars.GCP_REGISTRY_NAME }}/${{ github.event.repository.name }}:${{ github.sha }}`), then `docker build` + `docker push`.
 
 ## Deploy to Cloud Run
-- Deploy with `google-github-actions/deploy-cloudrun@v2`, passing `service`, the pushed `image`, and `region: ${{ vars.GCP_REGION }}`.
+- Deploy with `google-github-actions/deploy-cloudrun@v2` in **image mode**: pass `service: ${{ github.event.repository.name }}` (the repo-derived name — see "Service naming" above; never a hardcoded literal), the pushed `image`, and `region: ${{ vars.GCP_REGION }}`. Do NOT deploy from a Knative `service.yaml` (the action's `metadata:` input, equivalent to `gcloud run services replace`) — see the warning below.
 - **Give the deploy step an explicit `id: deploy`** so its `outputs.url` (the live Cloud Run URL) is accessible in later steps.
-- **PUBLIC ACCESS (REQUIRED for a public web service):** grant unauthenticated invocation so the service is reachable from the internet — pass `flags: '--allow-unauthenticated'` to the deploy step. WITHOUT it, Cloud Run rejects every anonymous request with HTTP 403 ("The request was not authenticated. Either allow unauthenticated invocations or set the proper Authorization header."). Only OMIT this for an explicitly private/internal service (which then requires an IAM `roles/run.invoker` binding for its callers instead).
+- **PUBLIC ACCESS (REQUIRED for a public web service) — two-part, and the IAM binding is the authoritative one:**
+  1. Pass `flags: '--allow-unauthenticated'` to the deploy step.
+  2. **AND** add an explicit, idempotent post-deploy step that binds `allUsers` to `roles/run.invoker` (below). This is the *guaranteed* grant — re-applying it every run is harmless.
+  WITHOUT a public-invoker grant, Cloud Run rejects every anonymous request with HTTP 403 ("The request was not authenticated. Either allow unauthenticated invocations or set the proper Authorization header."). Only OMIT public access for an explicitly private/internal service (whose callers then need their own `roles/run.invoker` binding).
+- **WHY the explicit IAM binding, not just the flag:** a Cloud Run service's public-access policy is **IAM, stored separately from the service spec** — it is NOT part of the Knative manifest. So `flags: '--allow-unauthenticated'` only takes effect in the action's **image deploy** mode; if the workflow instead deploys a `service.yaml` (`metadata:` / `gcloud run services replace`), that flag is incompatible and silently dropped, IAM is reset to the project default (authenticated-only), and the live service returns HTTP 403 even though the manifest set `ingress: all`. The `add-iam-policy-binding` step sets the policy directly and works regardless of deploy mode — that is why it is mandatory.
+
+  Reference implementation for the binding step (runs after the deploy step):
+  ```yaml
+        - name: Allow public (unauthenticated) invocation
+          run: |
+            gcloud run services add-iam-policy-binding ${{ github.event.repository.name }} \
+              --region="${{ vars.GCP_REGION }}" \
+              --project="${{ vars.GCP_PROJECT_ID }}" \
+              --member="allUsers" \
+              --role="roles/run.invoker"
+  ```
 - The container listens on `$PORT` (Cloud Run injects it) and binds `0.0.0.0` — that is the archetype skill's Dockerfile/server concern; this deploy step does not set the port.
 
 ## Cloud SQL (only for a database-backed CRUD service)

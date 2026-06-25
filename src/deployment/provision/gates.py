@@ -54,19 +54,52 @@ def run_devops_gate(repo_dir, archetype: str | None = None) -> list[str]:
             problems.append("Dockerfile is missing a CMD/ENTRYPOINT directive.")
 
     # Public-invoker policy (deploy-target-driven, registry SSOT). For an archetype whose deploy target
-    # requires public invocation (Cloud Run), assert the workflow actually grants it — accept either the
-    # `--allow-unauthenticated` deploy flag OR an explicit allUsers→roles/run.invoker IAM binding.
+    # requires public invocation (Cloud Run), assert the workflow actually grants it. The grant lives in
+    # IAM, OUTSIDE the Knative service spec: `--allow-unauthenticated` only takes effect in the action's
+    # image-deploy mode, so when the workflow deploys a service.yaml manifest instead (the deploy-cloudrun
+    # `metadata:` input or `gcloud run services replace`) that flag is silently dropped and the service
+    # stays authenticated-only — only an explicit allUsers→roles/run.invoker binding makes it public there.
     target_id = deploy_target_for_archetype(archetype)
     target_spec = SUPPORTED_DEPLOY_TARGETS.get(target_id or "")
     if target_spec and target_spec.get("requires_public_invoker") and workflow_text:
         lowered = workflow_text.lower()
-        grants_public = "allow-unauthenticated" in lowered or ("allusers" in lowered and "run.invoker" in lowered)
+        has_iam_binding = "allusers" in lowered and "run.invoker" in lowered
+        has_unauth_flag = "allow-unauthenticated" in lowered
+        # Manifest-deploy mode: `gcloud run services replace`, or a `metadata:` input on the deploy-cloudrun
+        # action. There the flag is incompatible/ignored — require the explicit IAM binding.
+        uses_manifest_deploy = "services replace" in lowered or (
+            "deploy-cloudrun" in lowered and "metadata:" in lowered
+        )
+        grants_public = has_iam_binding if uses_manifest_deploy else (has_unauth_flag or has_iam_binding)
         if not grants_public:
+            if uses_manifest_deploy:
+                problems.append(
+                    f"deploy.yml deploys a Knative service.yaml manifest to '{target_id}' but never grants "
+                    "public invocation via IAM: `--allow-unauthenticated` does NOT apply in manifest-deploy "
+                    "mode (the public-access policy lives in IAM, outside the service spec). Add a step that "
+                    "binds allUsers to roles/run.invoker (`gcloud run services add-iam-policy-binding "
+                    "<service> --member=allUsers --role=roles/run.invoker`) — without it Cloud Run returns "
+                    "HTTP 403 for every anonymous request."
+                )
+            else:
+                problems.append(
+                    f"deploy.yml does not grant public invocation: a public web service on '{target_id}' must "
+                    "allow unauthenticated invocations (pass `flags: '--allow-unauthenticated'` to the "
+                    "deploy-cloudrun step, or bind allUsers to roles/run.invoker) — without it Cloud Run "
+                    "returns HTTP 403 for every anonymous request."
+                )
+
+        # Service-name collision guard. A managed service is keyed by (name, region, project); a hardcoded
+        # literal name lets one repo's deploy silently overwrite another's service (a new revision takes over
+        # the live URL). The name MUST be derived from the GitHub repository context so every repo gets a
+        # distinct, stable service — accept `github.event.repository.name` or `github.repository`.
+        derives_name_from_repo = "github.event.repository.name" in lowered or "github.repository" in lowered
+        if not derives_name_from_repo:
             problems.append(
-                f"deploy.yml does not grant public invocation: a public web service on '{target_id}' must "
-                "allow unauthenticated invocations (pass `flags: '--allow-unauthenticated'` to the "
-                "deploy-cloudrun step, or bind allUsers to roles/run.invoker) — without it Cloud Run returns "
-                "HTTP 403 for every anonymous request."
+                f"deploy.yml hardcodes the '{target_id}' service name instead of deriving it from the "
+                "repository context: a static name lets one app overwrite another's service (same name + "
+                "region + project = an overwriting revision, not a new service). Derive the service name "
+                "from `${{ github.event.repository.name }}` for the deploy step (and the image path)."
             )
 
     return problems

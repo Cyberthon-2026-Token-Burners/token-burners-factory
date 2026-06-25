@@ -123,12 +123,26 @@ NOT a programming language — no per-language branching here (honors [[engine-l
 **Public invocation (the 403 class).** A target with `requires_public_invoker: True` (Cloud Run) deploys a
 public-facing service: its workflow MUST grant unauthenticated invocation, or the live service rejects every
 anonymous request with **HTTP 403**. This is enforced two ways: the `deploy_gcp` platform skill instructs
-`flags: '--allow-unauthenticated'`, AND `run_devops_gate(repo_dir, archetype)` deterministically asserts the
-generated workflow grants public invocation (accepting `--allow-unauthenticated` OR an `allUsers` →
-`roles/run.invoker` binding) — a miss flows into the existing `DEVOPS_MAX_RETRIES` self-heal loop. The gate
-is archetype-aware: `archetype=None` (or a target without the flag) skips the check, so CLI runs are
-unaffected. **Why a gate, not just the prompt:** prompt adherence is probabilistic; the gate makes
-reachability green-by-construction, the same philosophy as the `lint_cmd` CI-parity SSOT above.
+`flags: '--allow-unauthenticated'` PLUS an explicit `allUsers` → `roles/run.invoker` binding, AND
+`run_devops_gate(repo_dir, archetype)` deterministically asserts the generated workflow grants public
+invocation — a miss flows into the existing `DEVOPS_MAX_RETRIES` self-heal loop. **The grant lives in IAM,
+outside the Knative service spec**, so the gate is **deploy-mode-aware**: in *image-deploy* mode either
+`--allow-unauthenticated` OR an `allUsers`→`run.invoker` binding satisfies it; but when the workflow deploys a
+`service.yaml` manifest instead (`gcloud run services replace`, or a `metadata:` input on `deploy-cloudrun`),
+the flag is incompatible and silently dropped, so ONLY the explicit IAM binding counts — the gate demands it
+there. (This was a live 403: a generated `metadata:`-mode workflow whose `--allow-unauthenticated` was inert.)
+The gate is archetype-aware: `archetype=None` (or a target without the flag) skips the check, so CLI runs are
+unaffected.
+
+**Service-name collision guard (the overwrite class).** A managed service is keyed by `(name, region,
+project)`, so a **hardcoded** service name lets one app's deploy silently overwrite another's (a new revision
+takes over the live URL) — a real risk in a multi-app factory. The `deploy_gcp` skill forbids static names and
+requires deriving the name from the repository context (`${{ github.event.repository.name }}`, optionally
+branch-suffixed for non-default-branch deploys); `run_devops_gate` deterministically asserts the workflow
+references `github.event.repository.name` (or `github.repository`) for a `requires_public_invoker` target.
+
+**Why a gate, not just the prompt:** prompt adherence is probabilistic; the gate makes reachability +
+isolation green-by-construction, the same philosophy as the `lint_cmd` CI-parity SSOT above.
 
 Related: [[repo-module-map]] (where the symbols live), [[pipeline-fsm-loops]] (the step-3.6 lint loop +
 the post-batch devops phase), [[agent-provider-model-map]] (the `devops` Gemini role),
