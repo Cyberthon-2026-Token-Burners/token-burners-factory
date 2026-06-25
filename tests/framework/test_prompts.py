@@ -206,6 +206,50 @@ class GetSystemPromptTests(unittest.TestCase):
         result = get_system_prompt("arbiter")
         self.assertIn("AUTHORITATIVE", result)
 
+    def test_sa_selects_and_records_deployment_target(self) -> None:
+        # The SA picks a deployment target (like environment_id) and records it + its runtime constraints
+        # in a `## Deployment Target` Blueprint section; the available-targets list is injected.
+        result = get_system_prompt_with_platforms("sa")
+        self.assertNotIn("{injected_supported_deploy_targets_list}", result)   # placeholder filled
+        self.assertIn("gcp-cloud-run", result)                                  # the registry target rendered
+        self.assertIn("## Deployment Target", result)
+        self.assertIn("DEPLOYMENT TARGET", result)
+        # Existing pinned literal must survive the edit.
+        self.assertIn("HONOR THE USER'S MANDATED STACK", result)
+
+    def test_tpm_propagates_deployment_target_constraints(self) -> None:
+        # The TPM carries the target's runtime constraints into tickets (the executor never sees the
+        # Blueprint) and must NOT spin up a separate deployment ticket; the targets list is injected.
+        result = get_system_prompt_with_platforms("tpm")
+        self.assertNotIn("{injected_supported_deploy_targets_list}", result)
+        self.assertIn("DEPLOYMENT TARGET", result)
+        self.assertIn("deployment-target runtime constraints", result)
+        self.assertIn("there is NO standalone `TASK-00`", result)               # existing pin survives
+
+    def test_tpm_forbids_orphaned_components(self) -> None:
+        # Rule #7: a built component (e.g. middleware) must be wired into the composition root by some
+        # ticket — the gap that left a request-limit middleware dead in a real run.
+        result = get_system_prompt("tpm")
+        self.assertIn("NO ORPHANED COMPONENTS", result)
+        self.assertIn("COMPOSITION ROOT", result)
+        self.assertIn("INTEGRATION SITE", result)
+
+    def test_techlead_requires_config_defaults(self) -> None:
+        # HARD gate #6: an environment-backed config field with no default crashes a freshly-deployed
+        # container (the zero-config-boot fix).
+        result = get_system_prompt("techlead")
+        self.assertIn("CONFIGURATION BOOTABILITY", result)
+        self.assertIn("SAFE DEFAULT", result)
+
+    def test_engineering_guide_pins_zero_config_boot_and_cloud_runtime(self) -> None:
+        # The web-service runtime contract (bind $PORT/0.0.0.0, zero-config boot, stateless, health) is a
+        # global engineering rule the building agents inherit.
+        guide = get_skill("engineering_guide")
+        self.assertIn("Configuration & Bootability", guide)
+        self.assertIn("zero required configuration", guide)
+        self.assertIn("Cloud runtime contract", guide)
+        self.assertIn("PORT", guide)
+
     def test_loads_template_with_placeholders(self) -> None:
         raw = get_system_prompt("developer")
         rendered = raw.format(
@@ -576,16 +620,39 @@ class DevOpsPromptTests(unittest.TestCase):
     def test_secrets_vs_variables_split_matches_devops_setup_guide(self) -> None:
         # Contract (docs/guides/devops_setup.md): WIF_PROVIDER/SERVICE_ACCOUNT are SECRETS;
         # PROJECT_ID/REGION/REGISTRY_NAME are VARIABLES. The generated workflow must reference them
-        # accordingly or the deploy can't resolve. Pin both the rest_api skill and the system prompt.
-        rest = get_skill("devops_rest_api")
-        self.assertIn("secrets.GCP_WIF_PROVIDER", rest)
-        self.assertIn("vars.GCP_PROJECT_ID", rest)
-        self.assertIn("vars.GCP_REGION", rest)
-        self.assertNotIn("secrets.GCP_PROJECT_ID", rest)   # the bug this fixes
-        self.assertNotIn("secrets.GCP_REGION", rest)
+        # accordingly or the deploy can't resolve. The split now lives in the deploy_gcp PLATFORM skill
+        # (extracted from the archetype skills); pin it there and in the system prompt.
+        gcp = get_skill("deploy_gcp")
+        self.assertIn("secrets.GCP_WIF_PROVIDER", gcp)
+        self.assertIn("vars.GCP_PROJECT_ID", gcp)
+        self.assertIn("vars.GCP_REGION", gcp)
+        self.assertNotIn("secrets.GCP_PROJECT_ID", gcp)   # the bug this fixes
+        self.assertNotIn("secrets.GCP_REGION", gcp)
         prompt = get_system_prompt("devops")
         self.assertIn("${{ secrets.* }}", prompt)
         self.assertIn("${{ vars.* }}", prompt)
+
+    def test_deploy_gcp_skill_grants_public_invocation(self) -> None:
+        # The 403-class fix: the GCP platform skill must instruct the public-invoker grant.
+        gcp = get_skill("deploy_gcp")
+        self.assertIn("--allow-unauthenticated", gcp)
+        self.assertIn("403", gcp)
+
+    def test_platform_skills_target_devops_node(self) -> None:
+        # The extracted deploy-target platform skills follow the skill format and load on the devops node.
+        from src.shared.core.prompts import _parse_frontmatter, _SKILLS_DIR
+        for skill_id in ("deploy_gcp", "deploy_github_release"):
+            meta, body = _parse_frontmatter((_SKILLS_DIR / f"{skill_id}.md").read_text(encoding="utf-8"))
+            self.assertEqual(meta.get("type"), "domain", skill_id)
+            self.assertEqual(meta.get("nodes"), ["devops"], skill_id)
+            self.assertTrue(body.strip(), skill_id)
+
+    def test_devops_prompt_separates_app_shape_from_deploy_target(self) -> None:
+        # The system prompt must keep the public-invoker invariant + the shape/target split (so a skill
+        # miss still yields a reachable, correctly-shaped service).
+        prompt = get_system_prompt("devops")
+        self.assertIn("publicly invocable by default", prompt)
+        self.assertIn("app SHAPE", prompt)
 
     def test_devops_prompt_mandates_canonical_commands_no_invented_linters(self) -> None:
         # The lint-gate epic's CI SSOT: the generated CI must run the project's canonical commands and

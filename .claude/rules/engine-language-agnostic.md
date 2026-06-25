@@ -50,4 +50,10 @@ A multi-stack factory must be extensible by adding ONLY a registry entry + Docke
 language-`triggers` skill. Any hardcoded language table in `src/` is an invisible edit the developer
 must remember on each new stack, and silently breaks non-target-language runs in the meantime.
 
+The same registry-driven discipline governs **deployment targets**: `SUPPORTED_DEPLOY_TARGETS`
+(`environments.py`) is the SSOT for *where* an app deploys, consumed via `deploy_target_for_archetype` /
+`deploy_skill_for_target` / `deploy_target_skills`. A deploy target is a deployment classification, not a
+programming language — adding a future cloud is one registry entry + one `prompts/skills/deploy_<cloud>.md`,
+never a hardcoded branch. See [deploy-scaffolding-and-ci-parity](deploy-scaffolding-and-ci-parity.md) §5.
+
 See also: [prompt-language-independence](prompt-language-independence.md) (same constraint for prompts).

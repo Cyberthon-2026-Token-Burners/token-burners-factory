@@ -26,6 +26,13 @@ def _format_supported_platforms() -> str:
     return "\n".join(f"- {key}: {env['description']}" for key, env in SUPPORTED_ENVIRONMENTS.items())
 
 
+def _format_supported_deploy_targets() -> str:
+    """Render the deployment-target registry as a bullet list for prompt injection (mirrors the
+    Paved-Road platform list). Gives the SA/TPM awareness of WHERE a finished app can deploy."""
+    from src.shared.core.environments import SUPPORTED_DEPLOY_TARGETS
+    return "\n".join(f"- {key}: {spec['description']}" for key, spec in SUPPORTED_DEPLOY_TARGETS.items())
+
+
 # Canonical README scaffold — aligned with GitHub's "About READMEs" guidance (what the project does,
 # why it's useful, how to get started, how to use it, how to test, license). The TPM copies this into
 # TASK-01 and fills every <...> slot with REAL content distilled from the Epic/Blueprint — so the
@@ -84,9 +91,10 @@ def _format_env_commands() -> str:
 
 def get_system_prompt_with_platforms(agent_name: str) -> str:
     """Load a system prompt and inject the engine-curated assets into its placeholders:
-    ``{injected_supported_platforms_list}`` (Paved-Road registry), ``{injected_readme_scaffold}``
-    (GitHub-aligned README structure), and ``{injected_env_commands}`` (per-env setup/build/test
-    commands).
+    ``{injected_supported_platforms_list}`` (Paved-Road registry),
+    ``{injected_supported_deploy_targets_list}`` (deployment-target registry),
+    ``{injected_readme_scaffold}`` (GitHub-aligned README structure), and
+    ``{injected_env_commands}`` (per-env setup/build/test commands).
 
     The canonical ``.gitignore``/``LICENSE`` are NOT injected here — they are appended to TASK-01
     deterministically by the engine (``boilerplate.build_baseline_block``) so the TPM never reproduces
@@ -100,6 +108,7 @@ def get_system_prompt_with_platforms(agent_name: str) -> str:
     return (
         get_system_prompt(agent_name)
         .replace("{injected_supported_platforms_list}", _format_supported_platforms())
+        .replace("{injected_supported_deploy_targets_list}", _format_supported_deploy_targets())
         .replace("{injected_readme_scaffold}", README_SCAFFOLD)
         .replace("{injected_env_commands}", _format_env_commands())
     )

@@ -214,6 +214,82 @@ SUPPORTED_ENVIRONMENTS = {
     },
 }
 
+# ==========================================================================================
+# DEPLOYMENT TARGETS — single source of truth for WHERE a finished app deploys, mirroring
+# SUPPORTED_ENVIRONMENTS (the WHAT/runtime SSOT). The SA selects a target the way it selects an
+# environment_id; the DevOps agent loads the target's platform skill to generate the deploy config;
+# and the building agents (TechLead/Dev/QA) build the app to satisfy the target's runtime_constraints.
+#
+# A deploy target is a DEPLOYMENT classification, NOT a programming language — there is no per-language
+# branching here (honors engine-language-agnostic). Adding a future cloud is ONE entry + one
+# prompts/skills/deploy_<cloud>.md, with no engine edit (the DevOps node loads the skill named here).
+#
+#   description          one-line summary for the injected awareness list (SA/TPM see this).
+#   archetypes           the DevOpsManifests.archetype values this target serves (web service vs CLI).
+#   skill                the devops platform skill that teaches deploying to this target.
+#   runtime_constraints  the contract the APP CODE must satisfy to run on this target — language-neutral
+#                        bullets surfaced to the building agents (e.g. bind $PORT, zero-config boot).
+# ==========================================================================================
+SUPPORTED_DEPLOY_TARGETS = {
+    "gcp-cloud-run": {
+        "description": "Google Cloud Run (serverless containers, deployed via Workload Identity Federation) — for long-running web services (REST API / CRUD).",
+        "archetypes": ("rest_api", "crud_app"),
+        "skill": "deploy_gcp",
+        # The deployed service is public-facing: its deploy workflow MUST grant unauthenticated invocation,
+        # else Cloud Run rejects every anonymous request with HTTP 403. The deploy gate enforces this for any
+        # target carrying this flag (registry-driven — a future private-by-default target simply omits it).
+        "requires_public_invoker": True,
+        "runtime_constraints": (
+            "Listen on the port given by the PORT environment variable (the platform injects it; default 8080) and bind 0.0.0.0 — never localhost.",
+            "Boot with ZERO required configuration: every environment-sourced setting MUST have a safe in-code default. Environment variables OVERRIDE behavior; they never ENABLE startup.",
+            "Be stateless: persist nothing to local disk between requests (the container filesystem is ephemeral and per-instance).",
+            "Expose a lightweight health endpoint for liveness/readiness probes.",
+        ),
+    },
+    "github-release": {
+        "description": "GitHub Releases (build and publish a versioned artifact on a tag) — for CLI tools / libraries with no long-running server.",
+        "archetypes": ("cli_tool",),
+        "skill": "deploy_github_release",
+        "runtime_constraints": (
+            "Ship a self-contained, runnable/installable artifact; do not assume a hosted runtime or platform-injected environment.",
+        ),
+    },
+}
+
+
+def deploy_target_for_archetype(archetype: str | None) -> str | None:
+    """The deploy-target id serving a DevOpsManifests archetype (e.g. ``rest_api`` -> ``gcp-cloud-run``).
+
+    Registry-derived; ``None`` for an unknown/blank archetype. The DevOps phase uses this to resolve the
+    target when the Blueprint did not state one explicitly (today exactly one cloud target serves the web
+    archetypes, so the mapping is unambiguous). First registry match wins.
+    """
+    if not archetype:
+        return None
+    for target_id, spec in SUPPORTED_DEPLOY_TARGETS.items():
+        if archetype in spec["archetypes"]:
+            return target_id
+    return None
+
+
+def deploy_skill_for_target(target_id: str | None) -> str | None:
+    """The devops platform skill teaching a target id (``gcp-cloud-run`` -> ``deploy_gcp``); ``None`` if unknown."""
+    spec = SUPPORTED_DEPLOY_TARGETS.get(target_id or "")
+    return spec["skill"] if spec else None
+
+
+def deploy_target_skills() -> tuple[str, ...]:
+    """Every platform skill named by the deploy-target registry, deduped in registry order.
+
+    The SSOT the DevOps node loads (alongside the archetype skills) so adding a future cloud target is one
+    registry entry + one ``prompts/skills/deploy_<cloud>.md`` — no edit to the agent code.
+    """
+    seen: dict[str, None] = {}
+    for spec in SUPPORTED_DEPLOY_TARGETS.values():
+        seen[spec["skill"]] = None
+    return tuple(seen)
+
+
 # Generic SAST — ONE scanner for every language (replaces per-stack bandit/gosec/npm-audit). Runs in
 # its own image over /workspace; scanning does not execute the code. The image VENDORS its rules
 # (docker/semgrep.Dockerfile) so the scan runs fully OFFLINE (`--network none`) — `--config auto` would

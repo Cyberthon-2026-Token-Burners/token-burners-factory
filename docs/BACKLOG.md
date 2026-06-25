@@ -5,7 +5,7 @@ Two parts:
 - **Part I — Capability Roadmap (Epics `E1`–`E10`)**: the forward-looking work to close the autonomy loop
   (idea → working, merged code in `main` → deployable). Larger than a single fix; each has its own
   Goal / Current state / Design / Dependencies / Risks / Acceptance.
-- **Part II — Defects & Refinements (`#4`–`#34`)**: granular fixes surfaced across pipeline runs, grouped by
+- **Part II — Defects & Refinements (`#4`–`#37`)**: granular fixes surfaced across pipeline runs, grouped by
   theme. Resolved items have been removed — their fixes live in the code, tests, and `CHANGELOG.md`; only
   outstanding work remains. **Original item numbers are preserved** so existing cross-references (from
   `.claude/rules/*` and ADRs) stay valid. The `E#` epic namespace is deliberately separate from the `#NN`
@@ -908,6 +908,12 @@ image** and **(c) live cloud deploy**. The demo proves the workflow was generate
   optionally `gcloud run deploy` as an inlined post-merge step. Requires cloud credentials in the engine
   run environment; out of scope for the hackathon.
 
+**Update (public-invoker sub-defect RESOLVED):** a live E4+E6 run *did* deploy to Cloud Run but returned **HTTP
+403** on every request — the generated workflow never granted public invocation. Fixed: the `deploy_gcp` platform
+skill now instructs `flags: '--allow-unauthenticated'` and `run_devops_gate(repo_dir, archetype)` asserts the
+workflow grants public invocation (registry flag `SUPPORTED_DEPLOY_TARGETS['gcp-cloud-run'].requires_public_invoker`).
+The broader "prove a live URL at demo time" gap (Options A/B) remains.
+
 ## 33. [P1] Only Python sandbox images are production-ready; other stacks are stub registry entries
 **Symptom:** judges may ask to demo on Go, Node, or .NET. Only `python-3.12-core` has a validated Docker image
 and QA profile; other stacks have `SUPPORTED_ENVIRONMENTS` entries but the images have not been exercised
@@ -928,3 +934,41 @@ static-lints the manifests, but this path is not exercised in any existing demo 
 the DevOps agent (or corrupt the generated one before the static lint), run `--scaffold-deploy`, and show
 `run_devops_gate` failure → DevOps agent rewrite → second attempt succeeds. No engine change needed; this is a
 demo preparation step. Document the scenario in `docs/hackathon/`.
+
+## 35. [P2] `deploy_target_id` is prose-threaded, not a validated structured field
+**Symptom:** the SA selects a deployment target and writes it into the Blueprint's `## Deployment Target`
+section as prose; the TPM re-reads it from markdown and the DevOps phase otherwise derives the target from the
+archetype (`deploy_target_for_archetype`). There is no validated structured value crossing the
+SA→TPM→TechLead→DevOps boundary — exactly the same class of gap as #20 (the discarded `environment_id`).
+**Cause:** to avoid an ADR-scale model change, the deploy target was threaded as awareness + a registry-derived
+default rather than a first-class field. A Blueprint that names a target not in `SUPPORTED_DEPLOY_TARGETS`, or
+an archetype↔target mismatch, is not caught at deserialization.
+**Fix direction:** add a validated `deploy_target_id` field to `Blueprint`/`TaskTicket`/`DevOpsManifests` with a
+shared `_validate_deploy_target_id` validator (mirroring `_validate_environment_id`), persist it across the
+Nexus boundary (paired with the #20 fix), and have `run_devops_scaffold` pass the threaded value to
+`run_devops_gate` instead of deriving from archetype. ADR-worthy; bundle with #20.
+
+## 36. [P1] No cross-ticket integration check — an orphaned component is caught only by TPM prompt text
+**Symptom:** a component built in one ticket (e.g. a middleware in `TASK-02`) can be left unwired into the
+composition root if no ticket scopes both the component and the entry-point file — it becomes dead code and its
+behavior silently never runs in production. A live run shipped exactly this (a request-limit middleware that was
+never `add_middleware`'d). Now mitigated by TPM NON-NEGOTIABLE rule #7 (integration completeness), but that is
+prompt-trusted, not code-enforced.
+**Cause:** `files_to_modify` is the only execution-time scope gate; nothing verifies that every non-entry,
+non-baseline file produced across the plan is actually *consumed* by some ticket.
+**Fix direction:** a cross-ticket **topology orphan-check** over the union of every ticket's
+`topology_contract` graph (the neutral dependency graph the TechLead already emits): assert every non-entry,
+non-baseline `file_path` appears as a `depends_on` target somewhere, or is the entry point. Language-neutral
+(operates on the existing neutral graph); the code-enforced SSOT that makes rule #7 deterministic.
+
+## 37. [P3] DevOps cannot introspect required runtime env vars — relies on app having safe defaults
+**Symptom:** the DevOps agent emits `.env.example` and `ENV` lines from the blueprint/repo map, but cannot read
+the app's actual config object to learn which environment variables it requires. If an app had a required,
+no-default env-backed setting, the generated Dockerfile/`.env.example` would omit it and the container would
+crash on boot. Currently dissolved by the "boot with zero required configuration" rule (engineering_guide +
+TechLead HARD gate #6) — every config field must have a safe default, so DevOps never needs to inject anything
+to make the app boot.
+**Fix direction (only if the zero-config invariant is ever relaxed):** have the DevOps phase introspect the
+merged app's config surface and emit `--set-env-vars` / `ENV` for any discovered required setting. Lower
+priority and inherently language-aware (config-class parsing), so it is the *fallback*, not the primary fix —
+the safe-defaults invariant is the clean solution.

@@ -3,6 +3,7 @@ paths:
   - "src/deployment/agents/devops.py"
   - "prompts/system/devops.md"
   - "prompts/skills/devops_*.md"
+  - "prompts/skills/deploy_*.md"
   - "src/shared/core/environments.py"
   - "src/development/gates.py"
   - "src/deployment/provision/gates.py"
@@ -30,8 +31,15 @@ is null) + a build/release matrix workflow instead.
 
 **Why:** deploying a CLI to a serverless container is a semantic error — a CLI has no long-running server to
 serve. The branch is encoded in the `devops.md` system prompt AND the archetype skills
-(`devops_{rest_api,crud_app,cli_tool}.md`, routed by `triggers:` — see [[skill-routing-frontmatter]]); the
-chosen class is recorded in `DevOpsManifests.archetype`.
+(`devops_{rest_api,crud_app,cli_tool}.md`); the chosen class is recorded in `DevOpsManifests.archetype`.
+
+**App SHAPE vs deploy TARGET — keep them in separate skills.** The archetype skills define the app's *shape*
+(container/server vs CLI artifact) ONLY; the **platform skills** (`prompts/skills/deploy_{gcp,github_release}.md`)
+own the *deploy mechanics* (WIF auth, image build/push, the Cloud Run deploy step, the public-invoker grant,
+the README-URL step / GitHub Release publish). The DevOps node force-loads BOTH sets — archetype skills +
+the platform skills named by `SUPPORTED_DEPLOY_TARGETS[*].skill` (via `deploy_target_skills()`), assembled in
+`_archetype_guidance()`. Adding a future cloud is ONE registry entry + one `deploy_<cloud>.md`, no code edit.
+Do NOT re-tangle Cloud-Run/WIF mechanics back into an archetype skill.
 
 **How to apply:** keep the archetype branch in the prompt itself, not only the skills (a skill miss must
 still produce a correct shape). Never add a Cloud Run / container step on the CLI path.
@@ -91,6 +99,28 @@ publish. See [[run-layout-and-cli]] (`--release`) and [[pipeline-fsm-loops]] (th
 `app_telemetry` accumulator by reference and merges its spend into it in its **own `finally`**, so even a
 budget `PipelineHalt` mid-self-heal still folds the partial DevOps spend into the application total before the
 batch's `finally` writes `app_finops_report.json`. See [[finops-app-budget]].
+
+## 5. Deployment targets are a registry; web services are publicly invocable by default
+`SUPPORTED_DEPLOY_TARGETS` (`environments.py`) is the SSOT for WHERE an app deploys — mirroring
+`SUPPORTED_ENVIRONMENTS` (the WHAT/runtime SSOT). Each entry carries `archetypes` (which app archetypes it
+serves), `skill` (its platform skill), `runtime_constraints` (the contract the APP CODE must satisfy — bind
+`$PORT`/`0.0.0.0`, **boot with zero required configuration**, statelessness, a health endpoint), and an
+optional `requires_public_invoker` flag. The SA selects a target (injected awareness list
+`{injected_supported_deploy_targets_list}`, like the platform list) and records it in the Blueprint's
+`## Deployment Target`; the TPM propagates the runtime constraints into the relevant tickets'
+architectural-constraints; the building agents satisfy them (zero-config boot is also a global
+`engineering_guide` rule + a TechLead contract HARD gate). A deploy target is a *deployment classification*,
+NOT a programming language — no per-language branching here (honors [[engine-language-agnostic]]).
+
+**Public invocation (the 403 class).** A target with `requires_public_invoker: True` (Cloud Run) deploys a
+public-facing service: its workflow MUST grant unauthenticated invocation, or the live service rejects every
+anonymous request with **HTTP 403**. This is enforced two ways: the `deploy_gcp` platform skill instructs
+`flags: '--allow-unauthenticated'`, AND `run_devops_gate(repo_dir, archetype)` deterministically asserts the
+generated workflow grants public invocation (accepting `--allow-unauthenticated` OR an `allUsers` →
+`roles/run.invoker` binding) — a miss flows into the existing `DEVOPS_MAX_RETRIES` self-heal loop. The gate
+is archetype-aware: `archetype=None` (or a target without the flag) skips the check, so CLI runs are
+unaffected. **Why a gate, not just the prompt:** prompt adherence is probabilistic; the gate makes
+reachability green-by-construction, the same philosophy as the `lint_cmd` CI-parity SSOT above.
 
 Related: [[repo-module-map]] (where the symbols live), [[pipeline-fsm-loops]] (the step-3.6 lint loop +
 the post-batch devops phase), [[agent-provider-model-map]] (the `devops` Gemini role),

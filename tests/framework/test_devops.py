@@ -183,6 +183,55 @@ class RunDevopsGateTests(unittest.TestCase):
             self.assertTrue(any("FROM" in p for p in problems), problems)
             self.assertTrue(any("CMD/ENTRYPOINT" in p for p in problems), problems)
 
+    def test_web_service_without_public_invoker_is_flagged(self) -> None:
+        # A Cloud Run web service whose workflow never grants unauthenticated invocation is the 403-class
+        # defect — the archetype-aware gate flags it (registry: rest_api → gcp-cloud-run, requires invoker).
+        with TemporaryDirectory() as td:
+            repo = Path(td)
+            self._write(repo, workflow="name: deploy\non:\n  push:\n    branches: [main]\n",
+                        dockerfile="FROM python:3.12-slim\nCMD [\"python\", \"app.py\"]\n")
+            problems = run_devops_gate(repo, archetype="rest_api")
+            self.assertTrue(any("public invocation" in p for p in problems), problems)
+
+    def test_web_service_with_allow_unauthenticated_passes(self) -> None:
+        with TemporaryDirectory() as td:
+            repo = Path(td)
+            wf = ("name: deploy\non:\n  push:\n    branches: [main]\n"
+                  "jobs:\n  deploy:\n    steps:\n      - uses: google-github-actions/deploy-cloudrun@v2\n"
+                  "        with:\n          flags: '--allow-unauthenticated'\n")
+            self._write(repo, workflow=wf, dockerfile="FROM python:3.12-slim\nCMD [\"python\", \"app.py\"]\n")
+            self.assertEqual(run_devops_gate(repo, archetype="rest_api"), [])
+
+    def test_web_service_with_iam_binding_passes(self) -> None:
+        # The alternate idiom: an explicit allUsers → roles/run.invoker IAM binding satisfies the gate too.
+        with TemporaryDirectory() as td:
+            repo = Path(td)
+            wf = ("name: deploy\non: push\n"
+                  "jobs:\n  deploy:\n    steps:\n      - run: gcloud run services add-iam-policy-binding svc "
+                  "--member=allUsers --role=roles/run.invoker\n")
+            self._write(repo, workflow=wf, dockerfile="FROM x\nCMD [\"x\"]\n")
+            self.assertEqual(run_devops_gate(repo, archetype="rest_api"), [])
+
+    def test_cli_archetype_skips_public_invoker_check(self) -> None:
+        # A CLI deploys to GitHub Releases (no public-invoker requirement); a None archetype skips too.
+        with TemporaryDirectory() as td:
+            repo = Path(td)
+            self._write(repo, workflow="name: build\non:\n  push: {}\n")  # no Dockerfile, no grant — fine
+            self.assertEqual(run_devops_gate(repo, archetype="cli_tool"), [])
+            self.assertEqual(run_devops_gate(repo), [])
+
+
+class ArchetypeGuidanceTests(unittest.TestCase):
+    """The assembled DevOps guidance must carry BOTH the archetype skills (app shape) AND the deploy-target
+    PLATFORM skills (deploy mechanics) — the latter registry-driven via deploy_target_skills()."""
+
+    def test_includes_app_shape_and_platform_skills(self) -> None:
+        guidance = devops._archetype_guidance()
+        self.assertIn("Multi-stage build", guidance)              # rest_api archetype (app shape)
+        self.assertIn("allow-unauthenticated", guidance)          # deploy_gcp platform skill (the 403 fix)
+        self.assertIn("workload_identity_provider", guidance)     # deploy_gcp: WIF auth preserved
+        self.assertIn("softprops/action-gh-release", guidance)    # deploy_github_release platform skill
+
 
 class JinjaSystemMessageRelocationTests(unittest.TestCase):
     """Regression for the instructor GenAI guard that rejects {{ }} / {% %} in a SYSTEM message.
