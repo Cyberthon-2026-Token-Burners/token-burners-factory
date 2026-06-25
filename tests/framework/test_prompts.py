@@ -115,7 +115,9 @@ class GetSystemPromptTests(unittest.TestCase):
         self.assertIn("## Documentation", README_SCAFFOLD)
         self.assertIn("(CHANGELOG.md)", README_SCAFFOLD)
         self.assertIn("(docs/architecture_state.md)", README_SCAFFOLD)
-        self.assertIn("(docs/USAGE.md)", README_SCAFFOLD)
+        # The Usage Guide link is added by the techwriter ONLY from the final iteration (prompt-driven),
+        # so it must NOT be a dead link hard-coded into the static scaffold for every intermediate ticket.
+        self.assertNotIn("(docs/USAGE.md)", README_SCAFFOLD)
 
     def test_tpm_test_project_scaffold_is_build_glue_not_a_test_case(self) -> None:
         # The test-PROJECT scaffold (dir + build manifest) is Developer-owned build glue allocated to the
