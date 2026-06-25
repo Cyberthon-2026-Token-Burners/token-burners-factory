@@ -25,7 +25,7 @@ from src.shared.core.environments import is_test_file, get_qa_profile, failure_o
 from src.shared.core.prompts import generate_repo_map
 from src.shared.utils.git_helpers import get_git_root, get_pipeline_snapshot_files
 from src.shared.utils.redaction import redact
-from src.shared.utils.subprocess_helpers import sanitize_for_argv
+from src.shared.utils.subprocess_helpers import sanitize_for_argv, ClaudeCliQuotaExhausted
 from src.development.agents.techlead import run_techlead_node
 from src.development.agents.qa import run_qa_agent_node
 from src.development.agents.developer import run_developer_node
@@ -552,6 +552,17 @@ LINT_GATE_MAX_REROUTES = int(os.environ.get("PIPELINE_LINT_MAX_REROUTES", "2"))
 _LINT_FEEDBACK_PREAMBLE = (
     "[LINT GATE FAILURE] The project's style/lint checker rejected the code. Fix ONLY these specific "
     "style/lint violations — do not change behaviour, signatures, or logic. The exact findings:\n"
+)
+
+# Terminal halt when the Developer's Claude CLI is blocked by the subscription session/usage limit. NOT
+# a code defect — the CLI wrote nothing and the limit resets on a clock, so the only remedy is to wait
+# and resume. Surfaced as an honest incident here instead of looping the retry budget on an unchanged
+# tree (the misclassified-as-'production_bug' failure this guards against). `{detail}` is the CLI's own
+# limit/reset line, so the operator sees exactly when to re-run.
+_DEV_QUOTA_HALT_HEADER = (
+    "\n🚨 PROVIDER QUOTA HALT: the Developer's Claude CLI hit the subscription session/usage limit and "
+    "produced no work — this is an infrastructure block, not a code defect. Resume the batch after the "
+    "limit resets: {detail}"
 )
 
 # ==========================================
@@ -1357,7 +1368,10 @@ async def run_executor(cfg: RunConfig, run_dir: Path, resume_checkpoint: Path | 
             guardrail_halt = False
             guardrail_msg: str | None = None
             for guardrail_retries in range(GUARDRAIL_MAX_REROUTES + 1):
-                await run_developer_node(ctx, dev_feedback, dev_focus_files)
+                try:
+                    await run_developer_node(ctx, dev_feedback, dev_focus_files)
+                except ClaudeCliQuotaExhausted as exc:
+                    _abort_with_incident(ctx, _DEV_QUOTA_HALT_HEADER.format(detail=exc.reset_hint))
                 # Snapshot the real working-tree production delta (git-tracked, full content) for the Reviewer.
                 build_production_snapshot(ctx)
                 # Refresh the repo map now that the Developer has materialized the contract files. The
@@ -1570,7 +1584,10 @@ async def run_executor(cfg: RunConfig, run_dir: Path, resume_checkpoint: Path | 
             )
             if lint_prod_findings:
                 ctx.error_trace = _cap_text(_LINT_FEEDBACK_PREAMBLE + "\n".join(lint_prod_findings))
-                await run_developer_node(ctx, ctx.error_trace, None)
+                try:
+                    await run_developer_node(ctx, ctx.error_trace, None)
+                except ClaudeCliQuotaExhausted as exc:
+                    _abort_with_incident(ctx, _DEV_QUOTA_HALT_HEADER.format(detail=exc.reset_hint))
                 build_production_snapshot(ctx)
                 ctx.repository_map = generate_repo_map(ctx.workspace_paths.repo_dir)
             if lint_test_findings:

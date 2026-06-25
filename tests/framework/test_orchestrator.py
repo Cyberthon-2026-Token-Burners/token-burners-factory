@@ -826,6 +826,48 @@ class DeadlockGuardTests(unittest.IsolatedAsyncioTestCase):
             # Incident report written by the fast-fail abort.
             self.assertTrue((paths.reports_dir / "incident_report.json").exists())
 
+    async def test_developer_cli_quota_block_halts_fast_without_looping(self) -> None:
+        # A Claude CLI session/usage-limit block is an INFRASTRUCTURE condition, not a code defect: the
+        # FSM must halt on the FIRST Developer call (honest incident) instead of gating the unchanged
+        # tree and burning the retry budget into a misclassified 'production_bug'.
+        with TemporaryDirectory() as td:
+            base = Path(td)
+            paths = WorkspacePaths(logs_dir=base / "logs", reports_dir=base / "reports", repo_dir=base)
+            ctx = GlobalPipelineContext(
+                pr_description="resume", workspace_paths=paths, test_code_snapshot="tests",
+            )
+            ctx.contract = TechLeadContract(
+                files_to_modify=["src/converter.py"], instruction="noop", function_signatures="noop",
+                strict_type_validation_rules="noop", techlead_reasoning="noop",
+                topology_contract=[], environment_id="python-3.12-core",
+            )
+
+            with (
+                mock.patch.object(orchestrator, "check_environment"),
+                mock.patch.object(orchestrator, "reconfigure_logging"),
+                mock.patch.object(orchestrator, "parse_args", return_value=orchestrator.RunConfig(
+                    description=None, base_branch="main", resume=Path("cp.json"), reset_attempts=False)),
+                mock.patch.object(GlobalPipelineContext, "load_checkpoint", return_value=ctx),
+                mock.patch.object(orchestrator, "run_techlead_node", new_callable=AsyncMock),
+                mock.patch.object(orchestrator, "run_qa_agent_node", new_callable=AsyncMock),
+                mock.patch.object(orchestrator, "run_developer_node",
+                                  new=AsyncMock(side_effect=orchestrator.ClaudeCliQuotaExhausted(
+                                      "You've hit your session limit · resets 5:30am (Europe/Warsaw)"))) as developer,
+                mock.patch.object(orchestrator, "run_reviewer_node", new_callable=AsyncMock) as reviewer,
+                mock.patch.object(orchestrator, "run_qa_unit_tests", new_callable=AsyncMock) as qa_gate,
+                mock.patch.object(orchestrator, "finalize_transaction", new_callable=AsyncMock) as finalize,
+            ):
+                with self.assertRaises(orchestrator.PipelineHalt):
+                    await orchestrator.main()
+
+            # Halted on the first Developer call: gates/Reviewer/finalize never ran (no wasted spend/loop).
+            developer.assert_awaited_once()
+            reviewer.assert_not_awaited()
+            qa_gate.assert_not_awaited()
+            finalize.assert_not_called()
+            # An honest incident is written (this is an FSM halt, not an uncaught boundary crash).
+            self.assertTrue((paths.reports_dir / "incident_report.json").exists())
+
 
 class ArbiterRoutingTests(unittest.IsolatedAsyncioTestCase):
     """The Arbiter triages a STUCK cycle: it is gated off on cycle 1, and on a later failure can route

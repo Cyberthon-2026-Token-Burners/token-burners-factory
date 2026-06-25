@@ -44,6 +44,13 @@ Two parts:
 > Updated 2026-06-24: logged **E7** (distribute the factory itself as an installable CLI + factory
 > self-release CI pipeline) — any user can `pip install git+<url>` and get a `tbf` binary; every `v*` tag
 > on this repo triggers a GitHub Actions workflow that publishes a new GitHub Release.
+>
+> Updated 2026-06-25: logged **E8** + **E9** (code-coverage of the *generated* application) — a Cyberthon
+> finals criterion, split into two epics. **E8 (measure + report)** is the active plan: a registry-driven
+> per-env `coverage_cmd` + `coverage_percent_pattern`, parsed in the functional-test gate and surfaced in the
+> run / app FinOps report (report-only, no gating). **E9 (hard coverage gate)** — a `COVERAGE_FLOOR` threshold
+> that fails the gate and reroutes to QA — is **deferred**, to roll out only after E8's numbers are trustworthy
+> across stacks. E9 depends on E8.
 
 ---
 
@@ -66,6 +73,9 @@ E1 ✅ Nexus auto-dispatches Executor (one ticket)   — DONE (v0.17.0 / ADR 001
                       └─► E5 ✅ Application-wide FinOps budget (one money ceiling, remaining threaded per ticket)  — DONE (v0.22.0 / ADR 0022)
 
 E7 ⬜ Distribute the factory as an installable CLI + factory self-release CI pipeline   — OPEN
+
+E8 ⬜ Code-coverage of the generated app — measure + report (report-only, no gating)   — OPEN
+      └─► E9 ⬜ Hard coverage gate (COVERAGE_FLOOR threshold → fail gate + reroute to QA)   — OPEN
 ```
 
 E3 depends on E2 for a hard structural reason (see E3): each ticket clones `main` **fresh**, so TASK-02 only
@@ -529,6 +539,100 @@ layer cache.)
   `dist/*.whl` + `dist/*.tar.gz` and attaches them to a new GitHub Release automatically.
 - The README (or `docs/guides/install.md`) contains the complete user prerequisite checklist including
   both API keys, Docker, `scripts/build_sandbox_images.sh`, and usage examples.
+
+## E8. [⬜ OPEN] Code-coverage of the generated application — measure + report (report-only)
+
+**Goal:** know — and surface — the test coverage of every application the pipeline generates. This is a
+Cyberthon **finals pass/fail criterion**, so the engine must MEASURE coverage in the functional-test gate and
+REPORT it (no gating — enforcing a floor is the separate epic **E9**). Coverage knowledge must stay
+**language-agnostic** (see [engine-language-agnostic](../.claude/rules/engine-language-agnostic.md)): the
+command + the extraction regex live in the env registry, never as an `if lang == …` branch in the gate.
+
+**Current state:**
+- `run_qa_unit_tests` ([gates.py:196](../src/development/gates.py#L196)) runs the env's `test_cmd`
+  (network-OFF) and returns `(ok, log_lines)`. Pass/fail is the runner's exit code; there is an orphan-test
+  backstop (`ran_zero_tests`) but **no coverage measurement** anywhere.
+- No env declares a coverage command; the python sandbox image installs `pytest ruff` only
+  ([docker/python.Dockerfile:18](../docker/python.Dockerfile#L18)) — no `pytest-cov`.
+- The FinOps/run reports (`finops_report.json` / `app_finops_report.json`) carry money/tokens/time only;
+  there is no quality-metric surface for coverage.
+
+**Design (registry-driven, optional-per-env, graceful no-op when absent):**
+
+1. **Registry** ([environments.py](../src/shared/core/environments.py)) — add two OPTIONAL fields per env:
+   - `coverage_cmd` — the test command WITH coverage. It SUPERSEDES `test_cmd` in the gate when present (it
+     runs the same tests + measures), so exit code stays the pass/fail authority and the
+     `empty_test_markers`/`ran_test_markers` backstop still matches (e.g. `pytest --cov` still prints
+     "N passed").
+   - `coverage_percent_pattern` — a regex capturing the TOTAL % from that runner's output.
+
+   Add helpers `coverage_cmd(env_id)` and `parse_coverage_percent(env_id, output) -> float | None` (generic;
+   uses the per-env regex; `None` when the env declares no coverage or the regex misses). Absent `coverage_cmd`
+   ⇒ the gate behaves exactly as today (no measurement) — same opt-in shape as `lint_cmd`.
+
+   Per-stack values (ship python + go first; node/dotnet land as a later registry+image add, no engine edit):
+   | env | `coverage_cmd` | total-% source |
+   |---|---|---|
+   | python | `python -m pytest --cov=. --cov-report=term-missing` | `TOTAL … (\d+)%` line |
+   | go | `go test -coverprofile=/tmp/cov.out ./... && go tool cover -func=/tmp/cov.out` | `total: (statements) NN.N%` |
+   | node | `npm test -- --coverage --coverageReporters=text-summary` (jest) | `Lines : NN.N%` (best-effort; vitest needs `@vitest/coverage`) |
+   | dotnet | `dotnet test --collect:"XPlat Code Coverage"` | cobertura XML, not stdout — needs an XML parse step; defer |
+
+2. **Images** — `docker/python.Dockerfile`: add `pytest-cov` to the `pip install` line; rebuild via
+   `scripts/build_sandbox_images.sh`. Go coverage is built into the toolchain (no image change).
+
+3. **Gate** ([gates.py](../src/development/gates.py) `run_qa_unit_tests`) — when `coverage_cmd(env_id)` is set,
+   execute it instead of `test_cmd`; parse the % via `parse_coverage_percent`. Change the return to
+   `(ok, log_lines, coverage_pct: float | None)` (the one signature ripple — its single caller + tests update).
+
+4. **Surface** — store `coverage_pct` on `GlobalPipelineContext` (new field; auto-persists in
+   `checkpoint.json` via the existing `model_dump_json` round-trip) and write it into the per-run report;
+   `run_batch` collects each ticket's coverage into `BatchState` so `app_finops_report.json` carries a
+   per-ticket coverage list (the artifact the judges read). **Keep it OUT of `PipelineTelemetry`** — that
+   SSOT is money/tokens/time (the money-only breaker, [finops-app-budget](../.claude/rules/finops-app-budget.md));
+   coverage is a per-ticket quality metric, not a cost, and must not be merged/summed across tickets.
+
+5. **Tests** ([tests/](../tests), WSL) — `parse_coverage_percent` per stack against sample runner output; the
+   `coverage_cmd` helper; the gate 3-tuple (mock `execute_in_sandbox`); the FSM unpack + ctx field.
+
+6. **Docs/rules** — `/docs-sync` + `/claude-context-sync` for the new registry fields, the report key, and
+   the image change; add the coverage fields to the `engine-language-agnostic` examples table.
+
+**Open questions to confirm before building:**
+- **Stacks at launch:** Python + Go first; node/dotnet land later as a registry+image add (no-op until then) —
+  confirm this is acceptable for the finals submission.
+- **Where the judges read the number:** per-ticket in `app_finops_report.json` + the audit log — or a dedicated
+  `coverage_report.json` artifact? (Affects the surfacing in step 4.)
+
+**Dependencies:** none — extends the existing functional-test gate.
+
+**Acceptance:** an `--idea --auto-execute` run records a coverage % per ticket in the run report and the app
+FinOps report, with zero gating; a stack without a `coverage_cmd` is a clean no-op; coverage stays
+registry-driven (no language branch in the engine).
+
+## E9. [⬜ OPEN] Hard coverage gate (`COVERAGE_FLOOR` threshold)
+
+**Goal:** turn the E8 coverage measurement into an enforceable quality gate — a ticket whose coverage is below
+a configured floor FAILS and is rerouted for more tests, so a merged app meets a minimum coverage bar.
+
+**Design:** add an env-overridable `COVERAGE_FLOOR`
+([config-constant-convention](../.claude/rules/config-constant-convention.md), likely a `--coverage-floor` CLI
+flag). When the E8-parsed % is below the floor, FAIL the functional-test gate and route the deficit to QA (the
+test-owner channel; see [pipeline-fsm-loops](../.claude/rules/pipeline-fsm-loops.md)), bounded by a new reroute
+cap (e.g. `COVERAGE_GATE_MAX_REROUTES`, mirroring `LINT_GATE_MAX_REROUTES`) so a hard coverage target can't loop
+the FSM to the breaker.
+
+**Dependencies:** **E8** (needs the measured % + the registry/gate/report seams it adds).
+
+**Risks / open questions:** reroute-loop blowups (needs the cap + a no-progress break); a floor higher than the
+agents can reach starves the budget; **CI-parity** — once coverage gates, the generated CI should run the same
+`coverage_cmd` + floor (engine-green ⇒ CI-green,
+[deploy-scaffolding-and-ci-parity](../.claude/rules/deploy-scaffolding-and-ci-parity.md)). Roll out only after
+E8 proves the numbers are stable across stacks.
+
+**Acceptance:** with `COVERAGE_FLOOR` set, a ticket below the floor fails the gate and reroutes to QA (bounded
+by the reroute cap, no FSM loop to the breaker); at/above the floor it passes; the floor is off by default so
+E8's report-only behavior is unchanged when unset.
 
 ---
 
