@@ -11,7 +11,7 @@ shared; supersedes ADR 0012's virtual separation):
 - `observability.py` — `log`, `reconfigure_logging`, `log_token_usage` (telemetry-first), `log_finops_summary`, `describe_finish_reason`.
 - `runs.py` — `Projects` store + `allocate_run_dir` + `slugify` (run-layout SSOT; see [run-layout-and-cli](run-layout-and-cli.md)).
 - `docker_adapter.py` — `run_in_image` / `execute_in_sandbox` (sandbox least-privilege; see [qa-sandbox-hardening](qa-sandbox-hardening.md)).
-- `environments.py` — `SUPPORTED_ENVIRONMENTS` registry (per-language image + build/test/setup/`lint_cmd`/format cmds + cache_volume). `lint_cmd` (verify-only) is the SSOT the `--scaffold-deploy` CI runs verbatim (engine-green ⇒ CI-green); the paired `format_cmd` autofixes what `lint_cmd` verifies.
+- `environments.py` — `SUPPORTED_ENVIRONMENTS` registry (per-language image + build/test/setup/`lint_cmd`/format cmds + cache_volume). `lint_cmd` (verify-only) is the SSOT the `--scaffold-deploy` CI runs verbatim (engine-green ⇒ CI-green); the paired `format_cmd` autofixes what `lint_cmd` verifies. ALSO `SUPPORTED_DEPLOY_TARGETS` (the WHERE-it-deploys SSOT, sibling to the runtime registry — `archetypes`/`skill`/`runtime_constraints`/`requires_public_invoker`) + `deploy_target_for_archetype`/`deploy_skill_for_target`/`deploy_target_skills`; see [deploy-scaffolding-and-ci-parity](deploy-scaffolding-and-ci-parity.md) §5.
 - `prompts.py` — `build_agent_context`, `get_system_prompt*`, `generate_repo_map` (skill routing: [skill-routing-frontmatter](skill-routing-frontmatter.md)).
 
 **`src/shared/utils/`** — `subprocess_helpers.py` (`parse_claude_usage`, streaming, `sanitize_for_argv` — strips C0/NUL from every subprocess argv, the SSOT both `forge` and `runner._run_checked` call), `git_helpers.py`,
@@ -47,7 +47,11 @@ order, consumed by `--auto-execute`), `state.py` (`NexusState` checkpoint).
 `provision/scaffold.py` (`run_devops_scaffold` / `_env_ci_commands` / `_repo_has_source` /
 `_nexus_environment_ids` / `DEVOPS_MAX_RETRIES` — the E4 post-batch deploy-scaffolding terminal phase, behind
 `--scaffold-deploy`, clones `main` onto `chore/devops-scaffold`, merges via `finalize_pr`), `provision/gates.py`
-(`run_devops_gate` deploy-manifest static lint). See [agent-provider-model-map](agent-provider-model-map.md).
+(`run_devops_gate(repo_dir, archetype)` deploy-manifest static lint — YAML + Dockerfile directives + the
+archetype-aware public-invoker check for a `requires_public_invoker` target). The `devops` node force-loads the
+archetype skills (`devops_{rest_api,crud_app,cli_tool}.md`, app shape) PLUS the deploy-target platform skills
+(`deploy_{gcp,github_release}.md`, deploy mechanics) via `_archetype_guidance` + `deploy_target_skills()`. See
+[agent-provider-model-map](agent-provider-model-map.md), [deploy-scaffolding-and-ci-parity](deploy-scaffolding-and-ci-parity.md).
 
 Other: `prompts/system/` (per-role prompts) + `prompts/skills/` (gated fragments); `docker/*.Dockerfile`
 (sandbox images, built by `scripts/build_sandbox_images.sh`); tests in `tests/` (WSL-only — see

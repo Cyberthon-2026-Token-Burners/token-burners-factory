@@ -24,9 +24,12 @@ which caused deadlocks and missed defects in the FSM ([pipeline-fsm-loops](pipel
   strictly supported platforms", "an unsupported value is rejected" (mirrors the shared validator,
   see [agent-contracts](agent-contracts.md)).
 - **Placeholder injection** (`get_system_prompt_with_platforms`, brace-safe `.replace()`): keep these
-  tokens byte-exact — `{injected_supported_platforms_list}` (sa + tpm), and `{injected_gitignore_templates}`
-  / `{injected_readme_scaffold}` / `{injected_env_commands}` (tpm only). Other prompts use plain
-  `get_system_prompt`. The `{strict_type_validation_rules}` token is replaced for skills only.
+  tokens byte-exact — `{injected_supported_platforms_list}` + `{injected_supported_deploy_targets_list}`
+  (sa + tpm), and `{injected_gitignore_templates}` / `{injected_readme_scaffold}` / `{injected_env_commands}`
+  (tpm only). `{injected_supported_deploy_targets_list}` renders the `SUPPORTED_DEPLOY_TARGETS` registry
+  (the WHERE-it-deploys SSOT, sibling to the platform list); the SA selects a target into the Blueprint's
+  `## Deployment Target`. Other prompts use plain `get_system_prompt`. The `{strict_type_validation_rules}`
+  token is replaced for skills only.
 - **Shared executor concepts** (reviewer ⇄ developer ⇄ qa) use one consistent statement each: feedback-
   channel isolation (dev vs qa payload), test-softening + exception-fidelity, uncontracted-file triage
   (justified / hallucinated / legacy), zombie-test routing. Reviewer keeps test-softening self-contained

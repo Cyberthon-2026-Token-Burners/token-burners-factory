@@ -204,13 +204,25 @@ python3 main.py \
 
 ## Engine contract — what the generated workflow references
 
-The DevOps agent ([prompts/skills/devops_*.md](../../prompts/skills/)) must emit a workflow that reads:
+The deploy mechanics live in the registry-driven platform skills
+([prompts/skills/deploy_gcp.md](../../prompts/skills/deploy_gcp.md) for Cloud Run,
+[prompts/skills/deploy_github_release.md](../../prompts/skills/deploy_github_release.md) for a CLI), kept
+separate from the app-shape archetype skills (`prompts/skills/devops_*.md`). The DevOps agent must emit a
+workflow that reads:
 
 - **Secrets:** `${{ secrets.GCP_WIF_PROVIDER }}`, `${{ secrets.GCP_SERVICE_ACCOUNT }}`
 - **Variables:** `${{ vars.GCP_PROJECT_ID }}`, `${{ vars.GCP_REGION }}`, `${{ vars.GCP_REGISTRY_NAME }}`
-- **Permissions:** `id-token: write` + `contents: read` (WIF requires the OIDC token).
+- **Permissions:** `id-token: write` + `contents: write` (WIF needs the OIDC token; `contents: write` covers
+  the post-deploy README-URL commit).
 - **Auth action:** `google-github-actions/auth` (WIF), then `deploy-cloudrun` (web service) or an
   Artifact-Registry / `gh-release` publish step (CLI tool).
+- **Public invocation (web service):** the deploy step passes `flags: '--allow-unauthenticated'` so the
+  Cloud Run service is reachable anonymously — without it the live service returns **HTTP 403** ("The
+  request was not authenticated") for every request. `run_devops_gate` enforces this at scaffold time.
+  > **Caveat:** if your org enforces the `iam.allowedPolicyMemberDomains` (domain-restricted sharing) org
+  > policy, granting `allUsers` is blocked and the deploy step fails — either exempt the project from that
+  > policy or front the service with an authenticated ingress; this is an org-policy decision, not an
+  > engine bug.
 
 Related: [setup.md](setup.md) (engine bring-up), [ARCHITECTURE.md](../ARCHITECTURE.md),
 [BACKLOG.md](../BACKLOG.md) (E4 epic), [run-layout-and-cli](../../.claude/rules/run-layout-and-cli.md)

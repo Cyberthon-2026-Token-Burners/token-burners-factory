@@ -16,7 +16,7 @@ unless noted. Loop that consumes these: [pipeline-fsm-loops](pipeline-fsm-loops.
 
 ## Models (output → consumer)
 - **PO** → `EpicDocument{markdown}` (`src/nexus/agents/po.py`). Stack-agnostic, no env_id. `get_system_prompt("po")`. Persisted `artifacts/epic.md`.
-- **SA** → `Blueprint{environment_id, markdown}` (`src/nexus/agents/sa.py`). `get_system_prompt_with_platforms("sa")`. `run_sa` returns ONLY `markdown` → the structured `environment_id` is **discarded**; only `blueprint.md` persists.
+- **SA** → `Blueprint{environment_id, markdown}` (`src/nexus/agents/sa.py`). `get_system_prompt_with_platforms("sa")`. `run_sa` returns ONLY `markdown` → the structured `environment_id` is **discarded**; only `blueprint.md` persists. The SA also selects a **deployment target** (from `SUPPORTED_DEPLOY_TARGETS`, injected as `{injected_supported_deploy_targets_list}`) and records it + its runtime constraints in the markdown `## Deployment Target` section — prose-threaded exactly like `environment_id` (a validated structured `deploy_target_id` field is the tracked structural fix, docs/BACKLOG.md #35).
 - **TPM** → `ProjectPlan{tasks: list[TaskTicket{ticket_id, title, environment_id, description}]}` (`src/nexus/agents/tpm.py`). `get_system_prompt_with_platforms("tpm")`. Each ticket materialized as `artifacts/TASK-XX.md`. Behavior-driving: `environment_id` (validated), `ticket_id` (filename); free-text: `title`, `description`.
 - **TechLead** → `TechLeadContract` with `TopologyNode{file_path, exports, depends_on}`. Behavior-driving: `files_to_modify` (scope gate), `topology_contract` (import SSOT for Dev+QA), `environment_id` (sandbox/gates/QA-profile selector), `domain_tags` (skill router; first = language), `strict_type_validation_rules` (injected into skills+QA), `core_libraries`/`architectural_constraints`/`function_signatures`/`instruction` (Developer prompt). Observability only: `shared_context`, `techlead_reasoning`.
 - **QA** → `QATestSuite{overwrite_existing, new_imports, new_test_code, files_to_delete}` (per module). `files_to_delete` = QA-self-identified obsolete tests (separate from the Reviewer's `zombie_tests_to_delete`).
@@ -34,7 +34,11 @@ Flow: SA selects it (validated, then discarded at the Nexus boundary) → TPM re
 blueprint markdown prose and copies it into each `TaskTicket` (validated) → it lands in `TASK-XX.md` →
 TechLead copies it into `TechLeadContract` (validated). Because the structured value is lost to markdown
 at the SA→TPM boundary, `sa.md` requires the SA to write the exact key VERBATIM into `## Tech Stack`
-(text round-trip; structural fix tracked docs/BACKLOG.md #20).
+(text round-trip; structural fix tracked docs/BACKLOG.md #20). The **deployment target** rides the same
+prose channel: SA writes it into `## Deployment Target`, the TPM copies its runtime constraints into the
+relevant tickets' architectural-constraints, and the DevOps phase otherwise derives it from the archetype
+(`deploy_target_for_archetype`). A validated structured `deploy_target_id` chain is the parallel hardening
+(docs/BACKLOG.md #35).
 
 The TechLead's `domain_tags[0]` (skill router) MUST equal the language of `environment_id` (gate router)
 or skills and gates split-brain — enforced by `techlead.md` prose only, not code (docs/BACKLOG.md #19).

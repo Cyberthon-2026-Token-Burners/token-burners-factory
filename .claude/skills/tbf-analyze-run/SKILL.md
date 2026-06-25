@@ -1,6 +1,6 @@
 ---
 name: tbf-analyze-run
-description: Diagnose a pipeline run (executor or Nexus) from its persisted artifacts — classify root cause, cite evidence, and point the fix at the engine/prompts (never the clone). Use when the user asks to analyze/diagnose a run, explain a CIRCUIT BREAKER / "Retries exhausted" halt, an application-budget exhaustion / `budget_marker` clean stop (`--budget` / `PIPELINE_APP_BUDGET_USD`, E5), a looping or stuck cycle, a Gemini RECITATION/SAFETY block, a PR/merge (forge) failure under `--auto-merge`, a lint-gate reroute loop or an E4 deploy-scaffolding (`--scaffold-deploy`) static-lint halt, a Developer Claude-CLI provider-quota / session-limit halt (a `🚨 PROVIDER QUOTA HALT` / "hit your session limit" stop where the Developer billed 0 tokens), a HARD HALT (wrong-path / documentation guardrail) or ENVIRONMENT/NETWORK/LINT-TOOLING halt, a git clone/push credential failure, a non-halt crash/hang (an `embedded null byte` traceback, a Jinja-in-system-message `ValueError`, or a stalled agent call that printed no incident), or "what happened" in a runs/<project>/<NNN>_... run. Accepts a run dir, a project slug, or pasted run log output.
+description: Diagnose a pipeline run (executor or Nexus) from its persisted artifacts — classify root cause, cite evidence, and point the fix at the engine/prompts (never the clone). Use when the user asks to analyze/diagnose a run, explain a CIRCUIT BREAKER / "Retries exhausted" halt, an application-budget exhaustion / `budget_marker` clean stop (`--budget` / `PIPELINE_APP_BUDGET_USD`, E5), a looping or stuck cycle, a Gemini RECITATION/SAFETY block, a PR/merge (forge) failure under `--auto-merge`, a lint-gate reroute loop or an E4 deploy-scaffolding (`--scaffold-deploy`) static-lint halt (incl. a missing public-invoker grant on a Cloud Run web service, or a *live* deployed service returning HTTP 403 / "not authenticated"), a Developer Claude-CLI provider-quota / session-limit halt (a `🚨 PROVIDER QUOTA HALT` / "hit your session limit" stop where the Developer billed 0 tokens), a HARD HALT (wrong-path / documentation guardrail) or ENVIRONMENT/NETWORK/LINT-TOOLING halt, a git clone/push credential failure, a non-halt crash/hang (an `embedded null byte` traceback, a Jinja-in-system-message `ValueError`, or a stalled agent call that printed no incident), or "what happened" in a runs/<project>/<NNN>_... run. Accepts a run dir, a project slug, or pasted run log output.
 ---
 
 # Pipeline Run Analysis
@@ -34,6 +34,14 @@ Path note: read artifacts with the Read/Grep tools using the Windows path (`c:\c
   run dir (cloned on `chore/devops-scaffold`), separate from the ticket runs. A persistent `run_devops_gate`
   failure writes an `incident_report.json` *there*; a forge merge failure of the scaffold PR is a
   loop-closure failure (no incident). The merged application code is untouched on any deploy-phase failure.
+  The deploy mechanics live in the registry-driven platform skills (`prompts/skills/deploy_{gcp,github_release}.md`),
+  separate from the app-shape archetype skills; `run_devops_gate(repo_dir, archetype)` is archetype-aware and,
+  for a `requires_public_invoker` target (Cloud Run web service), flags a workflow that omits the
+  `--allow-unauthenticated` grant (self-healed by the DevOps agent in the `DEVOPS_MAX_RETRIES` loop).
+  **Live-service 403 (not a run artifact):** a deployed Cloud Run service that returns HTTP 403 / "The request
+  was not authenticated" means the *deployed* workflow predates this gate (no public-invoker grant) — the fix
+  is to re-run `--scaffold-deploy` (regenerates the workflow with the grant) or apply the
+  `allUsers → roles/run.invoker` IAM binding once; never an app-code or clone edit.
 - **Release-tagging (`--release`, E6):** the release phase is its own `<NNN>_release_tag_…` run dir (cloned
   on `chore/release-tag`), the FINAL step after the batch (+ optional scaffold). It makes **no agent call**
   and is **best-effort** — a failed `forge.push_tag` logs `🚨 [E6] Release tag … did not land` and returns;
