@@ -980,7 +980,9 @@ async def run_batch(projects: Projects, project, cfg: RunConfig, nexus_run_dir: 
     """
     batch = _load_or_init_batch(nexus_run_dir, project, tickets)
     batch_path = _batch_state_path(nexus_run_dir)
-    app_budget = cfg.budget_usd if cfg.budget_usd is not None else PIPELINE_APP_BUDGET_USD
+    if batch.initial_budget_usd is None and cfg.budget_usd is not None:
+        batch.initial_budget_usd = cfg.budget_usd
+    app_budget = cfg.budget_usd if cfg.budget_usd is not None else (batch.initial_budget_usd or PIPELINE_APP_BUDGET_USD)
 
     # Fold the Nexus planning spend into the application total ONCE (guarded so a --resume never double-counts).
     if not batch.nexus_merged:

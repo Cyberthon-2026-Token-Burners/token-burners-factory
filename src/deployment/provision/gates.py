@@ -3,9 +3,30 @@
 Host-side (no Docker/sandbox) lint of the CI/CD manifests the DevOps agent generates, run by
 ``run_devops_scaffold``. Kept beside the scaffold that calls it so the deployment plane owns its own
 validation; the development plane's ``gates.py`` owns the build/test/lint/SAST gates."""
+import re
 from pathlib import Path
 
 from src.shared.core.environments import SUPPORTED_DEPLOY_TARGETS, deploy_target_for_archetype
+
+
+def _iter_run_scripts(parsed) -> list[str]:
+    """Yield every step ``run:`` script string from a parsed GitHub Actions workflow mapping.
+
+    Tolerant of partial/odd shapes (returns what it can): only ``jobs.<job>.steps[*].run`` strings are
+    collected. Used to assert no ``run:`` step is assembled from a ``${{ format(...) }}`` expression."""
+    scripts: list[str] = []
+    if not isinstance(parsed, dict):
+        return scripts
+    jobs = parsed.get("jobs")
+    if not isinstance(jobs, dict):
+        return scripts
+    for job in jobs.values():
+        if not isinstance(job, dict):
+            continue
+        for step in job.get("steps") or []:
+            if isinstance(step, dict) and isinstance(step.get("run"), str):
+                scripts.append(step["run"])
+    return scripts
 
 
 # ==========================================
@@ -20,8 +41,11 @@ def run_devops_gate(repo_dir, archetype: str | None = None) -> list[str]:
     parses as a YAML mapping; (2) if a ``Dockerfile`` exists, it carries a ``FROM`` and a
     ``CMD``/``ENTRYPOINT`` directive; (3) when ``archetype`` resolves to a deploy target that requires a
     public-invoker grant (registry-driven, e.g. Cloud Run), the workflow MUST grant unauthenticated
-    invocation — otherwise the live service rejects every anonymous request with HTTP 403. ``archetype``
-    is optional: ``None`` (or a target without the flag) skips the public-invoker check. A non-empty return
+    invocation — otherwise the live service rejects every anonymous request with HTTP 403; (4) the
+    README-URL publish step must NOT be assembled from a ``${{ format(...) }}`` expression (the literal's
+    quote-doubling breaks the executed shell), and every URL marker the workflow references must be
+    pre-seeded into ``README.md`` (else the in-place replace no-ops into the fragile append fallback).
+    ``archetype`` is optional: ``None`` (or a target without the flag) skips the public-invoker check. A non-empty return
     drives exactly one self-heal retry (the messages are fed back to the DevOps agent) before a Hard Halt —
     see ``run_devops_scaffold``."""
     repo_dir = Path(repo_dir)
@@ -29,6 +53,7 @@ def run_devops_gate(repo_dir, archetype: str | None = None) -> list[str]:
 
     workflow = repo_dir / ".github" / "workflows" / "deploy.yml"
     workflow_text = ""
+    parsed = None
     if not workflow.exists():
         problems.append("Missing .github/workflows/deploy.yml — the deploy workflow was not generated.")
     else:
@@ -52,6 +77,37 @@ def run_devops_gate(repo_dir, archetype: str | None = None) -> list[str]:
             problems.append("Dockerfile is missing a FROM directive.")
         if not any(ln.startswith("CMD") or ln.startswith("ENTRYPOINT") for ln in lines):
             problems.append("Dockerfile is missing a CMD/ENTRYPOINT directive.")
+
+    # README-URL publish step contract (both platform skills emit an "Update README with … URL" step that
+    # replaces text BETWEEN pre-seeded markers, falling back to an append). Two failure modes, both seen live:
+    if workflow_text:
+        # (a) A `run:` step assembled via a `${{ format(...) }}` expression is forbidden: a format() string
+        # literal escapes every single quote by DOUBLING it ('→''), and that doubling leaks into the executed
+        # bash — so the README-URL step's `printf ''\n…''` word-splits the format string and appends a stray
+        # `##` line instead of the live URL. Author every `run:` as a literal block and interpolate directly.
+        if any("format(" in script for script in _iter_run_scripts(parsed)):
+            problems.append(
+                "deploy.yml builds a `run:` step via a `${{ format(...) }}` expression: a format() literal "
+                "doubles single quotes ('→''), and the doubling leaks into the executed shell, breaking the "
+                "README-URL step's printf fallback (it appends a stray `##` instead of the live URL). Author "
+                "every `run:` as a literal block (`run: |`) and interpolate `${{ … }}` values directly."
+            )
+        # (b) The URL step's primary path replaces text BETWEEN markers; if README.md lacks them the replace
+        # is a no-op and the step silently degrades to its fragile append fallback. Assert every URL marker
+        # the workflow references is pre-seeded into README.md (the Technical Writer seeds README_SCAFFOLD).
+        referenced_markers = sorted(set(re.findall(r"[A-Z_]*URL_START", workflow_text)))
+        if referenced_markers:
+            readme = repo_dir / "README.md"
+            readme_text = readme.read_text(encoding="utf-8") if readme.exists() else ""
+            for start in referenced_markers:
+                end = start.replace("_START", "_END")
+                if f"<!-- {start} -->" not in readme_text or f"<!-- {end} -->" not in readme_text:
+                    problems.append(
+                        f"deploy.yml injects the live URL between the `{start}`/`{end}` markers, but README.md "
+                        "lacks that marker pair — the in-place replace is a no-op and the step falls to its "
+                        f"append fallback. Pre-seed `<!-- {start} -->` / `<!-- {end} -->` into the README's "
+                        "deployment section (the Technical Writer's README scaffold)."
+                    )
 
     # Public-invoker policy (deploy-target-driven, registry SSOT). For an archetype whose deploy target
     # requires public invocation (Cloud Run), assert the workflow actually grants it. The grant lives in

@@ -263,6 +263,51 @@ class RunDevopsGateTests(unittest.TestCase):
             self.assertEqual(run_devops_gate(repo, archetype="cli_tool"), [])
             self.assertEqual(run_devops_gate(repo), [])
 
+    def test_format_built_readme_run_step_is_flagged(self) -> None:
+        # The live defect: the README-URL step was assembled via `${{ format(...) }}`, whose literal doubles
+        # single quotes ('→'') — the doubling leaked into the shell and broke the printf fallback, appending a
+        # stray `##` instead of the URL. The gate forbids any `run:` step built from a format() expression.
+        with TemporaryDirectory() as td:
+            repo = Path(td)
+            wf = ("name: deploy\non:\n  push: {}\n"
+                  "jobs:\n  deploy:\n    steps:\n"
+                  "      - name: Update README with deployment URL\n"
+                  "        run: ${{ format('printf ''##''\\n', steps.deploy.outputs.url) }}\n")
+            self._write(repo, workflow=wf)
+            problems = run_devops_gate(repo)
+            self.assertTrue(any("format(" in p for p in problems), problems)
+
+    def test_url_step_without_seeded_readme_markers_is_flagged(self) -> None:
+        # If the workflow injects the URL between markers the README does not carry, the in-place replace is a
+        # no-op and the step degrades to its fragile append fallback — the second half of the live defect.
+        with TemporaryDirectory() as td:
+            repo = Path(td)
+            wf = ("name: deploy\non:\n  push: {}\n"
+                  "jobs:\n  deploy:\n    steps:\n"
+                  "      - name: Update README with deployment URL\n"
+                  "        run: |\n"
+                  "          grep -q DEPLOYMENT_URL_START README.md\n")
+            self._write(repo, workflow=wf)
+            (repo / "README.md").write_text("# App\nNo markers here.\n", encoding="utf-8")
+            problems = run_devops_gate(repo)
+            self.assertTrue(any("DEPLOYMENT_URL_START" in p and "marker" in p for p in problems), problems)
+
+    def test_url_step_with_seeded_readme_markers_passes(self) -> None:
+        # The correct shape: a literal `run:` block + the marker pair pre-seeded into README.md → clean.
+        with TemporaryDirectory() as td:
+            repo = Path(td)
+            wf = ("name: deploy\non:\n  push: {}\n"
+                  "jobs:\n  deploy:\n    steps:\n"
+                  "      - name: Update README with deployment URL\n"
+                  "        run: |\n"
+                  "          grep -q DEPLOYMENT_URL_START README.md\n")
+            self._write(repo, workflow=wf)
+            (repo / "README.md").write_text(
+                "# App\n## Deployment\n<!-- DEPLOYMENT_URL_START -->\n<!-- DEPLOYMENT_URL_END -->\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(run_devops_gate(repo), [])
+
 
 class ArchetypeGuidanceTests(unittest.TestCase):
     """The assembled DevOps guidance must carry BOTH the archetype skills (app shape) AND the deploy-target
