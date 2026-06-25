@@ -10,6 +10,11 @@ DEPLOY TARGET: Google Cloud Run (web services) via Workload Identity Federation.
 - Authenticate with `google-github-actions/auth` using `workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}` and `service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}` — NEVER a key JSON, token, or password.
 - `permissions: { id-token: write, contents: write }` — `id-token: write` is required for WIF; `contents: write` is required for the post-deploy README commit (below).
 - Secrets vs variables (the org is pre-provisioned this way — see docs/guides/devops_setup.md): `GCP_WIF_PROVIDER` + `GCP_SERVICE_ACCOUNT` are repository **secrets** (`${{ secrets.* }}`); `GCP_PROJECT_ID`, `GCP_REGION`, `GCP_REGISTRY_NAME` are repository **variables** (`${{ vars.* }}`). Never inline a key, project id, or region.
+- **Add `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true` to the workflow-level `env:` block.** The `google-github-actions/auth` and `google-github-actions/deploy-cloudrun` actions are JavaScript actions that bundle Node.js 20 internally; GitHub Actions runners emit a deprecation warning for Node 20 and will drop support in a future runner version. Setting this flag at the workflow level forces all bundled-Node JS actions to run under Node 24 without requiring individual action version bumps. Place it at the top-level `env:` key (parallel to `jobs:` and `on:`), not inside a step:
+  ```yaml
+  env:
+    FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  ```
 
 ## Service naming — derive it from the repository, NEVER hardcode
 - **FORBIDDEN: a static, hardcoded Cloud Run service name** (`fastapi-app`, `echo-service`, `my-api`, …). Cloud Run keys a service by `(name, region, project)`; deploying a second app under a name already in use does NOT create a new service — it overwrites the existing one with a new revision, silently taking over its URL. In a multi-app factory that means apps clobber each other.

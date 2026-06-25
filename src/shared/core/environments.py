@@ -158,7 +158,7 @@ SUPPORTED_ENVIRONMENTS = {
         "language_id": "go",
         "description": "Go 1.23 CLI runtime, full compile toolchain (go test; Semgrep SAST).",
     },
-    "node-20-web": {
+    "node-22-web": {
         "image": "sdlc-sandbox/node:latest",
         "build_cmd": "npm run build --if-present",
         "test_cmd": "npm test",
@@ -189,7 +189,7 @@ SUPPORTED_ENVIRONMENTS = {
             "Dependency manifest: declare all dependencies and devDependencies (including the test runner) in `package.json`, with a committed `package-lock.json`; the toolchain restores via `npm ci` (falling back to `npm install`). The `test` script MUST be present, or the test gate has nothing to run.",
         ),
         "language_id": "node",
-        "description": "Node.js 20 / JS / React (node, npm — frontend build & tests; Semgrep SAST).",
+        "description": "Node.js 22 / JS / React (node, npm — frontend build & tests; Semgrep SAST).",
     },
     "dotnet-10-sdk": {
         "image": "sdlc-sandbox/dotnet:latest",
