@@ -50,28 +50,57 @@ class GetSystemPromptTests(unittest.TestCase):
         self.assertNotIn("`TASK-00` is RESERVED", result)
         self.assertNotIn("BUSINESS TICKETS START AT `TASK-01`", result)
 
-    def test_tpm_delegates_gitignore_and_license_to_engine(self) -> None:
-        # The .gitignore/LICENSE are no longer reproduced by the TPM (reproducing canonical boilerplate
-        # tripped Gemini's recitation filter) — the engine appends them at materialisation via
-        # boilerplate.build_baseline_block. So no gitignore template is injected and the prompt forbids
-        # the model from writing those two files' content itself.
+    def test_tpm_delegates_gitignore_to_engine(self) -> None:
+        # The .gitignore is no longer reproduced by the TPM (reproducing canonical boilerplate tripped
+        # Gemini's recitation filter) — the engine appends it at materialisation via
+        # boilerplate.build_gitignore_baseline_block. So no gitignore template is injected and the prompt
+        # forbids the model from writing that file's content itself.
         result = get_system_prompt_with_platforms("tpm")
         self.assertNotIn("{injected_gitignore_templates}", result)
         self.assertNotIn("```gitignore", result)           # no canonical gitignore blocks injected
         self.assertIn("ENGINE-PROVIDED", result)
         self.assertIn("Repository Baseline Files (engine-provided", result)
 
-    def test_tpm_injects_readme_scaffold_and_env_commands(self) -> None:
-        # README must follow the GitHub-aligned scaffold and pull accurate per-env commands; the
-        # placeholders are filled and the old loose 3-bullet structure no longer drives it alone.
+    def test_tpm_does_not_own_readme_license_changelog(self) -> None:
+        # README/LICENSE/CHANGELOG ownership moved to the Technical Writer. The TPM no longer injects the
+        # README scaffold or per-env commands, and explicitly forbids contracting those docs into any ticket.
         result = get_system_prompt_with_platforms("tpm")
+        self.assertNotIn("{injected_readme_scaffold}", result)
+        self.assertNotIn("{injected_env_commands}", result)
+        self.assertNotIn("## Getting Started", result)          # the README scaffold is no longer here
+        self.assertIn("DOCUMENTATION IS NOT YOUR CONCERN", result)
+        self.assertIn("owned by the **Technical Writer**", result)
+
+    def test_techwriter_injects_readme_scaffold_and_env_commands(self) -> None:
+        # The Technical Writer now authors the README from the GitHub-aligned scaffold + accurate per-env
+        # commands (ownership moved off the TPM); both placeholders are filled for the techwriter prompt.
+        result = get_system_prompt_with_platforms("techwriter")
         self.assertNotIn("{injected_readme_scaffold}", result)
         self.assertNotIn("{injected_env_commands}", result)
         self.assertIn("## Getting Started", result)             # scaffold section injected
         self.assertIn("## Running Tests", result)
-        self.assertIn("accurately reflect the essence", result)  # the project-fidelity hard gate
         self.assertIn("go build ./...", result)                 # real go env command injected
         self.assertIn("python -m pytest", result)               # real python env command injected
+
+    def test_techwriter_owns_docs_set_and_preserves_url_markers(self) -> None:
+        # The techwriter prompt owns README/CHANGELOG/ADR, keeps the deploy/release URL markers verbatim
+        # (so the CI-injected live URL survives a per-ticket rewrite), and does NOT author LICENSE text.
+        result = get_system_prompt_with_platforms("techwriter")
+        self.assertIn("DocumentationUpdate", result)
+        self.assertIn("Keep a Changelog", result)
+        self.assertIn("DEPLOYMENT_URL_START", result)
+        self.assertIn("RELEASE_URL_START", result)
+        self.assertIn("never author license text", result)
+
+    def test_readme_scaffold_carries_deploy_release_markers(self) -> None:
+        # The scaffold must pre-seed both marker pairs so the DevOps deploy/release workflow injects the
+        # live URL IN PLACE (deploy_gcp.md / deploy_github_release.md), not as a duplicated section.
+        from src.shared.core.prompts import README_SCAFFOLD
+        for marker in (
+            "<!-- DEPLOYMENT_URL_START -->", "<!-- DEPLOYMENT_URL_END -->",
+            "<!-- RELEASE_URL_START -->", "<!-- RELEASE_URL_END -->",
+        ):
+            self.assertIn(marker, README_SCAFFOLD)
 
     def test_tpm_test_project_scaffold_is_build_glue_not_a_test_case(self) -> None:
         # The test-PROJECT scaffold (dir + build manifest) is Developer-owned build glue allocated to the

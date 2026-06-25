@@ -304,9 +304,15 @@ class PipelineTelemetry(BaseModel):
 class SkillRelevance(BaseModel):
     score: float = Field(description="Semantic relevance score between 0.0 and 1.0")
 
-class ArchitectureUpdate(BaseModel):
-    updated_architecture_document: str = Field(
+class DocumentationUpdate(BaseModel):
+    architecture_document: str = Field(
         description="The absolute, complete, updated content of docs/architecture_state.md markdown file, integrating new components, design decisions, and active constraints from the completed task."
+    )
+    readme: str = Field(
+        description="The absolute, complete, updated content of README.md — the human-facing project README, built incrementally from the previous README plus this ticket's delta. Preserve the deployment/release URL marker blocks verbatim."
+    )
+    changelog: str = Field(
+        description="The absolute, complete, updated content of the root CHANGELOG.md (Keep a Changelog format), adding one entry under [Unreleased] for the completed ticket and preserving all prior history."
     )
 
 class QATestSuite(BaseModel):

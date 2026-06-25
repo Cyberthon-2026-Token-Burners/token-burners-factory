@@ -33,6 +33,14 @@ is null) + a build/release matrix workflow instead.
 serve. The branch is encoded in the `devops.md` system prompt AND the archetype skills
 (`devops_{rest_api,crud_app,cli_tool}.md`); the chosen class is recorded in `DevOpsManifests.archetype`.
 
+**The README-URL step updates IN PLACE because the Technical Writer pre-seeds the markers.** The platform
+skills' post-deploy/post-release step injects the live URL between `<!-- DEPLOYMENT_URL_START/END -->` /
+`<!-- RELEASE_URL_START/END -->` markers (appending a new section only if they are absent). Those markers are
+pre-seeded into `README.md` by the **Technical Writer** (the `README_SCAFFOLD` `## Deployment` section,
+`src/shared/core/prompts.py`), and the techwriter prompt preserves the marker-block contents verbatim across
+its per-ticket rewrites — so the URL the workflow commits survives the next ticket's README regeneration. See
+[[agent-contracts]] (the TechWriter `DocumentationUpdate` contract).
+
 **App SHAPE vs deploy TARGET — keep them in separate skills.** The archetype skills define the app's *shape*
 (container/server vs CLI artifact) ONLY; the **platform skills** (`prompts/skills/deploy_{gcp,github_release}.md`)
 own the *deploy mechanics* (WIF auth, image build/push, the Cloud Run deploy step, the public-invoker grant,

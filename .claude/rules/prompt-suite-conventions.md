@@ -25,8 +25,8 @@ which caused deadlocks and missed defects in the FSM ([pipeline-fsm-loops](pipel
   see [agent-contracts](agent-contracts.md)).
 - **Placeholder injection** (`get_system_prompt_with_platforms`, brace-safe `.replace()`): keep these
   tokens byte-exact — `{injected_supported_platforms_list}` + `{injected_supported_deploy_targets_list}`
-  (sa + tpm), and `{injected_gitignore_templates}` / `{injected_readme_scaffold}` / `{injected_env_commands}`
-  (tpm only). `{injected_supported_deploy_targets_list}` renders the `SUPPORTED_DEPLOY_TARGETS` registry
+  (sa + tpm), and `{injected_readme_scaffold}` / `{injected_env_commands}` (now the **techwriter**, which
+  authors the README post-implementation — NOT the tpm, which no longer injects either). `{injected_supported_deploy_targets_list}` renders the `SUPPORTED_DEPLOY_TARGETS` registry
   (the WHERE-it-deploys SSOT, sibling to the platform list); the SA selects a target into the Blueprint's
   `## Deployment Target`. `{injected_supported_platforms_list}` now carries each env's `authoring_contract`
   bullets (the dependency-manifest convention) under its description; the SA records the selected one into the

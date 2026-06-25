@@ -1,10 +1,12 @@
 # Engine-curated baseline files for the repository-preparation block of TASK-01.
 #
-# These canonical texts (the Apache 2.0 license, the per-environment .gitignore) used to be REPRODUCED
-# by the TPM agent verbatim inside the ticket — which reliably tripped Gemini's RECITATION filter (the
-# license and github/gitignore templates match training data word-for-word). The engine now injects them
-# deterministically at ticket materialisation, so the LLM never reproduces them and the block is
-# byte-stable. The .gitignore is reused from environments.py (single source of truth).
+# These canonical texts (the per-environment .gitignore — and historically the Apache 2.0 license) used to
+# be REPRODUCED by the TPM agent verbatim inside the ticket — which reliably tripped Gemini's RECITATION
+# filter (the license and github/gitignore templates match training data word-for-word). The engine now
+# injects the .gitignore deterministically at ticket materialisation, so the LLM never reproduces it and the
+# block is byte-stable. The .gitignore is reused from environments.py (single source of truth). The LICENSE
+# is no longer part of this block: the Technical Writer owns README.md/LICENSE/CHANGELOG.md post-implementation
+# and writes the LICENSE deterministically from render_apache_license() (still RECITATION-safe — no LLM).
 from src.shared.core.environments import get_gitignore_template
 
 # Fallback copyright holder when the run carries no better attribution (keeps the license valid rather
@@ -220,23 +222,21 @@ def render_apache_license(holder: str = "", year: str = "2026") -> str:
     return APACHE_LICENSE_TEMPLATE.format(year=year, holder=(holder or "").strip() or DEFAULT_LICENSE_HOLDER)
 
 
-def build_baseline_block(environment_id: str, holder: str = "", year: str = "2026") -> str:
+def build_gitignore_baseline_block(environment_id: str) -> str:
     """Assemble the engine-provided baseline-files block appended to TASK-01's description.
 
-    Contains the canonical ``.gitignore`` for ``environment_id`` (reused from environments.py) and the
-    full Apache 2.0 ``LICENSE`` — the two files the TPM no longer reproduces. The Developer agent reads
-    the literal content here and applies each file idempotently (merge/refresh, never blind-overwrite).
+    Contains the canonical ``.gitignore`` for ``environment_id`` (reused from environments.py) — the one
+    baseline file the Developer still owns (the TPM no longer reproduces it verbatim). The Developer agent
+    reads the literal content here and applies it idempotently (merge/refresh, never blind-overwrite). The
+    ``LICENSE`` is no longer part of this block — the Technical Writer writes it post-implementation.
     """
     gitignore = get_gitignore_template(environment_id).rstrip()
-    license_text = render_apache_license(holder, year)
     return (
         "## Repository Baseline Files (engine-provided — apply VERBATIM)\n\n"
-        "The following baseline files are engine-curated. Create each from the EXACT content below; do "
-        "NOT improvise, reorder, or \"improve\" them. Apply idempotently — if a file already exists, "
+        "The following baseline file is engine-curated. Create it from the EXACT content below; do "
+        "NOT improvise, reorder, or \"improve\" it. Apply idempotently — if the file already exists, "
         "reconcile it (merge missing entries / refresh stale content, preserve the rest) rather than "
         "blindly overwriting.\n\n"
         "### `.gitignore`\n"
-        f"```gitignore\n{gitignore}\n```\n\n"
-        "### `LICENSE`\n"
-        f"```text\n{license_text}\n```\n"
+        f"```gitignore\n{gitignore}\n```\n"
     )
