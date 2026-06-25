@@ -19,8 +19,10 @@ from src.development.agents import techwriter
 from src.shared.core.models import DocumentationUpdate, GlobalPipelineContext, WorkspacePaths
 
 
-def _fake_update(adr="# Architecture State\n", readme="# Proj\n", changelog="# Changelog\n"):
-    doc = DocumentationUpdate(architecture_document=adr, readme=readme, changelog=changelog)
+def _fake_update(adr="# Architecture State\n", readme="# Proj\n", changelog="# Changelog\n", usage=""):
+    doc = DocumentationUpdate(
+        architecture_document=adr, readme=readme, changelog=changelog, usage_guide=usage,
+    )
     return doc, SimpleNamespace(usage_metadata=None)
 
 
@@ -92,6 +94,47 @@ class RunTechwriterNodeTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("No architecture state documented yet", captured["user"])
             self.assertIn("No README yet", captured["user"])
             self.assertIn("No CHANGELOG yet", captured["user"])
+
+    async def test_final_ticket_writes_and_stages_usage_guide(self) -> None:
+        # On the batch's final ticket the end-user usage guide is authored to docs/USAGE.md and staged.
+        with TemporaryDirectory() as td:
+            repo = Path(td)
+            ctx = self._ctx(repo)
+            ctx.is_final_ticket = True
+            usage = "# Usage\n\nRun `exporter --in a --out b`.\n"
+            captured: dict[str, str] = {}
+
+            def _capture(role, response_model, messages):
+                captured["user"] = messages[1]["content"]
+                return _fake_update(usage=usage)
+
+            with (
+                mock.patch.object(techwriter, "run_structured_llm", new=AsyncMock(side_effect=_capture)),
+                mock.patch.object(techwriter.subprocess, "run") as git_run,
+            ):
+                await techwriter.run_techwriter_node(ctx)
+
+            self.assertEqual((repo / "docs" / "USAGE.md").read_text(encoding="utf-8"), usage)
+            self.assertIn("docs/USAGE.md", git_run.call_args.args[0])
+            # The prompt was told this is the final iteration.
+            self.assertIn("=== FINAL ITERATION ===\ntrue", captured["user"])
+
+    async def test_non_final_ticket_does_not_write_usage_guide(self) -> None:
+        # A stray usage_guide on a non-final ticket is ignored (node-gated by is_final_ticket).
+        with TemporaryDirectory() as td:
+            repo = Path(td)
+            ctx = self._ctx(repo)  # is_final_ticket defaults False
+            with (
+                mock.patch.object(
+                    techwriter, "run_structured_llm",
+                    new=AsyncMock(return_value=_fake_update(usage="# leaked usage\n")),
+                ),
+                mock.patch.object(techwriter.subprocess, "run") as git_run,
+            ):
+                await techwriter.run_techwriter_node(ctx)
+
+            self.assertFalse((repo / "docs" / "USAGE.md").exists())
+            self.assertNotIn("docs/USAGE.md", git_run.call_args.args[0])
 
     async def test_existing_license_is_not_regenerated_and_not_restaged(self) -> None:
         # A subsequent ticket: LICENSE already on disk → idempotent, left untouched and not re-staged.

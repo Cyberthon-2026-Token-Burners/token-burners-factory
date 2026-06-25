@@ -29,6 +29,7 @@ async def run_techwriter_node(ctx: GlobalPipelineContext) -> None:
     adr_path = repo_dir / "docs" / "architecture_state.md"
     readme_path = repo_dir / "README.md"
     changelog_path = repo_dir / "CHANGELOG.md"
+    usage_path = repo_dir / "docs" / "USAGE.md"
     license_path = repo_dir / "LICENSE"
 
     # GUARD: a document may not exist on the first task — never do a bare read_text().
@@ -47,6 +48,11 @@ async def run_techwriter_node(ctx: GlobalPipelineContext) -> None:
         if changelog_path.exists()
         else "(No CHANGELOG yet. This is the first iteration — author it from scratch.)"
     )
+    previous_usage = (
+        usage_path.read_text(encoding="utf-8").strip()
+        if usage_path.exists()
+        else "(No usage guide yet.)"
+    )
 
     contract_text = ctx.contract.model_dump_json(indent=2) if ctx.contract else "(no contract)"
     environment_id = ctx.contract.environment_id if ctx.contract else "(unknown)"
@@ -54,15 +60,20 @@ async def run_techwriter_node(ctx: GlobalPipelineContext) -> None:
         f"### {path}\n{content}" for path, content in sorted(ctx.production_code_snapshot.items())
     )
     idea_block = f"=== ORIGINAL USER REQUEST ===\n{ctx.idea}\n\n" if ctx.idea else ""
+    # The final ticket is when the application is functionally complete — only then does the usage guide
+    # for the compiled/deployed release get authored (signalled to the prompt as a data flag).
+    final_flag = "true" if ctx.is_final_ticket else "false"
     user_content = (
         f"{idea_block}"
         f"=== TARGET ENVIRONMENT ID ===\n{environment_id}\n\n"
+        f"=== FINAL ITERATION ===\n{final_flag}\n\n"
         f"=== COMPLETED TASK ===\n{ctx.pr_description}\n\n"
         f"=== TECHLEAD CONTRACT ===\n{contract_text}\n\n"
         f"=== PRODUCTION CODE SNAPSHOT ===\n{code_text}\n\n"
         f"=== PREVIOUS ARCHITECTURE DOCUMENT ===\n{previous_adr}\n\n"
         f"=== PREVIOUS README ===\n{previous_readme}\n\n"
-        f"=== PREVIOUS CHANGELOG ===\n{previous_changelog}"
+        f"=== PREVIOUS CHANGELOG ===\n{previous_changelog}\n\n"
+        f"=== PREVIOUS USAGE GUIDE ===\n{previous_usage}"
     )
 
     result, raw_response = await run_structured_llm(
@@ -81,6 +92,11 @@ async def run_techwriter_node(ctx: GlobalPipelineContext) -> None:
     readme_path.write_text(result.readme, encoding="utf-8")
     changelog_path.write_text(result.changelog, encoding="utf-8")
     staged = ["docs/architecture_state.md", "README.md", "CHANGELOG.md"]
+
+    # Usage guide for the finished/deployable application — authored ONLY on the batch's final ticket.
+    if ctx.is_final_ticket and result.usage_guide.strip():
+        usage_path.write_text(result.usage_guide, encoding="utf-8")
+        staged.append("docs/USAGE.md")
 
     # LICENSE — engine-curated literal, written deterministically and ONLY on the first task (idempotent:
     # never regenerated, so an existing/edited LICENSE is preserved). No LLM → no RECITATION risk.

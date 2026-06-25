@@ -92,15 +92,30 @@ class GetSystemPromptTests(unittest.TestCase):
         self.assertIn("RELEASE_URL_START", result)
         self.assertIn("never author license text", result)
 
-    def test_readme_scaffold_carries_deploy_release_markers(self) -> None:
-        # The scaffold must pre-seed both marker pairs so the DevOps deploy/release workflow injects the
-        # live URL IN PLACE (deploy_gcp.md / deploy_github_release.md), not as a duplicated section.
+    def test_techwriter_authors_usage_guide_on_final_iteration_and_links_docs(self) -> None:
+        # On the last task the techwriter writes the end-user usage guide for the deployed app, and the
+        # README keeps links to the changelog, architecture doc, and usage guide.
+        result = get_system_prompt_with_platforms("techwriter")
+        self.assertIn("FINAL ITERATION", result)
+        self.assertIn("docs/USAGE.md", result)
+        self.assertIn("usage_guide", result)
+        self.assertIn("## Documentation", result)               # README links section
+        self.assertIn("docs/architecture_state.md", result)
+
+    def test_readme_scaffold_carries_markers_and_doc_links(self) -> None:
+        # The scaffold must pre-seed both URL marker pairs (so the DevOps deploy/release workflow injects
+        # the live URL IN PLACE — deploy_gcp.md / deploy_github_release.md, not a duplicated section) AND a
+        # Documentation section linking the changelog, architecture doc, and usage guide.
         from src.shared.core.prompts import README_SCAFFOLD
         for marker in (
             "<!-- DEPLOYMENT_URL_START -->", "<!-- DEPLOYMENT_URL_END -->",
             "<!-- RELEASE_URL_START -->", "<!-- RELEASE_URL_END -->",
         ):
             self.assertIn(marker, README_SCAFFOLD)
+        self.assertIn("## Documentation", README_SCAFFOLD)
+        self.assertIn("(CHANGELOG.md)", README_SCAFFOLD)
+        self.assertIn("(docs/architecture_state.md)", README_SCAFFOLD)
+        self.assertIn("(docs/USAGE.md)", README_SCAFFOLD)
 
     def test_tpm_test_project_scaffold_is_build_glue_not_a_test_case(self) -> None:
         # The test-PROJECT scaffold (dir + build manifest) is Developer-owned build glue allocated to the

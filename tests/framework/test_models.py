@@ -32,12 +32,21 @@ class DocumentationUpdateModelTests(unittest.TestCase):
         adr = "# Architecture State\n\n## Invariants\n- Streaming: row-by-row only.\n"
         readme = "# My Project\n\nDoes a thing.\n"
         changelog = "# Changelog\n\n## [Unreleased]\n### Added\n- Initial.\n"
-        update = DocumentationUpdate(architecture_document=adr, readme=readme, changelog=changelog)
+        update = DocumentationUpdate(
+            architecture_document=adr, readme=readme, changelog=changelog, usage_guide="# Usage\n",
+        )
         self.assertEqual(update.architecture_document, adr)
         self.assertEqual(update.readme, readme)
         self.assertEqual(update.changelog, changelog)
+        self.assertEqual(update.usage_guide, "# Usage\n")
 
-    def test_all_fields_are_required(self) -> None:
+    def test_usage_guide_defaults_to_empty(self) -> None:
+        # usage_guide is authored only on the final ticket; it must be optional (default "") so every
+        # earlier ticket's structured response validates without it.
+        update = DocumentationUpdate(architecture_document="# a", readme="# b", changelog="# c")
+        self.assertEqual(update.usage_guide, "")
+
+    def test_core_doc_fields_are_required(self) -> None:
         with self.assertRaises(ValidationError):
             DocumentationUpdate(architecture_document="# only adr")
 

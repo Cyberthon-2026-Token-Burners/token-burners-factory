@@ -314,6 +314,10 @@ class DocumentationUpdate(BaseModel):
     changelog: str = Field(
         description="The absolute, complete, updated content of the root CHANGELOG.md (Keep a Changelog format), adding one entry under [Unreleased] for the completed ticket and preserving all prior history."
     )
+    usage_guide: str = Field(
+        default="",
+        description="The complete end-user usage guide for the finished, compiled/deployed application (docs/USAGE.md). Populate this ONLY on the final iteration (when the FINAL ITERATION input is true); leave it empty ('') on every earlier ticket.",
+    )
 
 class QATestSuite(BaseModel):
     overwrite_existing: bool = Field(
@@ -449,6 +453,10 @@ class GlobalPipelineContext(BaseModel):
     contract_amendments: int = 0
     current_attempt: int = 1
     repository_map: str = ""
+    # True only for the LAST ticket of an --auto-execute batch (set fresh by run_executor each call, never
+    # trusted from the checkpoint). Signals the TechWriter to author the end-user usage guide for the
+    # finished/deployable application (docs/USAGE.md). Single-ticket paths leave it False.
+    is_final_ticket: bool = False
     # E4 deploy-scaffolding output (set only on a --scaffold-deploy run); persisted for checkpoint parity.
     devops_manifests: DevOpsManifests | None = None
     telemetry: PipelineTelemetry = Field(default_factory=PipelineTelemetry)

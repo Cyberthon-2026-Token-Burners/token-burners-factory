@@ -1249,6 +1249,7 @@ class RunBatchTests(unittest.IsolatedAsyncioTestCase):
         with TemporaryDirectory() as td:
             projects, project, cfg, nexus_dir = self._fixtures(td)
             seen = []
+            final_flags = []
             run_executor = AsyncMock(side_effect=lambda *_a, **_k: _ctx_with_cost("0.10"))
 
             def _prepare(_projects, _project, _cfg, ticket):
@@ -1264,6 +1265,9 @@ class RunBatchTests(unittest.IsolatedAsyncioTestCase):
 
             self.assertEqual(seen, ["TASK-01", "TASK-02", "TASK-03"])
             self.assertEqual(run_executor.await_count, 3)
+            # Only the LAST ticket is dispatched as the final one (drives the usage-guide authoring).
+            final_flags = [c.kwargs.get("is_final_ticket") for c in run_executor.await_args_list]
+            self.assertEqual(final_flags, [False, False, True])
             batch = BatchState.load_checkpoint(orchestrator._batch_state_path(nexus_dir))
             self.assertEqual(batch.completed, ["TASK-01", "TASK-02", "TASK-03"])
             self.assertIsNone(batch.failed)

@@ -1023,7 +1023,8 @@ async def run_batch(projects: Projects, project, cfg: RunConfig, nexus_run_dir: 
             log.info(f"🤖 Batch: dispatching '{ticket}' ({len(batch.completed) + 1}/{len(tickets)}) "
                      f"| ${remaining:.4f} of the app budget remaining.")
             try:
-                ctx = await run_executor(cfg, run_dir, budget_usd_ceiling=remaining)
+                ctx = await run_executor(cfg, run_dir, budget_usd_ceiling=remaining,
+                                         is_final_ticket=(ticket == tickets[-1]))
             except PipelineHalt:
                 # Recover the halted ticket's spend (incident dump is freshest; checkpoint is the fallback)
                 # so the application total — and the app report below — still reflect the money it burned.
@@ -1217,7 +1218,8 @@ async def _timed_phase(telemetry, phase: str, coro):
 
 
 async def run_executor(cfg: RunConfig, run_dir: Path, resume_checkpoint: Path | None = None,
-                       budget_usd_ceiling: Decimal | None = None) -> GlobalPipelineContext:
+                       budget_usd_ceiling: Decimal | None = None,
+                       is_final_ticket: bool = False) -> GlobalPipelineContext:
     """Execute ONE ticket end-to-end in a prepared run dir: bootstrap (or resume) → TechLead → the FSM
     self-heal cycle → atomic success commit. Returns the final ``GlobalPipelineContext`` on full success (so
     the E3 batch can fold this ticket's telemetry into the application-wide total); a halt writes an incident
@@ -1283,6 +1285,10 @@ async def run_executor(cfg: RunConfig, run_dir: Path, resume_checkpoint: Path | 
                 log.info(f"   [CONTEXT] Blueprint routed into TechLead input ({len(bp_content)} chars).")
 
         log.debug(f"Initialized global context for run {run_dir} with PR: {cfg.description}")
+
+    # Set fresh every call (never trusted from the checkpoint): the TechWriter authors the end-user usage
+    # guide only on the batch's final ticket, when the application is functionally complete + deployable.
+    ctx.is_final_ticket = is_final_ticket
 
     checkpoint_file = ctx.workspace_paths.reports_dir / "checkpoint.json"
 
