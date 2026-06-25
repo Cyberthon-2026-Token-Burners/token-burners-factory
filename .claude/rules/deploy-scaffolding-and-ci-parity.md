@@ -125,6 +125,8 @@ budget `PipelineHalt` mid-self-heal still folds the partial DevOps spend into th
 batch's `finally` writes `app_finops_report.json`. See [[finops-app-budget]].
 
 ## 5. Deployment targets are a registry; web services are publicly invocable by default
+(The registry + the reachability/isolation gate + the README-URL publish below are ADR
+[0026](../../docs/decisions/0026-deploy-target-registry-and-reachability-gates.md), extending ADR 0020.)
 `SUPPORTED_DEPLOY_TARGETS` (`environments.py`) is the SSOT for WHERE an app deploys — mirroring
 `SUPPORTED_ENVIRONMENTS` (the WHAT/runtime SSOT). Each entry carries `archetypes` (which app archetypes it
 serves), `skill` (its platform skill), `runtime_constraints` (the contract the APP CODE must satisfy — bind
