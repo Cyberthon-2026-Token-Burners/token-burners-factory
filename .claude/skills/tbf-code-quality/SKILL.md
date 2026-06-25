@@ -1,6 +1,7 @@
 ---
 name: tbf-code-quality
 description: Audit the code quality and test quality/coverage of a generated application in a completed executor run's clone. Use when the user asks to review generated code, check test coverage or quality, audit the output application, or assess "how good is the code in run X". Accepts a run dir, a project slug (picks latest exec run), or a run number NNN. Complements tbf-analyze-run (which diagnoses FSM failures); this skill is for assessing the output code of a successful or partially-successful run.
+context: fork
 ---
 
 # Application Code & Test Quality Audit

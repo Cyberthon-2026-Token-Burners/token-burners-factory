@@ -1,3 +1,8 @@
+---
+paths:
+  - "src/**"
+---
+
 # Repo module map (where to find things)
 
 Entrypoint: `main.py` → `src/nexus/runner.py` `main()` (CLI parsing in `parse_args`); `main()` is a thin

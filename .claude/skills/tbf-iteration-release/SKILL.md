@@ -2,6 +2,7 @@
 name: tbf-iteration-release
 description: Document a full iteration release end-to-end — ADR + archive + CHANGELOG/README sync + Claude rules/skills sync + PRACTICUM takeaway, with all cross-links resolved. Use when the user asks to document or release an iteration. Orchestrates the tbf-adr-generation, tbf-docs-sync, tbf-claude-context-sync, and tbf-practicum-update skills in sequence.
 argument-hint: "[iteration-number] [short-feature-name]"
+disable-model-invocation: true
 ---
 
 # Iteration Release Documentation

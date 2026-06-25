@@ -1,3 +1,8 @@
+---
+paths:
+  - "**/*.md"
+---
+
 # Documentation paths are relative or portable — never machine-absolute
 
 Rules, skills, prompts, `CLAUDE.md`, and docs are read by many contributors whose clones live in
