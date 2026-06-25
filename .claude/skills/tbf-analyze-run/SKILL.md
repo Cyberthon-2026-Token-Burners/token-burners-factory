@@ -1,6 +1,6 @@
 ---
 name: tbf-analyze-run
-description: Diagnose a pipeline run (executor or Nexus) from its persisted artifacts — classify root cause, cite evidence, and point the fix at the engine/prompts (never the clone). Use when the user asks to analyze/diagnose a run, explain a CIRCUIT BREAKER / "Retries exhausted" halt, an application-budget exhaustion / `budget_marker` clean stop (`--budget` / `PIPELINE_APP_BUDGET_USD`, E5), a looping or stuck cycle, a Gemini RECITATION/SAFETY block, a PR/merge (forge) failure under `--auto-merge`, a lint-gate reroute loop or an E4 deploy-scaffolding (`--scaffold-deploy`) static-lint halt (incl. a missing public-invoker grant on a Cloud Run web service, or a *live* deployed service returning HTTP 403 / "not authenticated"), a Developer Claude-CLI provider-quota / session-limit halt (a `🚨 PROVIDER QUOTA HALT` / "hit your session limit" stop where the Developer billed 0 tokens), a HARD HALT (wrong-path / documentation guardrail) or ENVIRONMENT/NETWORK/LINT-TOOLING halt, a git clone/push credential failure, a non-halt crash/hang (an `embedded null byte` traceback, a Jinja-in-system-message `ValueError`, or a stalled agent call that printed no incident), or "what happened" in a runs/<project>/<NNN>_... run. Accepts a run dir, a project slug, or pasted run log output.
+description: Diagnose a pipeline run (executor or Nexus) from its persisted artifacts — classify root cause, cite evidence, and point the fix at the engine/prompts (never the clone). Use when the user asks to analyze/diagnose a run, explain a CIRCUIT BREAKER / "Retries exhausted" halt, an application-budget exhaustion / `budget_marker` clean stop (`--budget` / `PIPELINE_APP_BUDGET_USD`, E5), a looping or stuck cycle, a Gemini RECITATION/SAFETY block, a PR/merge (forge) failure under `--auto-merge`, a lint-gate reroute loop or an E4 deploy-scaffolding (`--scaffold-deploy`) static-lint halt (incl. a missing public-invoker grant on a Cloud Run web service, or a *live* deployed service returning HTTP 403 / "not authenticated"), a Developer Claude-CLI provider-quota / session-limit halt (a `🚨 PROVIDER QUOTA HALT` / "hit your session limit" stop where the Developer billed 0 tokens), a HARD HALT (wrong-path / documentation guardrail) or ENVIRONMENT/NETWORK/LINT-TOOLING halt, a missing-dependency-manifest halt (a `🚨 MISSING DEPENDENCY MANIFEST` banner, or an older run where a `ModuleNotFoundError` for a declared core library was misrouted to the Reviewer and the Arbiter halted `unrecoverable` because the toolchain restored nothing — no `requirements.txt`/`go.mod`/`package.json`/`.csproj`), a git clone/push credential failure, a non-halt crash/hang (an `embedded null byte` traceback, a Jinja-in-system-message `ValueError`, or a stalled agent call that printed no incident), or "what happened" in a runs/<project>/<NNN>_... run. Accepts a run dir, a project slug, or pasted run log output.
 context: fork
 ---
 
@@ -69,7 +69,8 @@ not `/mnt/c/…`) — see [run-tests-via-wsl](../../rules/run-tests-via-wsl.md).
    cycle N/M` (cycle boundaries), `🔶` (cycle-failed + fast-fail reroutes), `[VERDICT]`/`route=`
    (Arbiter), `[TOKENS]` (per-agent spend), and any `🚨 … HALT` / `CIRCUIT BREAKER` / `🛑` header. Then
    grep for known failure signatures: `hit your session limit`, `RECITATION`, `NU1301`/`NU1510`,
-   `ModuleNotFoundError`, `embedded null byte`, `Jinja templating`, `could not read Password`.
+   `ModuleNotFoundError`, `MISSING DEPENDENCY MANIFEST`, `embedded null byte`, `Jinja templating`,
+   `could not read Password`.
 3. **Incident report** — `reports/incident_report.json` (present only on an FSM halt): the redacted final
    state + the halt header. **Tell:** a run that printed the FinOps GRAND TOTAL and then died with a raw
    Python traceback (and **no** incident report) is *not* an FSM halt — it is an uncaught exception that
@@ -114,6 +115,16 @@ Then map the evidence to one class (decisive — pick the dominant one and say s
 - **Environment/runner misconfiguration** — a hard gate FAILED while the Reviewer approved BOTH sides
   (`🚨 ENVIRONMENT\RUNNER MISCONFIGURATION` deadlock guard, `runner.py`): not agent-fixable (e.g. sandbox
   import-path/network). The Reviewer approving both sides on a hard-gate FAILURE is the signature.
+- **Missing dependency manifest** — a build/test/test-compile gate FAILED with a module-resolution error
+  (`ModuleNotFoundError`, `Cannot find module`, `cannot find package`) because the env's declared
+  `dependency_manifest` (`requirements.txt`/`package.json`/`go.mod`/`.csproj`) was ABSENT, so `setup_cmd`
+  restored NOTHING (the silent `pip install -r requirements.txt 2>/dev/null || true` no-op). The
+  `missing_dependency_manifest` backstop (`gates.py`) now prepends a `🚨 MISSING DEPENDENCY MANIFEST` banner,
+  so a current run names itself; an OLDER run shows it mislabelled (the import error misrouted to the
+  Reviewer → Arbiter `root_cause_class: unrecoverable`). Fix is **authoring-side, not the clone**: the env's
+  `authoring_contract` + the language `_core` skill must mandate producing the manifest (e.g. `python_core`
+  → `requirements.txt`), and the SA `## Runtime Contract` / TPM `TASK-01` propagation must carry it — see
+  [agent-contracts](../../rules/agent-contracts.md). NEVER hand-add the manifest to the run clone.
 - **Guardrail hard-halt (Developer pre-Reviewer fast-fail loops)** — a Developer guardrail loop hit its
   `GUARDRAIL_MAX_REROUTES` cap and aborted *before* the Reviewer ever ran. Three distinct headers/causes,
   each pointing at a different fix:

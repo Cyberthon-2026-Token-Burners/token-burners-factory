@@ -39,6 +39,16 @@
 #   comment_prefixes  OPTIONAL leading strings that mark a comment line in this stack's source files
 #                (e.g. "#", "//", "<!--"), used by the documentation-guardrail scanner to check for a
 #                top-of-file architectural justification. all_comment_prefixes() unions them across stacks.
+#   authoring_contract  the conventions the AGENTS must satisfy for this runtime — language-neutral bullets
+#                headlined by the dependency-manifest convention (WHICH file setup_cmd restores from, so the
+#                authoring side can't drift from the restore side). Surfaced to the SA/TPM via the injected
+#                platform list (the runtime-axis twin of SUPPORTED_DEPLOY_TARGETS.runtime_constraints): the
+#                SA records it in the Blueprint's `## Runtime Contract`, the TPM propagates it onto TASK-01.
+#                The matching builder-level rules live in the `triggers:`-gated language `_core` skill.
+#   dependency_manifest  the manifest FILENAME (or glob) setup_cmd restores from — the engine SSOT for the
+#                missing-manifest gate (gates.restore_produced_no_manifest), kept in lockstep with the
+#                authoring_contract prose (a test asserts the basename appears in a bullet). Registry-driven
+#                so no gate hardcodes a language's manifest name. `None`/absent → that env is gate-exempt.
 
 # SAST is generic across all stacks — one Semgrep image (SAST_IMAGE/SAST_CMD), never per-language.
 
@@ -105,6 +115,10 @@ SUPPORTED_ENVIRONMENTS = {
         "failure_origin_markers": ("Traceback (most recent call", "ImportError", "ModuleNotFoundError", "cannot import name"),
         "repo_map_ignore_dirs": ("__pycache__",),
         "comment_prefixes": ("#", '"""', "'''"),
+        "dependency_manifest": "requirements.txt",
+        "authoring_contract": (
+            "Dependency manifest: declare EVERY third-party runtime AND test dependency, version-pinned, one per line, in `requirements.txt` at the repository root. The toolchain restores from `requirements.txt` ONLY (`pip install -r requirements.txt`) — a `pyproject.toml` alone is NOT installed, so any dependency present only in `[project].dependencies` will be missing at build/test time and raise a module-not-found error. If the project also keeps a `pyproject.toml`, mirror its dependencies into `requirements.txt`; the two must not drift.",
+        ),
         "language_id": "python",
         "description": "Python 3.12 core runtime (pytest; Semgrep SAST).",
     },
@@ -137,6 +151,10 @@ SUPPORTED_ENVIRONMENTS = {
         "failure_origin_markers": ("panic:", "--- FAIL", "build failed", "cannot find package"),
         "repo_map_ignore_dirs": ("vendor", "bin"),
         "comment_prefixes": ("//", "/*", "*"),
+        "dependency_manifest": "go.mod",
+        "authoring_contract": (
+            "Dependency manifest: declare all module dependencies in `go.mod` (with a consistent `go.sum`); the toolchain restores via `go mod download`. Run `go mod tidy` so the manifest matches the imports — a dependency imported but absent from `go.mod` breaks the offline build.",
+        ),
         "language_id": "go",
         "description": "Go 1.23 CLI runtime, full compile toolchain (go test; Semgrep SAST).",
     },
@@ -166,6 +184,10 @@ SUPPORTED_ENVIRONMENTS = {
         "failure_origin_markers": ("Error:", "Cannot find module", "ReferenceError", "SyntaxError", "TypeError:"),
         "repo_map_ignore_dirs": ("node_modules", "dist", "build", "out", "coverage"),
         "comment_prefixes": ("//", "/*", "*"),
+        "dependency_manifest": "package.json",
+        "authoring_contract": (
+            "Dependency manifest: declare all dependencies and devDependencies (including the test runner) in `package.json`, with a committed `package-lock.json`; the toolchain restores via `npm ci` (falling back to `npm install`). The `test` script MUST be present, or the test gate has nothing to run.",
+        ),
         "language_id": "node",
         "description": "Node.js 20 / JS / React (node, npm — frontend build & tests; Semgrep SAST).",
     },
@@ -209,6 +231,10 @@ SUPPORTED_ENVIRONMENTS = {
         "failure_origin_markers": ("error CS", "error MSB", "Stack trace:", "Unhandled exception"),
         "repo_map_ignore_dirs": ("bin", "obj", "artifacts"),
         "comment_prefixes": ("//", "/*", "*", "<!--"),
+        "dependency_manifest": "*.csproj",
+        "authoring_contract": (
+            "Dependency manifest: declare all out-of-framework dependencies as `<PackageReference>` in each `.csproj`; the toolchain restores via `dotnet restore` over the root solution. Do NOT pin framework-provided packages (NU1510). Register every project — including the test project — in the root solution, or restore/build skips it.",
+        ),
         "language_id": "dotnet",
         "description": ".NET 10 SDK (full toolchain — dotnet build & dotnet test; Semgrep SAST).",
     },
@@ -470,6 +496,17 @@ def env_language(environment_id: str) -> str:
     if env is None:
         raise ValueError(f"Unsupported environment_id '{environment_id}'.")
     return env["language_id"]
+
+
+def dependency_manifest(environment_id: str | None) -> str | None:
+    """The dependency-manifest filename (or glob) the env's ``setup_cmd`` restores from — the registry SSOT.
+
+    Registry-driven so the engine never hardcodes a language's manifest name (honors
+    engine-language-agnostic). ``None`` for an unknown env or one that declares no manifest, which the
+    missing-manifest gate (``gates.restore_produced_no_manifest``) treats as EXEMPT.
+    """
+    spec = SUPPORTED_ENVIRONMENTS.get(environment_id or "") or {}
+    return spec.get("dependency_manifest")
 
 
 def all_source_extensions() -> tuple[str, ...]:

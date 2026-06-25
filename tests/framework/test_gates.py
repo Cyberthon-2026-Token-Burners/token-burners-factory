@@ -5,6 +5,8 @@ commands, the network phasing, and the adapter's ``(returncode, stdout, stderr)`
 inspected deterministically.
 """
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest import mock
 from unittest.mock import AsyncMock, call
 
@@ -12,6 +14,7 @@ from src.development.gates import (
     run_qa_unit_tests, run_security_scan, run_build_gate, run_format_pass, run_test_compile_gate,
     run_lint_gate, classify_lint_findings, ran_zero_tests,
     build_failure_is_test_only, build_failure_is_environmental, lint_failure_is_tooling,
+    missing_dependency_manifest, annotate_missing_manifest,
     _has_test_files, _FILE_REF_RE,
 )
 from src.shared.core.environments import SUPPORTED_ENVIRONMENTS, SAST_IMAGE, SAST_CMD, all_source_extensions
@@ -396,6 +399,51 @@ class EnvironmentalBuildFailureTests(unittest.TestCase):
         # A genuine code defect must fall through to the normal compile-gate reroute.
         self.assertFalse(build_failure_is_environmental(self._DOTNET, ["Program.cs(12,9): error CS0103: The name 'Foo' does not exist"]))
         self.assertFalse(build_failure_is_environmental("go-1.23-cli", ["internal/converter/processor.go:10:2: undefined: Foo"]))
+
+
+class MissingDependencyManifestTests(unittest.TestCase):
+    """`missing_dependency_manifest` flags the silent `pip install -r requirements.txt || true` no-op class
+    (restore exits 0 but installed nothing because the manifest is absent) — registry-keyed, and ONLY when
+    a module-resolution error is ALSO present, so a stdlib-only app / real code defect never false-positives."""
+
+    _MODULE_ERR = ["E   ModuleNotFoundError: No module named 'fastapi'"]
+
+    def test_missing_manifest_plus_import_error_is_flagged(self) -> None:
+        with TemporaryDirectory() as repo:  # no requirements.txt on disk
+            self.assertTrue(missing_dependency_manifest("python-3.12-core", repo, self._MODULE_ERR))
+
+    def test_present_manifest_is_not_flagged(self) -> None:
+        with TemporaryDirectory() as repo:
+            (Path(repo) / "requirements.txt").write_text("fastapi==0.110.0\n", encoding="utf-8")
+            self.assertFalse(missing_dependency_manifest("python-3.12-core", repo, self._MODULE_ERR))
+
+    def test_no_import_error_is_not_flagged(self) -> None:
+        # A legitimately stdlib-only app (no manifest, no import failure) must NOT be flagged.
+        with TemporaryDirectory() as repo:
+            self.assertFalse(missing_dependency_manifest("python-3.12-core", repo, ["1 passed in 0.1s"]))
+
+    def test_unknown_env_is_exempt(self) -> None:
+        with TemporaryDirectory() as repo:
+            self.assertFalse(missing_dependency_manifest("no-such-env", repo, self._MODULE_ERR))
+
+    def test_dotnet_csproj_glob_resolves_present_manifest(self) -> None:
+        # `*.csproj` is matched via rglob, so a nested project file counts as present.
+        with TemporaryDirectory() as repo:
+            proj = Path(repo) / "src" / "App"
+            proj.mkdir(parents=True)
+            (proj / "App.csproj").write_text("<Project/>", encoding="utf-8")
+            self.assertFalse(missing_dependency_manifest(
+                "dotnet-10-sdk", repo, ["error CS: cannot find module 'X'"]))
+
+    def test_annotate_prepends_actionable_banner_only_when_flagged(self) -> None:
+        with TemporaryDirectory() as repo:
+            annotated = annotate_missing_manifest("python-3.12-core", repo, self._MODULE_ERR)
+            self.assertIn("MISSING DEPENDENCY MANIFEST", annotated[0])
+            self.assertIn("requirements.txt", annotated[0])
+            self.assertEqual(annotated[1:], self._MODULE_ERR)  # original lines preserved below the banner
+            # A non-manifest failure is returned unchanged (no banner, no routing change).
+            real_defect = ["E   AssertionError: 1 != 2"]
+            self.assertEqual(annotate_missing_manifest("python-3.12-core", repo, real_defect), real_defect)
 
 
 class DotnetFormatWorkspaceTargetingTests(unittest.TestCase):

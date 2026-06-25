@@ -21,9 +21,20 @@ def get_system_prompt(agent_name: str) -> str:
 
 
 def _format_supported_platforms() -> str:
-    """Render the Paved-Road registry as a bullet list for prompt injection."""
+    """Render the Paved-Road registry as a bullet list for prompt injection.
+
+    Each platform carries its ``authoring_contract`` bullets (indented under the description) so the SA/TPM
+    SEE the runtime conventions — chiefly the dependency-manifest convention the toolchain restores from —
+    while choosing/propagating a stack. The runtime-axis twin of how ``runtime_constraints`` ride the
+    deploy-target list; the SA copies them into the Blueprint's ``## Runtime Contract``.
+    """
     from src.shared.core.environments import SUPPORTED_ENVIRONMENTS
-    return "\n".join(f"- {key}: {env['description']}" for key, env in SUPPORTED_ENVIRONMENTS.items())
+    lines: list[str] = []
+    for key, env in SUPPORTED_ENVIRONMENTS.items():
+        lines.append(f"- {key}: {env['description']}")
+        for bullet in env.get("authoring_contract", ()):
+            lines.append(f"    - {bullet}")
+    return "\n".join(lines)
 
 
 def _format_supported_deploy_targets() -> str:

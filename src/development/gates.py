@@ -1,9 +1,11 @@
 import os
 import re
+from pathlib import Path
 
 from src.shared.core.observability import log
 from src.shared.core.environments import (
     SUPPORTED_ENVIRONMENTS, SAST_IMAGE, SAST_CMD, is_test_file, all_source_extensions,
+    dependency_manifest,
 )
 from src.shared.core.docker_adapter import execute_in_sandbox, run_in_image
 
@@ -85,6 +87,58 @@ def build_failure_is_environmental(environment_id: str, log_lines: list[str]) ->
     `ModuleNotFoundError` ⊃ `enotfound`) fall through to the normal compile-gate reroute."""
     blob = "\n".join(log_lines).lower()
     return _ENV_BUILD_FAILURE_RE.search(blob) is not None
+
+
+# Cross-language MODULE-RESOLUTION failure signatures — a dependency import could not be resolved. ONE
+# shared set matched uniformly across every stack (no per-language dict), mirroring _ENV_BUILD_FAILURE_MARKERS.
+# Kept to specific multi-word phrases (not short codes), so plain substring matching carries no collision risk.
+_MODULE_RESOLUTION_MARKERS = (
+    "no module named",          # python: ModuleNotFoundError: No module named 'x'
+    "cannot find module",       # node: Error: Cannot find module 'x'
+    "could not find module",
+    "unresolved import",
+    "cannot find package",      # go: cannot find package "x"
+)
+_MODULE_RESOLUTION_RE = re.compile("|".join(re.escape(m) for m in _MODULE_RESOLUTION_MARKERS))
+
+
+def missing_dependency_manifest(environment_id: str, repo_root: str, log_lines: list[str]) -> bool:
+    """True iff a gate failed on a module-resolution error AND the env's registry-declared dependency
+    manifest is ABSENT from the repo — i.e. the dependencies were never declared where the toolchain
+    restores them (the silent ``pip install -r requirements.txt 2>/dev/null || true`` no-op class: the
+    restore exits 0 but installs nothing, so the failure surfaces two phases later as a module-not-found
+    error mistaken for a code defect and misrouted to the Reviewer).
+
+    Registry-driven (``dependency_manifest``) so no language is hardcoded. Requires BOTH conditions, so a
+    genuine code defect, a network failure, OR a legitimately stdlib-only app (no third-party deps, hence
+    no manifest needed and no import error) all fall through as False — never a false positive.
+    """
+    manifest = dependency_manifest(environment_id)
+    if not manifest:
+        return False
+    blob = "\n".join(log_lines).lower()
+    if not _MODULE_RESOLUTION_RE.search(blob):
+        return False
+    return not any(Path(repo_root).rglob(manifest))
+
+
+def annotate_missing_manifest(environment_id: str, repo_root: str, log_lines: list[str]) -> list[str]:
+    """Prepend an explicit, actionable banner to a FAILED gate's output when the failure is the
+    missing-dependency-manifest class (``missing_dependency_manifest``). The banner makes the diagnosis
+    self-evident wherever the feedback lands — the Developer (who owns production deps) sees exactly what
+    to create, instead of the Reviewer/Arbiter mislabelling a missing `requirements.txt` as a code defect
+    and halting `unrecoverable`. A no-op for any other failure, so it never alters normal routing."""
+    if not missing_dependency_manifest(environment_id, repo_root, log_lines):
+        return log_lines
+    manifest = dependency_manifest(environment_id)
+    log.warning(f"🔶 Gate failure is a MISSING DEPENDENCY MANIFEST [{environment_id}]: `{manifest}` is "
+                "absent — dependencies were declared nowhere the toolchain restores from.")
+    return [
+        f"🚨 MISSING DEPENDENCY MANIFEST: `{manifest}` is absent from the repository, so the toolchain "
+        f"restored NO dependencies and the import above could not be resolved. This is NOT a code defect "
+        f"in the modules — declare EVERY third-party dependency in `{manifest}` at the repo root (the "
+        f"file the build/test toolchain restores from), then the import will resolve.",
+    ] + log_lines
 
 
 # Signatures of a lint/format TOOL that could not RUN AT ALL — a bad flag, an unknown subcommand, or a
@@ -239,6 +293,8 @@ async def run_qa_unit_tests(environment_id: str, repo_root: str) -> tuple[bool, 
             "a compiled/executed target (e.g. the test project is missing from the solution or not "
             "registered in the build). Register the test project so the contracted tests actually run.",
         ] + log_lines
+    if returncode != 0:
+        log_lines = annotate_missing_manifest(environment_id, repo_root, log_lines)
     return returncode == 0, log_lines
 
 
@@ -271,6 +327,8 @@ async def run_build_gate(environment_id: str, repo_root: str) -> tuple[bool, lis
     returncode, stdout, stderr = await execute_in_sandbox(environment_id, build_cmd, repo_root, network="none")
     log_lines = (stdout + "\n" + stderr).strip().splitlines()
     log.debug(f"Build gate completed with exit code: {returncode}")
+    if returncode != 0:
+        log_lines = annotate_missing_manifest(environment_id, repo_root, log_lines)
     return returncode == 0, log_lines
 
 
@@ -307,6 +365,8 @@ async def run_test_compile_gate(environment_id: str, repo_root: str) -> tuple[bo
     returncode, stdout, stderr = await execute_in_sandbox(environment_id, test_compile_cmd, repo_root, network="none")
     log_lines = (stdout + "\n" + stderr).strip().splitlines()
     log.debug(f"QA test-compile gate completed with exit code: {returncode}")
+    if returncode != 0:
+        log_lines = annotate_missing_manifest(environment_id, repo_root, log_lines)
     return returncode == 0, log_lines
 
 

@@ -43,6 +43,7 @@ language it is handling.
 | Failure-origin slice | `_TRACEBACK_MARKERS = ("Traceback",…)` | `failure_origin_markers(env_id)` |
 | Repo-map pruning | `if name == "__pycache__"` | `repo_map_ignore_dirs(env_id)` |
 | Lint no-op guard | `if not _has_eslint_config(repo_root)` | shell self-guard inside env's `lint_cmd` |
+| Dependency-manifest name | `if lang == "python": "requirements.txt"` | `dependency_manifest(env_id)` (per-env scalar; surfaced to the agents as `authoring_contract` prose) |
 
 ## Why
 

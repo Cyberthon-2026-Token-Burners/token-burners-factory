@@ -16,7 +16,7 @@ shared; supersedes ADR 0012's virtual separation):
 - `observability.py` — `log`, `reconfigure_logging`, `log_token_usage` (telemetry-first), `log_finops_summary`, `describe_finish_reason`.
 - `runs.py` — `Projects` store + `allocate_run_dir` + `slugify` (run-layout SSOT; see [run-layout-and-cli](run-layout-and-cli.md)).
 - `docker_adapter.py` — `run_in_image` / `execute_in_sandbox` (sandbox least-privilege; see [qa-sandbox-hardening](qa-sandbox-hardening.md)).
-- `environments.py` — `SUPPORTED_ENVIRONMENTS` registry (per-language image + build/test/setup/`lint_cmd`/format cmds + cache_volume). `lint_cmd` (verify-only) is the SSOT the `--scaffold-deploy` CI runs verbatim (engine-green ⇒ CI-green); the paired `format_cmd` autofixes what `lint_cmd` verifies. ALSO `SUPPORTED_DEPLOY_TARGETS` (the WHERE-it-deploys SSOT, sibling to the runtime registry — `archetypes`/`skill`/`runtime_constraints`/`requires_public_invoker`) + `deploy_target_for_archetype`/`deploy_skill_for_target`/`deploy_target_skills`; see [deploy-scaffolding-and-ci-parity](deploy-scaffolding-and-ci-parity.md) §5.
+- `environments.py` — `SUPPORTED_ENVIRONMENTS` registry (per-language image + build/test/setup/`lint_cmd`/format cmds + cache_volume). `lint_cmd` (verify-only) is the SSOT the `--scaffold-deploy` CI runs verbatim (engine-green ⇒ CI-green); the paired `format_cmd` autofixes what `lint_cmd` verifies. Each env also carries an `authoring_contract` (language-neutral bullets the SA/TPM surface to the building agents — chiefly the dependency-manifest convention) + a `dependency_manifest` scalar (the manifest `setup_cmd` restores from), exposed via `dependency_manifest(env_id)` — the runtime-axis twin of the deploy `runtime_constraints`; see [agent-contracts](agent-contracts.md) (the `## Runtime Contract` prose chain) and [engine-language-agnostic](engine-language-agnostic.md). ALSO `SUPPORTED_DEPLOY_TARGETS` (the WHERE-it-deploys SSOT, sibling to the runtime registry — `archetypes`/`skill`/`runtime_constraints`/`requires_public_invoker`) + `deploy_target_for_archetype`/`deploy_skill_for_target`/`deploy_target_skills`; see [deploy-scaffolding-and-ci-parity](deploy-scaffolding-and-ci-parity.md) §5.
 - `prompts.py` — `build_agent_context`, `get_system_prompt*`, `generate_repo_map` (skill routing: [skill-routing-frontmatter](skill-routing-frontmatter.md)).
 
 **`src/shared/utils/`** — `subprocess_helpers.py` (`parse_claude_usage`, streaming, `sanitize_for_argv` — strips C0/NUL from every subprocess argv, the SSOT both `forge` and `runner._run_checked` call), `git_helpers.py`,
@@ -46,7 +46,9 @@ order, consumed by `--auto-execute`), `state.py` (`NexusState` checkpoint).
 
 **`src/development/`** (worker plane — code generation + quality gates) — `gates.py`
 (build/test/**lint** (`run_lint_gate` + `classify_lint_findings`)/SAST gates + `run_format_pass` autofix +
-`build_failure_is_environmental`), `agents/{techlead,developer,qa,reviewer,techwriter,arbiter}.py`.
+`build_failure_is_environmental` + `missing_dependency_manifest`/`annotate_missing_manifest` — the
+registry-keyed missing-manifest backstop that banners a restore-installed-nothing failure so it isn't
+mislabelled a code defect), `agents/{techlead,developer,qa,reviewer,techwriter,arbiter}.py`.
 
 **`src/deployment/`** (infra plane — CI/CD scaffolding) — `agents/devops.py` (the DevOps agent),
 `provision/scaffold.py` (`run_devops_scaffold` / `_env_ci_commands` / `_repo_has_source` /

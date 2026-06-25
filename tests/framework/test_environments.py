@@ -20,6 +20,7 @@ from src.shared.core.environments import (
     deploy_target_for_archetype,
     deploy_skill_for_target,
     deploy_target_skills,
+    dependency_manifest,
 )
 
 
@@ -100,6 +101,40 @@ class PythonTestCmdTests(unittest.TestCase):
         self.assertEqual(test_cmd, "python -m pytest")
         # The bare console script would not put cwd on sys.path — guard against a regression to it.
         self.assertTrue(test_cmd.startswith("python -m "))
+
+
+class AuthoringContractTests(unittest.TestCase):
+    """Every env declares an `authoring_contract` (prose the SA/TPM surface to the building agents) AND a
+    `dependency_manifest` scalar (the engine SSOT the missing-manifest gate keys off). The two must not
+    drift — the scalar's basename token must appear in a contract bullet — so the restore command and the
+    authoring side can never silently disagree (the requirements.txt vs pyproject.toml halt class)."""
+
+    def test_every_env_has_authoring_contract_and_manifest(self) -> None:
+        for env_id, spec in SUPPORTED_ENVIRONMENTS.items():
+            self.assertTrue(spec.get("authoring_contract"), env_id)        # non-empty bullet tuple
+            self.assertTrue(spec.get("dependency_manifest"), env_id)       # non-empty manifest scalar
+
+    def test_manifest_scalar_appears_in_contract_prose(self) -> None:
+        # Drift guard: the engine SSOT (scalar) and the agent SSOT (prose) name the SAME manifest.
+        for env_id, spec in SUPPORTED_ENVIRONMENTS.items():
+            manifest = spec["dependency_manifest"]
+            token = manifest.lstrip("*")  # `*.csproj` → `.csproj`
+            blob = "\n".join(spec["authoring_contract"])
+            self.assertIn(token, blob, f"{env_id}: manifest {manifest!r} not named in its authoring_contract")
+
+    def test_python_manifest_is_requirements_txt_and_setup_cmd_restores_it(self) -> None:
+        # Couples the restore SSOT to the authoring SSOT — the exact bug: the restore reads requirements.txt
+        # while the agents authored only a pyproject.toml.
+        self.assertEqual(dependency_manifest("python-3.12-core"), "requirements.txt")
+        self.assertIn("requirements.txt", SUPPORTED_ENVIRONMENTS["python-3.12-core"]["setup_cmd"])
+
+    def test_dependency_manifest_accessor_is_registry_driven(self) -> None:
+        self.assertEqual(dependency_manifest("go-1.23-cli"), "go.mod")
+        self.assertEqual(dependency_manifest("node-20-web"), "package.json")
+        self.assertEqual(dependency_manifest("dotnet-10-sdk"), "*.csproj")
+        # Unknown env / None → None (the missing-manifest gate then treats it as exempt, never a false fail).
+        self.assertIsNone(dependency_manifest("no-such-env"))
+        self.assertIsNone(dependency_manifest(None))
 
 
 class DeployTargetRegistryTests(unittest.TestCase):

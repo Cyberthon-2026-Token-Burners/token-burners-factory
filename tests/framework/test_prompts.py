@@ -226,6 +226,24 @@ class GetSystemPromptTests(unittest.TestCase):
         self.assertIn("deployment-target runtime constraints", result)
         self.assertIn("there is NO standalone `TASK-00`", result)               # existing pin survives
 
+    def test_sa_records_runtime_contract_from_injected_platforms(self) -> None:
+        # The injected platform list now carries each env's authoring_contract (the dependency-manifest
+        # convention), and the SA must record the selected one in a `## Runtime Contract` Blueprint section.
+        result = get_system_prompt_with_platforms("sa")
+        self.assertNotIn("{injected_supported_platforms_list}", result)   # placeholder filled
+        self.assertIn("## Runtime Contract", result)
+        self.assertIn("requirements.txt", result)                        # python authoring_contract rendered
+        self.assertIn("HONOR THE USER'S MANDATED STACK", result)         # existing pin survives
+
+    def test_tpm_propagates_runtime_contract(self) -> None:
+        # The TPM carries the runtime authoring contract (chiefly the dependency manifest) into TASK-01,
+        # and the platform list (with authoring contracts) is injected.
+        result = get_system_prompt_with_platforms("tpm")
+        self.assertNotIn("{injected_supported_platforms_list}", result)
+        self.assertIn("RUNTIME CONTRACT", result)
+        self.assertIn("requirements.txt", result)
+        self.assertIn("there is NO standalone `TASK-00`", result)        # existing pin survives
+
     def test_tpm_forbids_orphaned_components(self) -> None:
         # Rule #7: a built component (e.g. middleware) must be wired into the composition root by some
         # ticket — the gap that left a request-limit middleware dead in a real run.
