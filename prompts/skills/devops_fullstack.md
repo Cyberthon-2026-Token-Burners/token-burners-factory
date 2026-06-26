@@ -15,12 +15,14 @@ Multi-stage build — frontend first, then API with static files embedded:
 
 ```dockerfile
 # ── Stage 1: build frontend ──────────────────────────────────────────────────
+# package.json is at the REPO ROOT (engine sandbox requires it there); source is in frontend/
 FROM node:20-slim AS frontend-build
-WORKDIR /app/frontend
-COPY frontend/package*.json ./
+WORKDIR /app
+COPY package*.json ./
 RUN npm ci
-COPY frontend/ .
-RUN npm run build          # outputs to /app/frontend/dist
+COPY frontend/ ./frontend/
+COPY vite.config.ts tsconfig*.json index.html ./
+RUN npm run build          # outputs to /app/dist
 
 # ── Stage 2: Python runtime ───────────────────────────────────────────────────
 FROM python:3.12-slim AS api
@@ -36,7 +38,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY src/ ./src/
 # Embed the built SPA so FastAPI can serve it as StaticFiles
-COPY --from=frontend-build /app/frontend/dist ./static/
+COPY --from=frontend-build /app/dist ./static/
 
 RUN useradd -u 1000 -m appuser
 USER appuser
@@ -103,9 +105,10 @@ GEMINI_API_KEY=
 Every variable MUST have a safe in-code default — the service boots with all vars unset.
 
 ## deploy.yml (CI/CD additions for full-stack)
-- Run `npm ci && npm run build` in the frontend sub-directory BEFORE the Docker build step so
-  the multi-stage `COPY --from=frontend-build` has the artefact.
-- Set `working-directory: frontend` for the npm steps; the Docker build context is the repo root.
+- `package.json` is at the **repo root** — `npm ci` and `npm run build` run from the repo root
+  (no `working-directory: frontend`). The Dockerfile Stage 1 also copies from root.
+- The multi-stage Docker build handles the frontend compilation internally — no separate `npm build`
+  step in CI is required before `docker build`. The context is the repo root.
 - Do NOT run Weaviate or Postgres as separate CI services for the build/lint step — mock them in
   unit tests.
 - The actual GCP deploy job comes from the `deploy_gcp` platform skill.

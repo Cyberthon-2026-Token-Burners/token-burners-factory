@@ -9,17 +9,69 @@ the `node:22-alpine` sandbox and served as a static bundle by the backend server
 
 ---
 
+## Monorepo Layout (fullstack Python + React coexistence) — CRITICAL
+
+When this SPA lives in the **same repository as a Python backend** (FastAPI in `src/`), the
+following layout is MANDATORY — the engine runs `npm ci` and `npm test` from the **repo root**:
+
+```
+<repo-root>/
+  package.json       ← MUST be at root (engine sandbox drives npm from here)
+  package-lock.json  ← committed; npm ci restores from this
+  vite.config.ts     ← at root
+  tsconfig.json      ← at root
+  tsconfig.app.json  ← at root
+  index.html         ← Vite entry point, at root
+  eslint.config.js   ← at root (lint gate checks here)
+  frontend/          ← ALL React/TypeScript source lives here (NOT src/ — reserved for Python)
+    main.tsx
+    App.tsx
+    components/
+    pages/
+    api/
+  static/            ← empty placeholder dir; CI copies dist/ here for FastAPI StaticFiles
+  src/               ← Python backend (DO NOT put React files here)
+  requirements.txt
+```
+
+- **`frontend/` not `src/`** — `src/` is reserved for the Python package. A `frontend/` source dir
+  avoids the naming collision and signals intent to every reader.
+- **`package.json` at root** — the `node-22-web` sandbox runs `npm ci` and `npm test` from the
+  repo root. A `package.json` only inside `frontend/` is invisible to the pipeline.
+- **`static/` placeholder** — create an empty `static/.gitkeep`; FastAPI mounts it via
+  `StaticFiles(directory="static", html=True)`. CI populates it from the Vite build (`dist/`).
+
+---
+
 ## Scaffold & Toolchain
 
-- Bootstrap with `vite` + `react-ts` template. **TypeScript strict mode** (`"strict": true`). `tsc --noEmit` MUST pass with zero errors before any test or build step.
 - `package.json` MUST include `"build": "tsc -b && vite build"` and `"test": "vitest run"`. The engine drives tests via `npm test` — exit non-zero on failure.
 - Always commit `package-lock.json`; `npm ci` restores deterministically.
-- `vite.config.ts`: enable the **React Compiler** and API proxy for dev:
+- **TypeScript strict mode** (`"strict": true`). `tsc --noEmit` MUST pass with zero errors.
+- `vite.config.ts` (at root): point Vite at the `frontend/` source dir, enable the **React
+  Compiler**, API proxy for dev, and configure Vitest test includes:
   ```ts
-  plugins: [react({ babel: { plugins: [['babel-plugin-react-compiler', {}]] } }), tailwindcss()],
-  server: { proxy: { '/api': 'http://localhost:8080' } }
+  import { defineConfig } from 'vite'
+  import react from '@vitejs/plugin-react'
+  import tailwindcss from '@tailwindcss/vite'
+
+  export default defineConfig({
+    root: '.',
+    build: { outDir: 'dist' },
+    plugins: [
+      react({ babel: { plugins: [['babel-plugin-react-compiler', {}]] } }),
+      tailwindcss(),
+    ],
+    server: { proxy: { '/api': 'http://localhost:8080' } },
+    test: {
+      environment: 'jsdom',
+      include: ['frontend/**/*.{test,spec}.{ts,tsx}'],
+      globals: true,
+      setupFiles: ['frontend/setupTests.ts'],
+    },
+  })
   ```
-  In production SPA and API share the same origin.
+  In production the SPA and API share the same origin (FastAPI serves `static/`).
 
 **Minimal runtime deps:** `react@19`, `react-dom@19`, `react-router-dom` v6, `@tanstack/react-query` v5, Tailwind CSS (`tailwindcss`, `@tailwindcss/vite`). **devDep:** `babel-plugin-react-compiler`. No Redux, no Zustand — React Query for GET queries; `useActionState`/`useContext` for form/UI state.
 
