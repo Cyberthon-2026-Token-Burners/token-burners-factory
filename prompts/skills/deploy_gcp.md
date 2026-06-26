@@ -57,7 +57,7 @@ DEPLOY TARGET: Google Cloud Run (web services) via Workload Identity Federation.
 - **After the deploy step, add two steps: "Extract Cloud Run URLs" then "Update README with deployment URLs".**
 
 ### Why two URLs
-The `deploy-cloudrun` action's `outputs.url` returns the **revision-specific** URL (format: `https://<service>-<hash>-<region-code>.a.run.app`). Some corporate proxies (e.g. Symantec/Broadcom) block this domain pattern on first encounter, classifying new hash-subdomains as "Placeholders" or "Uncategorized". The **stable service URL** returned by `gcloud run services describe ... --format='value(status.url)'` uses a region-anchored format (`https://<service>-<project-number>.<region>.run.app`) that is already trusted by those proxies. Always write **both** into the README so users can use whichever works in their network.
+Cloud Run Gen1 services had a revision-specific URL (`https://<service>-<hash>-<region-code>.a.run.app`) returned by the deploy action's `outputs.url`, while the stable service URL came from `gcloud run services describe`. On **Cloud Run Gen2** (the current default), `outputs.url` and `status.url` now return the **same stable URL** (`https://<service>-<project-number>.<region>.run.app`), so a naïve `URL_REVISION="${{ steps.deploy.outputs.url }}"` produces two identical links in the README. A distinct legacy `*.a.run.app` URL may still be present in the service's `run.googleapis.com/urls` annotation (Gen1 services, migrated services). The extraction step below tries both sources and falls back to the stable URL when no distinct URL is available. Always write both into the README so users with corporate proxies that distrust new hash-subdomains have the stable regional URL.
 
 ### Step 1 — Extract Cloud Run URLs
 Add a step with `id: urls` immediately after the deploy step:
@@ -68,12 +68,22 @@ Add a step with `id: urls` immediately after the deploy step:
           REGION: ${{ vars.GCP_REGION }}
           PROJECT: ${{ vars.GCP_PROJECT_ID }}
         run: |
-          URL_STABLE=$(gcloud run services describe "$SERVICE" --region="$REGION" --project="$PROJECT" --format='value(status.url)')
+          SVC_JSON=$(gcloud run services describe "$SERVICE" --region="$REGION" --project="$PROJECT" --format=json)
+          URL_STABLE=$(echo "$SVC_JSON" | jq -r '.status.url')
           URL_REVISION="${{ steps.deploy.outputs.url }}"
+          # Cloud Run Gen2: outputs.url and status.url are often the same stable URL.
+          # Try the run.googleapis.com/urls annotation for a distinct legacy *.a.run.app URL.
+          if [ "$URL_STABLE" = "$URL_REVISION" ] || [ -z "$URL_REVISION" ]; then
+            URL_REVISION=$(echo "$SVC_JSON" | jq -r \
+              --arg stable "$URL_STABLE" \
+              '(.metadata.annotations["run.googleapis.com/urls"] // "[]") | fromjson | .[] | select(. != $stable)' \
+              2>/dev/null | head -n1)
+            URL_REVISION="${URL_REVISION:-$URL_STABLE}"
+          fi
           echo "URL_STABLE=$URL_STABLE" >> "$GITHUB_ENV"
           echo "URL_REVISION=$URL_REVISION" >> "$GITHUB_ENV"
 ```
-`gcloud run services describe` returns the stable regional URL from the service's live metadata. Both values are exported into `$GITHUB_ENV` so the next step reads them as plain shell variables.
+A single `gcloud run services describe --format=json` call fetches the full service metadata. `status.url` gives the stable regional URL. If `outputs.url` from the deploy action is identical (Cloud Run Gen2 default), the step falls back to the `run.googleapis.com/urls` annotation (a JSON-encoded array of all service URLs), selecting the first URL that differs from the stable one. If no distinct URL exists, both variables hold the stable URL — the README will show two identical links, which is harmless. Both values are exported into `$GITHUB_ENV` so the next step reads them as plain shell variables.
 
 ### Step 2 — Update README with deployment URLs
 Rules for this step:
