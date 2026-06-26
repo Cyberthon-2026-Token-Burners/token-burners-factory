@@ -8,7 +8,7 @@ LANGUAGE TARGET: Python / FastAPI — production-code rules for a FastAPI backen
 
 ## Project layout
 - All backend source code lives under `backend/` (relative to the repo root). Entry point: `backend/main.py` (or `backend/app/main.py` per the blueprint topology).
-- Dependency manifest: `backend/requirements.txt` — declare EVERY third-party runtime AND test dependency (e.g. `fastapi`, `uvicorn[standard]`, `pydantic`, `httpx`, `pytest`, `pytest-asyncio`), version-pinned, one per line. The toolchain restores from `pip install -r backend/requirements.txt`; a `pyproject.toml` alone is NOT sufficient.
+- Dependency manifest: `backend/requirements.txt` — declare EVERY third-party runtime AND test dependency (e.g. `fastapi`, `uvicorn[standard]`, `pydantic`, `httpx`, `pytest`, `pytest-asyncio`), version-pinned, one per line. The toolchain restores from `pip install -r requirements.txt` inside the `backend/` sandbox root; a `pyproject.toml` alone is NOT sufficient.
 
 ## FastAPI conventions
 - Define the application factory in a dedicated `create_app()` function so it can be instantiated independently in tests.
@@ -25,7 +25,7 @@ LANGUAGE TARGET: Python / FastAPI — production-code rules for a FastAPI backen
 
 ## Testing
 - Use `pytest` with `pytest-asyncio` and `httpx.AsyncClient` (with `ASGITransport`) for integration tests against the running application instance — no mocking of internal business logic.
-- Test files live under `backend/tests/` with `test_` prefix.
+- Test files MUST live under `backend/tests/` with `test_` prefix. This overrides the generic Python test placement rule — do NOT place tests under the root `tests/` directory.
 - Every endpoint MUST have at least one integration test covering the happy path and one covering a key error path (e.g. 404, 422 validation failure).
 - Import path: tests import from `backend.` modules; ensure `backend/__init__.py` exists if needed.
 

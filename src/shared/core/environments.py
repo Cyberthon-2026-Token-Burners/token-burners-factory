@@ -494,6 +494,23 @@ def get_gitignore_template(environment_id: str) -> str:
     return GITIGNORE_TEMPLATES[env_language(environment_id)]
 
 
+def get_combined_gitignore_template(environment_ids: list[str]) -> str:
+    """Return a merged .gitignore body covering all given environment_ids.
+
+    Each environment contributes its language-keyed template section exactly once (deduped by
+    language_id). Sections are joined with a blank line. Registry-driven: adding a new language to
+    GITIGNORE_TEMPLATES automatically surfaces here — no per-language branching in the caller.
+    """
+    seen: set[str] = set()
+    sections: list[str] = []
+    for env_id in environment_ids:
+        lang = env_language(env_id)
+        if lang not in seen:
+            seen.add(lang)
+            sections.append(GITIGNORE_TEMPLATES[lang])
+    return "\n".join(sections)
+
+
 # Doc/config artifacts that are NEVER testable source in any stack (fixes "tests for README/LICENSE").
 _NON_SOURCE_NAMES = frozenset({"license", "license.md", "license.txt", "readme.md", ".gitignore", ".dockerignore"})
 _NON_SOURCE_EXTS = frozenset({".md", ".txt", ".lock", ".json", ".yml", ".yaml", ".toml", ".cfg", ".ini", ".csproj", ".sln"})

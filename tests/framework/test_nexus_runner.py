@@ -17,7 +17,7 @@ from src.nexus import runner as orchestrator
 from src.nexus.runner import _checkpoint_kind, _run_dir_from_checkpoint
 from src.shared.core.runs import Projects
 
-_TASKS = [{"ticket_id": "TASK-01", "title": "Do it", "description": "body", "environment_id": "python-3.12-core"}]
+_TASKS = [{"ticket_id": "TASK-01", "title": "Do it", "description": "body", "environment_id": "python-3.12-core", "component": "BACKEND"}]
 
 
 def _patch_agents(po="# Epic", sa="# Blueprint", tpm=None):
@@ -55,8 +55,8 @@ class NexusRunDirTests(unittest.IsolatedAsyncioTestCase):
         # (the RECITATION root cause); business tickets stay free of baseline files. LICENSE/README/CHANGELOG
         # are no longer injected here — the Technical Writer owns them post-implementation.
         tasks = [
-            {"ticket_id": "TASK-01", "title": "Prep", "description": "prep body", "environment_id": "python-3.12-core"},
-            {"ticket_id": "TASK-02", "title": "Feature", "description": "feature body", "environment_id": "python-3.12-core"},
+            {"ticket_id": "TASK-01", "title": "Prep", "description": "prep body", "environment_id": "python-3.12-core", "component": "BACKEND"},
+            {"ticket_id": "TASK-02", "title": "Feature", "description": "feature body", "environment_id": "python-3.12-core", "component": "BACKEND"},
         ]
         with TemporaryDirectory() as td:
             run_dir = Path(td) / "run_b"
@@ -71,6 +71,41 @@ class NexusRunDirTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn("Apache License", t1)                   # LICENSE moved to the Technical Writer
             self.assertNotIn("Repository Baseline Files", t2)        # business ticket untouched
             self.assertNotIn("```gitignore", t2)
+            # Component tag is written as an engine-authored section (byte-stable, not LLM-authored).
+            self.assertIn("## Component: BACKEND", t1)
+            self.assertIn("## Component: BACKEND", t2)
+
+    async def test_component_tag_written_for_all_tickets(self) -> None:
+        tasks = [
+            {"ticket_id": "TASK-01", "title": "Backend", "description": "b", "environment_id": "python-3.12-core", "component": "BACKEND"},
+            {"ticket_id": "TASK-02", "title": "Frontend", "description": "f", "environment_id": "node-22-web", "component": "FRONTEND"},
+        ]
+        with TemporaryDirectory() as td:
+            run_dir = Path(td) / "run_comp"
+            p_po, p_sa, p_tpm = _patch_agents(tpm=tasks)
+            with p_po, p_sa, p_tpm:
+                await run_nexus("an idea", run_dir=run_dir)
+
+            t1 = (run_dir / "artifacts" / "TASK-01.md").read_text(encoding="utf-8")
+            t2 = (run_dir / "artifacts" / "TASK-02.md").read_text(encoding="utf-8")
+            self.assertIn("## Component: BACKEND", t1)
+            self.assertIn("## Component: FRONTEND", t2)
+
+    async def test_task01_gitignore_covers_all_project_envs(self) -> None:
+        # For a fullstack monorepo both python and node patterns must be present in TASK-01's gitignore.
+        tasks = [
+            {"ticket_id": "TASK-01", "title": "Backend", "description": "b", "environment_id": "python-3.12-core", "component": "BACKEND"},
+            {"ticket_id": "TASK-02", "title": "Frontend", "description": "f", "environment_id": "node-22-web", "component": "FRONTEND"},
+        ]
+        with TemporaryDirectory() as td:
+            run_dir = Path(td) / "run_fullstack"
+            p_po, p_sa, p_tpm = _patch_agents(tpm=tasks)
+            with p_po, p_sa, p_tpm:
+                await run_nexus("an idea", run_dir=run_dir)
+
+            t1 = (run_dir / "artifacts" / "TASK-01.md").read_text(encoding="utf-8")
+            self.assertIn("__pycache__/", t1)    # python patterns
+            self.assertIn("node_modules/", t1)   # node patterns
 
     async def test_resume_skips_completed_phases(self) -> None:
         with TemporaryDirectory() as td:
@@ -186,8 +221,8 @@ class GetTasksForNexusRunTests(unittest.TestCase):
         with TemporaryDirectory() as td:
             run_dir = Path(td) / "run_x"
             state = NexusState(raw_idea="i", run_dir=run_dir, tasks=[
-                {"ticket_id": "TASK-10", "title": "ten", "description": "b", "environment_id": "python-3.12-core"},
-                {"ticket_id": "TASK-2", "title": "two", "description": "b", "environment_id": "python-3.12-core"},
+                {"ticket_id": "TASK-10", "title": "ten", "description": "b", "environment_id": "python-3.12-core", "component": "BACKEND"},
+                {"ticket_id": "TASK-2", "title": "two", "description": "b", "environment_id": "python-3.12-core", "component": "BACKEND"},
             ])
             state.ensure_dirs()
             state.save_checkpoint()

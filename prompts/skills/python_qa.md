@@ -37,8 +37,7 @@ system prompt; this skill only maps them to Python idioms.
   so a wrong-endpoint hit fails with a clear signal instead of an opaque decode error.
 
 ## File Placement & Module Identity
-- Tests live in the dedicated `tests/` directory (the engine derives the exact path) — NEVER colocated
-  next to the source file. Emit only the suite body for the assigned module.
+- Tests live in the dedicated `tests/` directory by default (the engine derives the exact path) — NEVER colocated next to the source file. For monorepo layouts a domain skill may specify a subdirectory (e.g. `backend/tests/`); that instruction takes precedence over this default. Emit only the suite body for the assigned module.
 - Import the module under test by its exact dotted path (e.g. `import package.module` or
   `from package.module import ...`).
 - A thin entrypoint (a module whose only top-level executable code is an `if __name__ == "__main__":`

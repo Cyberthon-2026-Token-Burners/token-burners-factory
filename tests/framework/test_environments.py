@@ -15,6 +15,7 @@ from src.shared.core.environments import (
     QA_LANGUAGE_PROFILES,
     GITIGNORE_TEMPLATES,
     get_gitignore_template,
+    get_combined_gitignore_template,
     all_source_extensions,
     extension_language_map,
     deploy_target_for_archetype,
@@ -230,6 +231,20 @@ class GitignoreTemplateTests(unittest.TestCase):
                 "/" in line or "*" in line or "." in line,
                 f"suspicious unanchored bare pattern in go template: {line!r}",
             )
+
+    def test_combined_gitignore_merges_both_envs(self) -> None:
+        combined = get_combined_gitignore_template(["python-3.12-core", "node-22-web"])
+        self.assertIn("__pycache__/", combined)      # python patterns present
+        self.assertIn("node_modules/", combined)     # node patterns present
+
+    def test_combined_gitignore_deduplicates_same_env(self) -> None:
+        single = get_combined_gitignore_template(["python-3.12-core"])
+        doubled = get_combined_gitignore_template(["python-3.12-core", "python-3.12-core"])
+        self.assertEqual(single.strip(), doubled.strip())
+
+    def test_combined_gitignore_single_env_matches_single_template(self) -> None:
+        combined = get_combined_gitignore_template(["python-3.12-core"])
+        self.assertEqual(combined.strip(), get_gitignore_template("python-3.12-core").strip())
 
 
 if __name__ == "__main__":
