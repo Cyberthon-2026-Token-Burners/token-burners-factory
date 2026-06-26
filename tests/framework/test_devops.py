@@ -215,6 +215,52 @@ class RunDevopsGateTests(unittest.TestCase):
             self._write(repo, workflow=wf, dockerfile="FROM x\nCMD [\"x\"]\n")
             self.assertEqual(run_devops_gate(repo, archetype="rest_api"), [])
 
+    def test_services_update_allow_unauthenticated_is_always_flagged(self) -> None:
+        # `gcloud run services update --allow-unauthenticated` is NOT a valid gcloud command — exits 2.
+        # The gate must flag it unconditionally, even when a valid IAM binding is also present.
+        with TemporaryDirectory() as td:
+            repo = Path(td)
+            # Workflow has both the correct IAM binding AND the invalid services update step (the real bug).
+            wf = (
+                "name: deploy\non:\n  push:\n    branches: [main]\n"
+                "jobs:\n  deploy:\n    steps:\n"
+                "      - uses: google-github-actions/deploy-cloudrun@v2\n"
+                "        with:\n          service: ${{ github.event.repository.name }}\n"
+                "          flags: '--allow-unauthenticated'\n"
+                "      - run: gcloud run services add-iam-policy-binding ${{ github.event.repository.name }}"
+                " --member=allUsers --role=roles/run.invoker\n"
+                "      - env:\n          SERVICE: ${{ github.event.repository.name }}\n"
+                "        run: gcloud run services update \"$SERVICE\" --region=us-central1"
+                " --project=my-proj --allow-unauthenticated\n"
+            )
+            self._write(repo, workflow=wf, dockerfile="FROM python:3.12-slim\nCMD [\"python\", \"app.py\"]\n")
+            problems = run_devops_gate(repo, archetype="rest_api")
+            self.assertTrue(
+                any("services update" in p and "--allow-unauthenticated" in p for p in problems),
+                problems,
+            )
+
+    def test_services_update_allow_unauthenticated_alone_also_flagged_as_no_public_access(self) -> None:
+        # When `services update --allow-unauthenticated` is the ONLY "grant" (no valid flag, no IAM binding),
+        # the gate should fire BOTH the invalid-command error AND the missing-public-access error.
+        with TemporaryDirectory() as td:
+            repo = Path(td)
+            wf = (
+                "name: deploy\non:\n  push:\n    branches: [main]\n"
+                "jobs:\n  deploy:\n    steps:\n"
+                "      - uses: google-github-actions/deploy-cloudrun@v2\n"
+                "        with:\n          service: ${{ github.event.repository.name }}\n"
+                "      - env:\n          SERVICE: ${{ github.event.repository.name }}\n"
+                "        run: gcloud run services update \"$SERVICE\" --allow-unauthenticated\n"
+            )
+            self._write(repo, workflow=wf, dockerfile="FROM python:3.12-slim\nCMD [\"python\", \"app.py\"]\n")
+            problems = run_devops_gate(repo, archetype="rest_api")
+            self.assertTrue(
+                any("services update" in p and "--allow-unauthenticated" in p for p in problems),
+                problems,
+            )
+            self.assertTrue(any("public invocation" in p for p in problems), problems)
+
     def test_hardcoded_service_name_is_flagged(self) -> None:
         # The overwrite-collision guard: a static service name (no repo-context derivation) lets one app
         # clobber another's Cloud Run service. A public, well-formed workflow is still flagged for naming.

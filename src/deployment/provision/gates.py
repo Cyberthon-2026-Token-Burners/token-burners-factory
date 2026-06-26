@@ -120,7 +120,30 @@ def run_devops_gate(repo_dir, archetype: str | None = None) -> list[str]:
     if target_spec and target_spec.get("requires_public_invoker") and workflow_text:
         lowered = workflow_text.lower()
         has_iam_binding = "allusers" in lowered and "run.invoker" in lowered
-        has_unauth_flag = "allow-unauthenticated" in lowered
+        # `--allow-unauthenticated` only counts as a valid grant when used via the
+        # deploy-cloudrun action's `flags:` input (image-deploy mode). The flag does NOT
+        # exist on `gcloud run services update` — that command exits 2 at runtime.
+        # Check each line so the invalid `services update` form is excluded.
+        has_unauth_flag = any(
+            "allow-unauthenticated" in line.lower() and "services update" not in line.lower()
+            for line in workflow_text.splitlines()
+        )
+        # Detect the invalid `gcloud run services update --allow-unauthenticated` form and
+        # flag it unconditionally — it exits 2 even when a valid IAM binding step is present.
+        invalid_update_lines = [
+            line.strip()
+            for line in workflow_text.splitlines()
+            if "services update" in line.lower() and "allow-unauthenticated" in line.lower()
+        ]
+        if invalid_update_lines:
+            problems.append(
+                f"deploy.yml uses `gcloud run services update --allow-unauthenticated`, which is "
+                "not a valid command (`--allow-unauthenticated` is not a recognized argument for "
+                "`gcloud run services update` — exits 2). Cloud Run's public-access policy lives "
+                "in IAM and must be set via `gcloud run services add-iam-policy-binding`. Remove "
+                "the invalid step; the `add-iam-policy-binding` step (with --member=allUsers "
+                "--role=roles/run.invoker) is the authoritative grant."
+            )
         # Manifest-deploy mode: `gcloud run services replace`, or a `metadata:` input on the deploy-cloudrun
         # action. There the flag is incompatible/ignored — require the explicit IAM binding.
         uses_manifest_deploy = "services replace" in lowered or (
