@@ -285,6 +285,23 @@ SUPPORTED_DEPLOY_TARGETS = {
             "Ship a self-contained, runnable/installable artifact; do not assume a hosted runtime or platform-injected environment.",
         ),
     },
+    "gcp-cloud-run-monorepo": {
+        "description": "Dual Google Cloud Run deployment for a fullstack monorepo — one service for the backend (./backend/Dockerfile) and one for the frontend (./frontend/Dockerfile, Nginx serving React static files).",
+        "archetypes": ("fullstack_monorepo",),
+        "skill": "deploy_gcp",
+        # Both services are public-facing; the deploy workflow MUST grant unauthenticated invocation
+        # for each service, else Cloud Run rejects every anonymous request with HTTP 403.
+        "requires_public_invoker": True,
+        "runtime_constraints": (
+            "Backend MUST listen on the port given by the PORT environment variable and bind 0.0.0.0 — never localhost.",
+            "Backend MUST boot with ZERO required configuration: every environment-sourced setting MUST have a safe in-code default.",
+            "Backend MUST be stateless: persist nothing to local disk between requests.",
+            "Backend MUST expose a lightweight health endpoint for liveness/readiness probes.",
+            "Frontend MUST be Nginx serving the React static build; listen on $PORT.",
+            "Both services MUST be publicly invocable (unauthenticated) by default.",
+            "Backend code MUST reside under /backend/; frontend code MUST reside under /frontend/.",
+        ),
+    },
 }
 
 

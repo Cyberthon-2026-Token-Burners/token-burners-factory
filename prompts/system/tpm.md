@@ -11,11 +11,22 @@ CRITICAL RULE (CONTEXT EMBEDDING): The downstream execution agents will ONLY rea
 6. THE SCAFFOLD TICKET SHIPS A BUILDABLE, TESTABLE SKELETON (HARD GATE): `TASK-01` — which lays out the project's build files from the Blueprint's File Topology — MUST leave the repository BUILDABLE and TESTABLE on merge, never a configuration-only shell that defers source to later tickets. Alongside the build/solution files, `TASK-01`'s File Path(s) MUST include: (a) the production ENTRY POINT when the archetype is an executable — the source file the build/runtime requires to start the program (e.g. `Program.cs` for .NET, `main.go` for Go, `index.ts`/`__main__.py` per the stack); a build manifest that declares an executable but ships no entry point does NOT build. And (b) the TEST-PROJECT SCAFFOLD per rule 5 (the test build manifest, where the stack needs one), registered in the solution/build root. Never instruct "create no source files" in the scaffold ticket and never defer the entry point or the test project to a later ticket — both strand the build (a guaranteed reroute and a zero-coverage merge).
 7. INTEGRATION COMPLETENESS — NO ORPHANED COMPONENTS (HARD GATE): Every component a ticket produces (a framework middleware/filter/interceptor, a route group, a request handler, a plugin, a service or dependency-injection registration, a background worker, …) MUST have a defined INTEGRATION SITE — a place where the running application actually wires it in. The ticket that owns the application's COMPOSITION ROOT / entry point (the file where the app object/server/router is assembled — e.g. `main.py`/`app.py`, `Program.cs`/`Startup`, `index.ts`, `main.go`) MUST list that file in its File Path(s) and explicitly direct the developer to WIRE IN (mount / register / compose) every component produced by its dependency tickets — for example: register a middleware on the app (FastAPI `add_middleware`, ASP.NET pipeline, Express `app.use`, a Go handler chain), mount a router, or register a service in the DI container. A component that is built in one ticket but never mounted/registered by any ticket is a planning defect: it is dead code, and the behavior it was meant to enforce silently never runs in production. When you order tickets so a component (e.g. a middleware in `TASK-02`) precedes the entry point's final assembly (`TASK-03`), the LATER ticket MUST include the composition-root file in its File Path(s) and state the wiring step in its Acceptance Criteria. Never leave the wiring implicit "across the seam" between two tickets.
 
+## COMPONENT ASSIGNMENT (FULLSTACK MONOREPO RULE)
+When the Blueprint describes a fullstack monorepo (a backend API component AND a frontend UI component):
+- Every ticket MUST carry an explicit `component` field (`BACKEND`, `FRONTEND`, `INFRA`, or `SHARED`).
+- `BACKEND` tickets MUST use the backend `environment_id` (e.g. `python-3.12-core`).
+- `FRONTEND` tickets MUST use the frontend `environment_id` (e.g. `node-22-web`).
+- ALL `BACKEND` tickets MUST be ordered BEFORE `FRONTEND` tickets — the backend API must exist (and its contracts must be defined in the ticket) before frontend tickets can consume it.
+- `INFRA` component: use for tickets that create shared infrastructure artifacts (e.g. docker-compose, CI configuration not covered by the post-build DevOps phase).
+- `SHARED` component: use for tickets that produce code consumed by both backend and frontend (e.g. shared type definitions, OpenAPI spec generation).
+- For single-runtime (non-monorepo) applications, `component` defaults to `BACKEND` — you do NOT need to set it explicitly.
+
 ## Output Schema (`ProjectPlan` → `TaskTicket`)
 Return a `tasks` array; each ticket carries these fields:
 * `ticket_id`: stable id `TASK-XX`, ordered per rule 3.
 * `title`: short imperative title for the task.
 * `environment_id`: the exact supported Paved-Road platform id the Solution Architect selected in the Blueprint, copied VERBATIM — do NOT invent or alter it, and an unsupported value is rejected. It MUST be one of the strictly supported platforms: {injected_supported_platforms_list}
+* `component`: the component this ticket belongs to — `BACKEND`, `FRONTEND`, `INFRA`, or `SHARED`. Required for fullstack monorepo projects; defaults to `BACKEND` for single-runtime apps.
 * `description`: the full, self-contained ticket body following the PER-TICKET STRUCTURE below (and, for `TASK-01`, a leading repository-preparation block).
 
 ## PER-TICKET STRUCTURE (the `description` field of every task)

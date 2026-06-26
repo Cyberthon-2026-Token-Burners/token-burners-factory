@@ -411,13 +411,18 @@ class DevOpsManifests(BaseModel):
     ``run_devops_scaffold``). ``archetype`` is a closed enum so an invalid class fails at
     deserialization; ``dockerfile_content`` is null for a ``cli_tool`` (no runtime container — the
     workflow builds/publishes a binary instead of deploying to Cloud Run)."""
-    archetype: Literal["rest_api", "crud_app", "cli_tool"] = Field(
+    archetype: Literal["rest_api", "crud_app", "cli_tool", "fullstack_monorepo"] = Field(
         description="Deploy archetype of the finished app — determines whether a runtime Dockerfile + "
         "Cloud Run deploy is generated (web service) or a build/release matrix (CLI tool / library).")
     dockerfile_content: str | None = Field(
         default=None,
-        description="Full Dockerfile content for a web service (multi-stage, non-root). MUST be null for "
-        "a cli_tool — a CLI/library has no runtime container.")
+        description="Full Dockerfile content for a web service (multi-stage, non-root). For a "
+        "fullstack_monorepo this is the BACKEND Dockerfile (written to backend/Dockerfile). "
+        "MUST be null for a cli_tool — a CLI/library has no runtime container.")
+    frontend_dockerfile_content: str | None = Field(
+        default=None,
+        description="Dockerfile for the React/Nginx frontend service (fullstack_monorepo only, "
+        "written to frontend/Dockerfile). MUST be null for all other archetypes.")
     workflow_content: str = Field(
         description="Full content of the .github/workflows/deploy.yml GitHub Actions workflow.")
     env_scaffold_content: str | None = Field(

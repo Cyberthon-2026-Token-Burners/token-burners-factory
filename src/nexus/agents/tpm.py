@@ -1,4 +1,6 @@
 # Nexus Control Plane — TPM agent. Breaks an Epic + Blueprint into atomic Developer task tickets.
+from enum import Enum
+
 from pydantic import BaseModel, Field, field_validator
 
 from src.shared.core.config import TPM_MODEL
@@ -9,10 +11,22 @@ from src.shared.core.prompts import get_system_prompt_with_platforms
 from src.shared.utils.llm import run_structured_llm
 
 
+class ComponentType(str, Enum):
+    """Component classification for a task ticket in a monorepo or multi-component project."""
+    BACKEND = "BACKEND"
+    FRONTEND = "FRONTEND"
+    INFRA = "INFRA"
+    SHARED = "SHARED"
+
+
 class TaskTicket(BaseModel):
     ticket_id: str = Field(description="Stable ticket id (e.g. TASK-01, TASK-02); numbering/ordering rules in the system prompt.")
     title: str = Field(description="Short imperative title for the task.")
     environment_id: str = Field(description="The supported Paved-Road platform id this ticket runs on, copied from the Blueprint.")
+    component: ComponentType = Field(
+        default=ComponentType.BACKEND,
+        description="Component this ticket belongs to (BACKEND, FRONTEND, INFRA, or SHARED). "
+                    "For single-runtime apps this defaults to BACKEND.")
     description: str = Field(description="The full, self-contained ticket body following the PER-TICKET STRUCTURE in the system prompt (and, for TASK-01, a leading repository-preparation block).")
 
     @field_validator("environment_id")
