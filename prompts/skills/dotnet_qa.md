@@ -44,6 +44,16 @@ system prompt; this skill only maps them to C# idioms.
 ## Assertions & Exceptions (concrete API for the system-prompt CRITICAL RULE)
 - Assert exceptions with `Assert.Throws<TException>(() => ...)` — the exception TYPE only. NEVER assert
   on `.Message`, `.ToString()`, or any message-derived property.
+- **BCL exception hierarchy — use `Assert.ThrowsAny<T>()` not `Assert.Throws<T>()`** for cases where
+  the .NET BCL raises a *derived* type:
+  - `ArgumentException.ThrowIfNullOrEmpty(null, ...)` → throws `ArgumentNullException` (subclass of
+    `ArgumentException`). Use `Assert.ThrowsAny<ArgumentException>()`.
+  - `JsonDocument.Parse(badJson)` → throws `JsonReaderException` (subclass of `JsonException`). Use
+    `Assert.ThrowsAny<JsonException>()`.
+  - Rule of thumb: **`Assert.Throws<T>()`** for user-defined/custom exceptions where the exact type is
+    guaranteed by your own code; **`Assert.ThrowsAny<T>()`** for BCL helpers that may raise a derived
+    subclass. Mixing these up causes exact-match failures at the gate even when the production code is
+    correct.
 
 ## Imports
 - `using <Namespace>;` exactly as declared by the topology contract / production snapshot.
@@ -73,3 +83,68 @@ not 400 (validation rejection). This is a deterministic transport limitation, no
   explain that empty-string header values are untestable via `WebApplicationFactory`. Mark those
   specific rows as prohibited in future cycles (not just "remove these" — name the untestable input
   class so QA does not re-derive them).
+
+## ASP.NET Core Middleware — `OnStarting` Callbacks in Unit Tests (MANDATORY)
+
+When a middleware under test registers callbacks via `context.Response.OnStarting(...)`, bare
+`DefaultHttpContext` does NOT fire them — the default `IHttpResponseFeature` implementation collects
+but never executes `OnStarting` callbacks unless `Response.StartAsync()` is called through a feature
+that actually fires them.
+
+### QA — required pattern for unit tests
+
+Replace the default feature with a stub that fires the callbacks before `_next` returns:
+
+```csharp
+private sealed class FakeHttpResponseFeature : HttpResponseFeature
+{
+    private readonly List<Func<object, Task>> _callbacks = new();
+    private readonly List<object> _states = new();
+
+    public override void OnStarting(Func<object, Task> callback, object state)
+    {
+        _callbacks.Add(callback);
+        _states.Add(state);
+    }
+
+    public async Task FireOnStartingAsync()
+    {
+        for (int i = 0; i < _callbacks.Count; i++)
+            await _callbacks[i](_states[i]);
+    }
+}
+```
+
+Wire it into each test method that exercises `OnStarting`-registered behavior:
+
+```csharp
+var context = new DefaultHttpContext();
+var fakeFeature = new FakeHttpResponseFeature();
+context.Features.Set<IHttpResponseFeature>(fakeFeature);
+
+RequestDelegate next = async ctx =>
+{
+    await fakeFeature.FireOnStartingAsync();   // fire before next completes
+    ctx.Response.Body = Stream.Null;
+};
+
+var middleware = new MyMiddleware(next, ...);
+await middleware.InvokeAsync(context);
+
+Assert.Equal(expectedStatus, context.Response.StatusCode);
+```
+
+- DETECT the need: if the production snapshot contains `context.Response.OnStarting(` and the test
+  uses `DefaultHttpContext`, ALWAYS apply this pattern — do not omit it and do not rely on
+  `WebApplicationFactory` for unit-level status/header assertions on the same behavior.
+- Integration tests via `WebApplicationFactory` already fire `OnStarting` correctly (they go through
+  the full pipeline). If both unit and integration coverage are present, the integration test is the
+  authoritative behavioral check; the unit test is for isolation.
+
+### Reviewer
+- When the test-runner shows `Assert.Equal() Failure: Expected: <status>. Actual: 200` for a
+  middleware test that uses `DefaultHttpContext`, the root cause is the missing `FakeHttpResponseFeature`
+  stub — NOT a production bug. The production code is correct.
+- Set `code_quality_approved: true`. In `qa_diagnostic_payload`, emit the `FakeHttpResponseFeature`
+  pattern verbatim and instruct QA to replace `DefaultHttpContext`'s default `IHttpResponseFeature`
+  before calling `InvokeAsync`.
