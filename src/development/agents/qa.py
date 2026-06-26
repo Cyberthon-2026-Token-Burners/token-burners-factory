@@ -169,7 +169,7 @@ async def run_qa_agent_node(ctx: GlobalPipelineContext, error_trace: str = "") -
     _cli_start = time.perf_counter()
     returncode, usage = await run_claude_cli(
         prompt, code_files, allowed_root=str(repo_dir), model=QA_MODEL, effort=QA_EFFORT,
-        timeout=QA_CLI_TIMEOUT, idle_timeout=QA_CLI_IDLE_TIMEOUT,
+        timeout=QA_CLI_TIMEOUT, idle_timeout=QA_CLI_IDLE_TIMEOUT, label="QA Agent",
     )
     _cli_elapsed = time.perf_counter() - _cli_start
 
