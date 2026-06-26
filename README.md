@@ -46,7 +46,12 @@ As determined during the initial research phase, this project intentionally reje
 2. **Model Routing Matrix**:
    * **Gemini (default `gemini-3.5-flash`)**: every forced-structured role — the executor's TechLead, QA, Reviewer, TechWriter, Arbiter (failure triage / contract self-healing), and DevOps (post-batch deploy-scaffolding) plus the Nexus control plane's Product Owner, Solution Architect, and TPM (optimized via low latency and high Free Tier quotas). Per-role models live in `ROLE_MODELS` (`src/shared/core/config.py`).
    * **Claude (Developer)**: Lead Software Engineer (sandboxed CLI executions via Claude Code). The model and reasoning effort are set in `src/shared/core/config.py` — `DEVELOPER_MODEL` (default `sonnet`) and `DEVELOPER_EFFORT` (default `medium`; one of `low|medium|high|xhigh|max`), forwarded to the CLI as `--model` / `--effort`.
-   * **Provider switch (`MODEL_PROVIDER` env / `--provider` flag)**: force the WHOLE pipeline onto one provider, overriding the default mixed routing above. `api`/`google`/`gemini` → Gemini for every role, including the Developer (a single-shot structured Gemini emitter writing the full file set into `repo/`, `DEVELOPER_GEMINI_MODEL`, not the CLI); `claude`/`anthropic` → the Anthropic API for every structured role (`instructor.from_anthropic`, `CLAUDE_API_MODEL`/`ANTHROPIC_MAX_TOKENS`, needs `ANTHROPIC_API_KEY`; Developer stays the Claude CLI); omitted/`default` → mixed. Resolved in `config.py` (`structured_role_routing`/`developer_provider`); `check_environment` requires only the keys/binaries the chosen provider exercises. A runtime knob — not persisted, re-pass it on `--resume`. `anthropic` is an optional dependency (needed only under provider=claude).
+   * **Provider switch (`MODEL_PROVIDER` env / `--provider` flag)**: force the WHOLE pipeline onto one provider, overriding the default mixed routing above.
+     - `api`/`google`/`gemini` → **Gemini** for every role, including the Developer (a single-shot structured Gemini emitter writing the full file set into `repo/`, `DEVELOPER_GEMINI_MODEL`, not the CLI).
+     - `claude`/`claude-code`/`cli` → the **subscription Claude Code CLI** for every role — **no API key**: the structured roles answer via a one-shot JSON CLI call (the prompt embeds the Pydantic JSON Schema; the reply is parsed + validated + retried, `CLAUDE_CLI_MODEL`), and the Developer stays the agentic CLI. Needs only the `claude` binary on PATH.
+     - `anthropic`/`claude-api` → the **Anthropic API** for every structured role (`instructor.from_anthropic`, `CLAUDE_API_MODEL`/`ANTHROPIC_MAX_TOKENS`, needs `ANTHROPIC_API_KEY` + the optional `anthropic` package; Developer stays the Claude CLI).
+     - omitted/`default` → mixed.
+     Resolved in `config.py` (`structured_role_routing`/`developer_provider`); `check_environment` requires only the keys/binaries the chosen provider exercises. A runtime knob — not persisted, re-pass it on `--resume`.
 3. **Sandboxed Runtimes**: Isolated Docker containers run code execution and verification gates to prevent agent workspace corruption.
 4. **Dual-Channel Observability**: Complete console diagnostics split from a persistent, rotating debug audit log (`sdlc_audit.log`). Real-time input/output token metrics tracked natively.
 5. **Git-Anchored Sessions**: Each executor run shallow-clones the target repository into an isolated session directory (`runs/<project>/<NNN>_exec_<ticket>_<ts>_<uid>/repo/`), checks out a `feat/ticket-<ticket>` branch, and treats the single clone's `.git` as the transactional Unit-of-Work. Snapshots use the index diff (`git add -A` → `git diff --cached <base_branch> --name-only`), giving a strict causal delta — including untracked files — while protecting context windows from binary pollution and retry bleed. On full success the orchestrator makes one atomic `feat(<ticket>): …` commit (opt-in `--push`); with `--auto-merge` it then opens, approves, and squash-merges a PR from `feat/ticket-<id>` into `base_branch` — closing the loop to `main` through a provider-agnostic `gh`-backed forge seam ([ADR 0018](./docs/decisions/0018-auto-merge-pr-loop-closure.md)). `--auto-execute` repeats this for **every** planned ticket in TPM order (`run_batch`, each ticket building on the previously-merged `main`), with a resumable `batch_state.json` checkpoint and a catchable `PipelineHalt` so a mid-batch failure stops cleanly and `--resume` continues ([ADR 0019](./docs/decisions/0019-cyclical-multi-ticket-orchestration.md)). With `--scaffold-deploy`, once the whole batch has merged a **DevOps** agent generates and merges the app's CI/CD config (an archetype-aware Dockerfile + GitHub Actions deploy workflow, Cloud Run via Workload Identity Federation) through the same forge flow — making the finished app deployable ([ADR 0020](./docs/decisions/0020-deploy-scaffolding-and-lint-gate.md)). WHERE an app deploys is a registry (`SUPPORTED_DEPLOY_TARGETS`, with deploy *mechanics* in platform skills split from app *shape*), and a deterministic gate (`run_devops_gate`) asserts a public web service is reachable (grants unauthenticated invocation — no HTTP 403) and uniquely named (a repo-derived Cloud Run service name — no cross-app overwrite); the workflow then stamps its own live/release URL back into the README via a detached-HEAD-safe `HEAD:<default-branch>` push ([ADR 0026](./docs/decisions/0026-deploy-target-registry-and-reachability-gates.md)).
@@ -136,8 +141,10 @@ Ensure your local environment variable contains a valid Gemini credential:
 
 ```bash
 export GEMINI_API_KEY="your-api-key-here"
-# Optional — only when forcing the whole pipeline onto Claude (MODEL_PROVIDER=claude / --provider claude):
+# Optional — only when routing the structured roles through the Anthropic API (--provider anthropic):
 export ANTHROPIC_API_KEY="your-anthropic-key-here"   # also: pip install anthropic
+# NOTE: --provider claude uses the subscription Claude Code CLI for everything and needs NO API key —
+# just the `claude` binary on PATH (already authenticated).
 ```
 
 The provider is the default mixed routing (Gemini structured roles + Claude-CLI Developer) unless you set
@@ -221,7 +228,8 @@ python3 main.py --resume cli-that-converts-json-to-csv
 
 # Force the WHOLE pipeline onto one provider (overrides MODEL_PROVIDER; not persisted, re-pass on --resume):
 python3 main.py --idea "..." --repo <url> --auto-execute --provider gemini   # Gemini for every role (incl. Developer)
-python3 main.py --idea "..." --repo <url> --auto-execute --provider claude   # Anthropic API for every structured role
+python3 main.py --idea "..." --repo <url> --auto-execute --provider claude   # subscription Claude Code CLI for every role (no API key)
+python3 main.py --idea "..." --repo <url> --auto-execute --provider anthropic # Anthropic API for the structured roles (needs ANTHROPIC_API_KEY)
 ```
 
 Each run is isolated under `runs/<project>/<NNN>_<plane>_<label>_<ts>_<uid>/`: an executor run

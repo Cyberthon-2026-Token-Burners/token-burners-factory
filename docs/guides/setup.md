@@ -35,8 +35,9 @@ key — then you **plan a project** and **execute its tickets**.
 > **The engine enforces this at startup.** `check_environment()` (`src/shared/core/config.py`) exits with a
 > `🚨 CRITICAL` error unless `docker` and `bandit` are on PATH and the credentials/binaries the **active
 > provider** needs are present — by default `claude` on PATH **and** `GEMINI_API_KEY` set (under
-> `--provider claude` it instead requires `ANTHROPIC_API_KEY`; under `--provider gemini` the `claude` binary
-> is not needed). The [pre-flight self-check](#pre-flight-self-check) below mirrors the default case so you pass on the first try.
+> `--provider anthropic` it instead requires `ANTHROPIC_API_KEY`; under `--provider claude` only the `claude`
+> binary, no key; under `--provider gemini` the `claude` binary is not needed). The
+> [pre-flight self-check](#pre-flight-self-check) below mirrors the default case so you pass on the first try.
 
 ---
 
@@ -375,16 +376,18 @@ wsl -e bash -lc "source venv/bin/activate && python3 -m unittest discover -s tes
 ## Environment variable reference
 
 `GEMINI_API_KEY` is the only **required** variable for the default routing. Everything else is optional with
-the default shown. (Under `--provider claude` / `MODEL_PROVIDER=claude`, `ANTHROPIC_API_KEY` becomes required
-and `GEMINI_API_KEY` is not used; the pre-flight check requires only what the active provider exercises.)
+the default shown. (Under `--provider anthropic`, `ANTHROPIC_API_KEY` becomes required and `GEMINI_API_KEY`
+is not used; under `--provider claude` NO API key is needed — only the subscription `claude` binary; the
+pre-flight check requires only what the active provider exercises.)
 
 | Variable | Default | Effect |
 |---|---|---|
-| **`GEMINI_API_KEY`** | — (**required**) | Credential for every structured agent (TechLead/QA/Reviewer/TechWriter/Arbiter/DevOps + Nexus PO/SA/TPM). Not used when `MODEL_PROVIDER=claude`. |
-| `MODEL_PROVIDER` | (unset → mixed) | Whole-pipeline provider switch (overridable per-invocation by `--provider`): `api`/`google`/`gemini` → Gemini for every role incl. the Developer (a structured Gemini emitter); `claude`/`anthropic` → Anthropic API for every structured role (Developer stays the Claude CLI); unset → mixed (Gemini structured + Claude-CLI Developer). Not persisted — re-pass on `--resume`. |
-| `ANTHROPIC_API_KEY` | (unset) | Credential for the structured roles under `MODEL_PROVIDER=claude` (then **required**); needs the optional `anthropic` package (`pip install anthropic`). Unused otherwise. |
-| `CLAUDE_API_MODEL` | `claude-sonnet-4-6` | Full Anthropic model id the structured roles use under `MODEL_PROVIDER=claude`. |
-| `ANTHROPIC_MAX_TOKENS` | `8192` | Output token cap the Anthropic Messages API requires (provider=claude). |
+| **`GEMINI_API_KEY`** | — (**required**) | Credential for every structured agent (TechLead/QA/Reviewer/TechWriter/Arbiter/DevOps + Nexus PO/SA/TPM). Not used when `MODEL_PROVIDER` routes off Gemini (`claude`/`anthropic`). |
+| `MODEL_PROVIDER` | (unset → mixed) | Whole-pipeline provider switch (overridable per-invocation by `--provider`): `api`/`google`/`gemini` → Gemini for every role incl. the Developer (a structured Gemini emitter); `claude`/`claude-code`/`cli` → the **subscription Claude Code CLI** for every role (structured roles via a one-shot JSON CLI call, no API key); `anthropic`/`claude-api` → Anthropic API for every structured role (Developer stays the Claude CLI); unset → mixed (Gemini structured + Claude-CLI Developer). Not persisted — re-pass on `--resume`. |
+| `ANTHROPIC_API_KEY` | (unset) | Credential for the structured roles under `MODEL_PROVIDER=anthropic` (then **required**); needs the optional `anthropic` package (`pip install anthropic`). Unused otherwise (incl. `--provider claude`). |
+| `CLAUDE_CLI_MODEL` | `sonnet` | CLI tier alias the structured roles use under `MODEL_PROVIDER=claude` (Claude Code CLI). |
+| `CLAUDE_API_MODEL` | `claude-sonnet-4-6` | Full Anthropic model id the structured roles use under `MODEL_PROVIDER=anthropic`. |
+| `ANTHROPIC_MAX_TOKENS` | `8192` | Output token cap the Anthropic Messages API requires (provider=anthropic). |
 | `DEVELOPER_GEMINI_MODEL` | `gemini-3.5-flash` | Model the Gemini Developer emitter uses under `MODEL_PROVIDER=gemini`. |
 | `CLAUDE_CLI_BIN` | `claude` | Path to the Claude CLI binary; pin to the nvm Linux build under WSL. |
 | `GITHUB_TOKEN` | (unset) | Read by an env-backed git credential helper (if you configure one) to clone/push **private** HTTPS repos, so you can pass a token-free `--repo` URL — see [Git auth (private repos)](#git-auth-private-repos). Also the auth `gh` uses for `--auto-merge` (then **required**). |

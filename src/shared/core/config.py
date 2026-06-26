@@ -70,25 +70,34 @@ DEVELOPER_EFFORT = EFFORT_MEDIUM          # any of AVAILABLE_EFFORT_LEVELS
 # ==========================================
 # PROVIDER SWITCH (single knob: which LLM provider drives EVERY role)
 # ==========================================
-# `MODEL_PROVIDER` (env) / `--provider` (CLI) forces the WHOLE pipeline onto one provider. Three states:
+# `MODEL_PROVIDER` (env) / `--provider` (CLI) forces the WHOLE pipeline onto one provider. States:
 #   * unset / "" / "default" / "mixed" → DEFAULT mixed routing (unchanged): structured roles run on
-#     Gemini (per-role models in ROLE_MODELS), the Developer runs on the agentic Claude CLI.
+#     Gemini (per-role models in ROLE_MODELS), the Developer runs on the agentic Claude Code CLI.
 #   * "api" / "google" / "gemini"      → Gemini EVERYWHERE: structured roles keep their Gemini models AND
 #     the Developer runs via a Gemini structured file-emitter (no Claude calls anywhere).
-#   * "claude" / "anthropic"           → Claude EVERYWHERE: structured roles run on the Anthropic API
-#     (instructor.from_anthropic, CLAUDE_API_MODEL) AND the Developer stays the Claude CLI.
+#   * "claude" / "claude-code" / "cli" → Claude Code CLI EVERYWHERE (subscription, NO API key): the
+#     Developer is the agentic CLI (as in default) AND every structured role runs through the SAME CLI in a
+#     one-shot JSON mode (the prompt embeds the Pydantic JSON Schema; the answer is parsed + validated +
+#     retried). Needs only the `claude` binary on PATH (already subscription-authenticated).
+#   * "anthropic" / "claude-api"       → Anthropic API EVERYWHERE: structured roles run on the Anthropic
+#     API (instructor.from_anthropic, CLAUDE_API_MODEL — needs ANTHROPIC_API_KEY + the `anthropic` pkg);
+#     the Developer stays the agentic Claude Code CLI.
 # The CLI flag overrides the env via set_model_provider() (called once in main() before any role runs);
 # resolution is dynamic (active_provider()), never a frozen dict, so the override takes effect everywhere.
-PROVIDER_DEFAULT = "default"   # mixed: Gemini structured + Claude-CLI Developer (today's behaviour)
-PROVIDER_GEMINI  = "gemini"    # Google Gemini for every role
-PROVIDER_CLAUDE  = "claude"    # Anthropic Claude for every role
+PROVIDER_DEFAULT    = "default"     # mixed: Gemini structured + Claude-CLI Developer (today's behaviour)
+PROVIDER_GEMINI     = "gemini"      # Google Gemini for every role
+PROVIDER_CLAUDE     = "claude"      # Claude Code CLI for every role (subscription, no API key)
+PROVIDER_CLAUDE_API = "claude_api"  # Anthropic API for every structured role (key-based)
 
 # Accepted CLI/env spellings → canonical provider. "api"/"google" are the operator-facing aliases for
-# Gemini (the user asked for "api гугла"); "anthropic" aliases Claude.
+# Gemini (the user asked for "api гугла"); "claude"/"claude-code"/"cli" mean the Claude Code CLI (NOT the
+# API); the key-based Anthropic API is the opt-in "anthropic"/"claude-api".
 PROVIDER_ALIASES = {
     "": PROVIDER_DEFAULT, "default": PROVIDER_DEFAULT, "mixed": PROVIDER_DEFAULT,
     "api": PROVIDER_GEMINI, "google": PROVIDER_GEMINI, "gemini": PROVIDER_GEMINI,
-    "claude": PROVIDER_CLAUDE, "anthropic": PROVIDER_CLAUDE,
+    "claude": PROVIDER_CLAUDE, "claude-code": PROVIDER_CLAUDE, "claude_code": PROVIDER_CLAUDE,
+    "cli": PROVIDER_CLAUDE, "claude-cli": PROVIDER_CLAUDE, "claude_cli": PROVIDER_CLAUDE,
+    "anthropic": PROVIDER_CLAUDE_API, "claude-api": PROVIDER_CLAUDE_API, "claude_api": PROVIDER_CLAUDE_API,
 }
 
 
@@ -111,11 +120,16 @@ def set_model_provider(value: str | None) -> str:
 
 
 def active_provider() -> str:
-    """The canonical provider in force right now (PROVIDER_DEFAULT | PROVIDER_GEMINI | PROVIDER_CLAUDE)."""
+    """The canonical provider in force right now (one of the PROVIDER_* constants)."""
     return _ACTIVE_PROVIDER
 
 
-# Anthropic API model used for the structured roles when provider == claude. The Anthropic API needs a
+# Model the structured roles use when provider == claude (Claude Code CLI). A CLI tier ALIAS (resolves to
+# the latest of that tier), env-overridable. Distinct from CLAUDE_API_MODEL (the full id the Anthropic API
+# needs) — the CLI accepts the short alias.
+CLAUDE_CLI_MODEL = os.environ.get("CLAUDE_CLI_MODEL", CLAUDE_SONNET)
+
+# Anthropic API model used for the structured roles when provider == anthropic. The Anthropic API needs a
 # FULL model id (not the CLI tier alias), env-overridable. ANTHROPIC_MAX_TOKENS bounds the output (the
 # Anthropic Messages API requires max_tokens; Gemini does not).
 CLAUDE_API_MODEL = os.environ.get("CLAUDE_API_MODEL", "claude-sonnet-4-6")
@@ -127,25 +141,31 @@ DEVELOPER_GEMINI_MODEL = os.environ.get("DEVELOPER_GEMINI_MODEL", GEMINI_3_5_FLA
 
 
 def structured_role_routing(role: str) -> tuple[str, str, str]:
-    """Resolve (model, display_label, provider) for a structured (instructor) role under the active
-    provider. Claude provider → CLAUDE_API_MODEL via Anthropic; otherwise the role's Gemini model.
+    """Resolve (model, display_label, provider) for a structured role under the active provider:
+      * claude     → CLAUDE_CLI_MODEL via the Claude Code CLI one-shot JSON adapter (PROVIDER_CLAUDE),
+      * anthropic  → CLAUDE_API_MODEL via the Anthropic API (PROVIDER_CLAUDE_API),
+      * otherwise  → the role's Gemini model via instructor (PROVIDER_GEMINI).
 
     The display label is taken from ROLE_MODELS so telemetry/plane attribution is provider-independent.
-    The pseudo-role ``"developer"`` is the Gemini structured file-emitter (provider=gemini only — the
-    default/claude Developer is the agentic CLI), kept out of ROLE_MODELS so that map stays the
+    The pseudo-role ``"developer"`` is the Gemini structured file-emitter (provider=gemini only — under
+    every other provider the Developer is the agentic CLI), kept out of ROLE_MODELS so that map stays the
     structured-Gemini-roles SSOT; its label matches the CLI Developer's for plane attribution.
     """
     if role == "developer":
         return DEVELOPER_GEMINI_MODEL, "Developer Agent", PROVIDER_GEMINI
     _model, label = ROLE_MODELS[role]
-    if active_provider() == PROVIDER_CLAUDE:
-        return CLAUDE_API_MODEL, label, PROVIDER_CLAUDE
+    provider = active_provider()
+    if provider == PROVIDER_CLAUDE:
+        return CLAUDE_CLI_MODEL, label, PROVIDER_CLAUDE
+    if provider == PROVIDER_CLAUDE_API:
+        return CLAUDE_API_MODEL, label, PROVIDER_CLAUDE_API
     return _model, label, PROVIDER_GEMINI
 
 
 def developer_provider() -> str:
     """Which backend runs the Developer: PROVIDER_GEMINI (structured Gemini emitter) only when the active
-    provider is Gemini; otherwise the agentic Claude CLI (PROVIDER_CLAUDE) for both default and claude."""
+    provider is Gemini; otherwise the agentic Claude Code CLI (PROVIDER_CLAUDE) — default, claude, and
+    anthropic all run the Developer as the agentic CLI."""
     return PROVIDER_GEMINI if active_provider() == PROVIDER_GEMINI else PROVIDER_CLAUDE
 
 # Wall-clock ceiling (seconds) for ONE agentic Developer CLI session. The launcher kills+reaps the
@@ -345,9 +365,11 @@ def check_environment(require_forge: bool = False):
     # Provider routing decides which binaries/keys are actually exercised this run, so we only require
     # what will be called: the Claude CLI is unused under provider=gemini, and the Gemini API key + the
     # Anthropic API key are each only needed when that provider drives at least one role.
-    need_claude_cli = developer_provider() == PROVIDER_CLAUDE          # default / claude → agentic CLI Developer
+    # The Claude Code CLI binary is exercised whenever the Developer is the agentic CLI (default / claude /
+    # anthropic) AND, under provider=claude, by every structured role too — i.e. for any non-gemini provider.
+    need_claude_cli = developer_provider() == PROVIDER_CLAUDE
     need_gemini_key = provider in (PROVIDER_DEFAULT, PROVIDER_GEMINI)  # gemini structured roles and/or gemini Developer
-    need_anthropic_key = provider == PROVIDER_CLAUDE                   # structured roles on the Anthropic API
+    need_anthropic_key = provider == PROVIDER_CLAUDE_API              # structured roles on the Anthropic API (key-based)
 
     # `gh` (+ GITHUB_TOKEN) is only required when the run will open/merge a PR (--auto-merge, E2),
     # so plain runs never force a forge CLI on the operator.
@@ -362,7 +384,8 @@ def check_environment(require_forge: bool = False):
         sys.exit(1)
 
     if need_anthropic_key and not os.environ.get("ANTHROPIC_API_KEY"):
-        log.error("🚨 CRITICAL: MODEL_PROVIDER=claude requires ANTHROPIC_API_KEY to be set.")
+        log.error("🚨 CRITICAL: MODEL_PROVIDER=anthropic requires ANTHROPIC_API_KEY to be set "
+                  "(use --provider claude for the subscription Claude Code CLI instead, no key needed).")
         sys.exit(1)
 
     if require_forge and not os.environ.get("GITHUB_TOKEN"):
@@ -421,7 +444,8 @@ def get_anthropic_instructor_client() -> instructor.Instructor:
             import anthropic  # optional dependency — only the claude provider needs it
         except ImportError as e:  # pragma: no cover - exercised only without the optional dep installed
             raise RuntimeError(
-                "MODEL_PROVIDER=claude requires the 'anthropic' package — install it (pip install anthropic)."
+                "MODEL_PROVIDER=anthropic requires the 'anthropic' package — install it (pip install "
+                "anthropic), or use --provider claude for the subscription Claude Code CLI (no package/key)."
             ) from e
         log.debug("Initializing Anthropic client via ANTHROPIC_API_KEY")
         _anthropic_instructor_client = instructor.from_anthropic(

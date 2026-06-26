@@ -87,6 +87,30 @@ def log_token_usage(telemetry: Any, agent_name: str, raw_response: Any, model_na
     ``model_name=None`` keeps the cost at 0.
     """
     try:
+        # Claude Code CLI structured path (provider=claude): the raw is a `_ClaudeCliRaw` carrying an
+        # authoritative usage dict (cost reported by the CLI). Checked first — it's a plain dict, no SDK shape.
+        cli_usage = getattr(raw_response, "claude_cli_usage", None)
+        if cli_usage:
+            from src.shared.core.config import AGENT_PLANE          # lazy: avoid config↔observability cycle
+            from src.shared.utils.llm import LAST_LLM_ELAPSED_S
+            fresh_in = int(cli_usage.get("input_tokens", 0) or 0)
+            out_tokens = int(cli_usage.get("output_tokens", 0) or 0)
+            cache_read = int(cli_usage.get("cache_read_tokens", 0) or 0)
+            cache_write = int(cli_usage.get("cache_write_tokens", 0) or 0)
+            cost_usd = cli_usage.get("cost_usd", 0)
+            telemetry.record(
+                agent_name, fresh_in, out_tokens, cost_usd, provider="claude",
+                cache_read_tokens=cache_read, cache_write_tokens=cache_write,
+                plane=AGENT_PLANE.get(agent_name, "development"),
+                duration_seconds=LAST_LLM_ELAPSED_S.get(),
+            )
+            log.info(
+                f"   [TOKENS] {agent_name} | Input(fresh): {fresh_in} | "
+                f"Output: {out_tokens} | Budgeted: {fresh_in + out_tokens} | "
+                f"Cost: ${cost_usd:.4f} | Cumulative: {telemetry.total_tokens}t / "
+                f"${telemetry.total_cost_usd:.4f}"
+            )
+            return
         if hasattr(raw_response, 'usage_metadata') and raw_response.usage_metadata:
             usage = raw_response.usage_metadata
             prompt_tokens = getattr(usage, 'prompt_token_count', 0) or 0

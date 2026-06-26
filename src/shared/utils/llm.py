@@ -1,15 +1,20 @@
 import asyncio
+import json
 import re
 import time
 from contextvars import ContextVar
+from decimal import Decimal
 from typing import Any, Type
 
 from src.shared.core.config import (
     instructor_client, structured_role_routing,
-    get_anthropic_instructor_client, ANTHROPIC_MAX_TOKENS, PROVIDER_CLAUDE,
+    get_anthropic_instructor_client, ANTHROPIC_MAX_TOKENS,
+    PROVIDER_CLAUDE, PROVIDER_CLAUDE_API,
+    DEVELOPER_CLI_TIMEOUT, DEVELOPER_CLI_IDLE_TIMEOUT,
 )
 from src.shared.core.observability import log, finish_reason_name
 from src.shared.utils.api_retry import with_api_retry
+from src.shared.utils.subprocess_helpers import run_claude_cli_oneshot
 
 # Wall-clock (s) of the most recent run_structured_llm call, published per-task so log_token_usage can
 # attribute time to the agent WITHOUT changing run_structured_llm's 2-tuple return (which dozens of agent
@@ -66,24 +71,35 @@ async def run_structured_llm(
     (parsed_model, raw_response) tuple from create_with_completion.
 
     The client/model are resolved per the active provider (``structured_role_routing``): Gemini via the
-    shared ``instructor_client`` (default/gemini), or the Anthropic API via ``instructor.from_anthropic``
-    (provider=claude, which additionally needs ``max_tokens``). The RECITATION recovery below is
-    Gemini-specific and simply never triggers on the Claude path.
+    shared ``instructor_client`` (default/gemini); the Anthropic API via ``instructor.from_anthropic``
+    (provider=anthropic, which additionally needs ``max_tokens``); or the **Claude Code CLI** one-shot JSON
+    adapter (provider=claude — see ``_run_structured_via_claude_cli``). The RECITATION recovery below is
+    Gemini-specific and simply never triggers on the Claude paths.
 
     On a Gemini RECITATION block (deterministic — ``with_api_retry`` fails it fast), makes ONE
     paraphrase-guarded retry that appends ``RECITATION_GUARD`` to the messages. A second block (or any
     other failure) propagates so the caller halts with the actionable hint.
     """
     model_name, agent_name, provider = structured_role_routing(role)
+
+    # provider=claude: the subscription Claude Code CLI answers the structured roles in a one-shot JSON
+    # mode — no API key, no instructor. Timed the same way so log_token_usage attributes wall-clock.
+    if provider == PROVIDER_CLAUDE:
+        start = time.perf_counter()
+        try:
+            return await _run_structured_via_claude_cli(agent_name, response_model, messages, model_name)
+        finally:
+            LAST_LLM_ELAPSED_S.set(time.perf_counter() - start)
+
     # Gemini uses the module-global instructor_client (also the patch point for the unit tests); the
-    # Anthropic client is built lazily and requires an explicit max_tokens on every call.
-    is_claude = provider == PROVIDER_CLAUDE
-    extra_kwargs = {"max_tokens": ANTHROPIC_MAX_TOKENS} if is_claude else {}
+    # Anthropic API client is built lazily and requires an explicit max_tokens on every call.
+    is_api_claude = provider == PROVIDER_CLAUDE_API
+    extra_kwargs = {"max_tokens": ANTHROPIC_MAX_TOKENS} if is_api_claude else {}
 
     @with_api_retry(max_retries=3, agent_name=agent_name)
     async def _invoke(msgs: list[dict]) -> tuple:
         safe_msgs = _relocate_jinja_system_messages(msgs)
-        client = get_anthropic_instructor_client() if is_claude else instructor_client
+        client = get_anthropic_instructor_client() if is_api_claude else instructor_client
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
             None,
@@ -108,3 +124,81 @@ async def run_structured_llm(
     finally:
         # Publish total wall-clock (incl. retries/backoff) for log_token_usage to attribute to this role.
         LAST_LLM_ELAPSED_S.set(time.perf_counter() - start)
+
+
+# ==========================================
+# STRUCTURED OUTPUT VIA THE CLAUDE CODE CLI (provider=claude — subscription, no API key)
+# ==========================================
+# How many times the CLI is re-prompted to return schema-valid JSON before giving up (each retry feeds the
+# validation error back). Small: the CLI almost always complies on the first or second try.
+_CLI_STRUCTURED_MAX_ATTEMPTS = 3
+
+_JSON_FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.DOTALL)
+
+
+class _ClaudeCliRaw:
+    """Raw-response stand-in for a Claude-CLI structured call: carries the (authoritative) usage dict so
+    ``observability.log_token_usage`` records it via its ``claude_cli_usage`` branch — letting the existing
+    agent nodes' ``log_token_usage(...)`` calls work unchanged on the CLI path."""
+    def __init__(self, usage: dict | None):
+        self.claude_cli_usage = usage
+
+
+def _messages_to_prompt(messages: list[dict]) -> str:
+    """Flatten the chat messages into a single prompt for the CLI's ``-p`` print mode (no roles channel)."""
+    return "\n\n".join(f"{(m.get('role') or 'user').upper()}:\n{m.get('content') or ''}" for m in messages)
+
+
+def _extract_json_object(text: str) -> str:
+    """Best-effort pull of the single JSON object out of the CLI's free-text answer: prefer a fenced
+    block, else slice from the first ``{`` to the last ``}``. Returns the raw candidate (validated upstream)."""
+    if not text:
+        return ""
+    fenced = _JSON_FENCE_RE.search(text)
+    if fenced:
+        return fenced.group(1).strip()
+    start, end = text.find("{"), text.rfind("}")
+    return text[start:end + 1] if 0 <= start < end else text.strip()
+
+
+async def _run_structured_via_claude_cli(
+    agent_name: str, response_model: Type[Any], messages: list[dict], model: str,
+) -> tuple:
+    """Drive one structured role through the Claude Code CLI: embed the model's JSON Schema in the prompt,
+    one-shot the CLI, extract + validate the JSON, and re-prompt with the validation error on a miss.
+
+    Returns ``(parsed_model, _ClaudeCliRaw)`` — the raw carries the summed usage across attempts so the
+    caller's ``log_token_usage`` bills the role authoritatively. Raises after the attempt budget."""
+    schema = json.dumps(response_model.model_json_schema(), ensure_ascii=False)
+    base = _messages_to_prompt(messages)
+    directive = (
+        "\n\n=== OUTPUT FORMAT (STRICT) ===\n"
+        "Respond with ONE single JSON object and NOTHING else — no prose, no explanation, no markdown "
+        "code fences. It MUST validate against this JSON Schema:\n" + schema
+    )
+    agg = {"input_tokens": 0, "output_tokens": 0, "cache_read_tokens": 0,
+           "cache_write_tokens": 0, "cost_usd": Decimal(0)}
+    prompt = base + directive
+    last_err: Exception | None = None
+    for attempt in range(1, _CLI_STRUCTURED_MAX_ATTEMPTS + 1):
+        text, usage = await run_claude_cli_oneshot(
+            prompt, model=model, timeout=DEVELOPER_CLI_TIMEOUT, idle_timeout=DEVELOPER_CLI_IDLE_TIMEOUT,
+        )
+        if usage:
+            for k in ("input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens"):
+                agg[k] += usage.get(k, 0)
+            agg["cost_usd"] += usage.get("cost_usd", Decimal(0))
+        try:
+            parsed = response_model.model_validate_json(_extract_json_object(text))
+            return parsed, _ClaudeCliRaw(agg)
+        except Exception as e:  # validation / JSON parse error → feed it back and retry
+            last_err = e
+            log.warning(f"{agent_name} (Claude CLI) returned invalid JSON on attempt "
+                        f"{attempt}/{_CLI_STRUCTURED_MAX_ATTEMPTS}: {e}")
+            prompt = (base + directive + f"\n\n=== CORRECTION (attempt {attempt} was rejected) ===\n"
+                      f"Your previous reply did not validate against the schema: {e}\n"
+                      "Output ONLY the corrected single JSON object.")
+    raise ValueError(
+        f"{agent_name}: Claude Code CLI did not return schema-valid JSON after "
+        f"{_CLI_STRUCTURED_MAX_ATTEMPTS} attempts (last error: {last_err})."
+    )

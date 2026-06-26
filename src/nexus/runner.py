@@ -97,7 +97,10 @@ def parse_args() -> RunConfig:
     parser.add_argument("--provider", metavar="NAME",
                         help="Force the WHOLE pipeline onto one LLM provider, overriding MODEL_PROVIDER: "
                              "'api'/'google'/'gemini' → Gemini for every role (incl. the Developer); "
-                             "'claude'/'anthropic' → Anthropic Claude for every role (needs ANTHROPIC_API_KEY); "
+                             "'claude'/'claude-code'/'cli' → the subscription Claude Code CLI for every "
+                             "role (NO API key — structured roles answer via a one-shot JSON CLI call, the "
+                             "Developer stays agentic); 'anthropic'/'claude-api' → the Anthropic API for "
+                             "every structured role (needs ANTHROPIC_API_KEY + the anthropic package); "
                              "omitted → the default mixed routing (Gemini structured roles + Claude-CLI "
                              "Developer). Not persisted — re-pass it on --resume.")
     parser.add_argument("--reset-attempts", action="store_true", help="Reset circuit breaker counter on resume.")

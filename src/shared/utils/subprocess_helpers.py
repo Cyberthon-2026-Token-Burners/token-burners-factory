@@ -2,6 +2,7 @@ import os
 import re
 import json
 import asyncio
+import tempfile
 from decimal import Decimal
 # subprocess: only PIPE/DEVNULL constants with fixed-argument exec, never shell=True.
 import subprocess  # nosec B404
@@ -327,3 +328,80 @@ async def run_claude_cli(
         raise ClaudeCliQuotaExhausted(quota_hint)
     usage = parse_claude_usage("\n".join(stdout_buffer))
     return proc.returncode, usage
+
+
+async def run_claude_cli_oneshot(
+    prompt: str, model: str | None = None,
+    timeout: float | None = None, idle_timeout: float | None = None,
+) -> tuple[str, dict | None]:
+    """One-shot, NON-agentic Claude Code CLI call: send ``prompt``, return ``(answer_text, usage)``.
+
+    Used by the provider=claude **structured** path (`run_structured_via_claude_cli` in `llm.py`) so the
+    same subscription Claude Code CLI that drives the Developer can also answer the structured roles —
+    NO API key, NO file editing. The CLI runs in `--output-format stream-json --verbose` print mode (no
+    `--dangerously-skip-permissions`, no file args) so it just answers; the final ``type:"result"`` event
+    carries both the assistant text (``result``) and the usage/cost envelope. cwd is a throwaway temp dir
+    so the inner Claude Code loads NO project context (its own `.git`-less dir bounds root detection),
+    keeping the orchestrator's `CLAUDE.md`/`.claude/` out of scope and the call cheap.
+
+    The same two kill switches as `run_claude_cli` bound a stall (idle watchdog + hard wall-clock); on a
+    kill the answer is empty. Raises `ClaudeCliQuotaExhausted` on a subscription session/usage-limit block.
+    """
+    cmd = [CLAUDE_CLI_BIN, "-p", prompt, "--output-format", "stream-json", "--verbose"]
+    if model:
+        cmd += ["--model", model]
+    log.debug(f"Executing structured Claude CLI subprocess (model={model}).")
+    with tempfile.TemporaryDirectory(prefix="tbf_claude_struct_") as cwd:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            limit=_STREAM_LIMIT, cwd=cwd,
+        )
+
+        loop = asyncio.get_event_loop()
+        state = {"last": loop.time(), "killed": None}
+
+        def _touch() -> None:
+            state["last"] = loop.time()
+
+        async def _watchdog() -> None:
+            if not idle_timeout:
+                return
+            step = min(idle_timeout, 15)
+            while True:
+                await asyncio.sleep(step)
+                if loop.time() - state["last"] > idle_timeout:
+                    state["killed"] = f"no output for {idle_timeout}s (likely stalled/rate-limited)"
+                    proc.kill()
+                    return
+
+        stdout_buffer, stderr_buffer = [], []
+        reader = asyncio.gather(
+            stream_subprocess_output("   [Structured CLI]", proc.stdout, stdout_buffer, on_activity=_touch),
+            stream_subprocess_output("   [Structured CLI][STDERR]", proc.stderr, stderr_buffer, on_activity=_touch),
+        )
+        watchdog = asyncio.create_task(_watchdog())
+        try:
+            await asyncio.wait_for(reader, timeout=timeout)
+        except asyncio.TimeoutError:
+            state["killed"] = state["killed"] or f"hard timeout {timeout}s"
+            proc.kill()
+        finally:
+            watchdog.cancel()
+            try:
+                await watchdog
+            except asyncio.CancelledError:
+                pass
+
+        await proc.wait()
+
+    if state["killed"]:
+        log.error(f"🚨 Structured Claude CLI killed: {state['killed']}.")
+        return "", None
+    quota_hint = detect_claude_quota_block(stdout_buffer)
+    if quota_hint:
+        log.error(f"🚨 Structured Claude CLI blocked by Claude provider quota/session limit: {quota_hint}")
+        raise ClaudeCliQuotaExhausted(quota_hint)
+    envelope = _find_result_envelope("\n".join(stdout_buffer))
+    text = (envelope or {}).get("result", "") or ""
+    usage = parse_claude_usage("\n".join(stdout_buffer))
+    return text, usage
