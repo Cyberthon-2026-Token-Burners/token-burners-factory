@@ -16,6 +16,7 @@ system prompt; this skill only maps them to C# idioms.
   swept into the production project's `**/*.cs` glob and breaks the build (test-only types/usings
   cross-compiled into the production assembly; `CS0579` duplicate-attribute errors from the nested
   `obj/`). Emit ONLY test SOURCE (`*Tests.cs`), and ONLY into that test project directory.
+- **Assembly-level attributes** (`[assembly: ...]`, e.g. `[assembly: CollectionBehavior(...)]`) MUST appear in exactly ONE `.cs` file per test project — conventionally the alphabetically-first test file. NEVER repeat any `[assembly: ...]` declaration in a second test file in the same project: C# `CS0579` ("Duplicate attribute") will fail the build. When adding a new test file alongside an existing one, check every existing `*Tests.cs` for `[assembly: ...]` lines and omit them from the new file.
 - **Ownership boundary**: the test PROJECT FILE (`<Name>.Tests.csproj`, referencing `Microsoft.NET.Test
   .Sdk` + xUnit + a `ProjectReference` to the project under test, and registered in the root `.sln`) is
   **Developer-owned build glue** — do NOT create, edit, author, or `dotnet sln add` any `.csproj`.
