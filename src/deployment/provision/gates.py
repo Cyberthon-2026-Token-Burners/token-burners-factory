@@ -137,7 +137,7 @@ def run_devops_gate(repo_dir, archetype: str | None = None) -> list[str]:
         ]
         if invalid_update_lines:
             problems.append(
-                f"deploy.yml uses `gcloud run services update --allow-unauthenticated`, which is "
+                f"deploy.yml uses `gcloud run services update --allow-unauthenticated`, which is "  # nosec B608 — diagnostic string, not a query
                 "not a valid command (`--allow-unauthenticated` is not a recognized argument for "
                 "`gcloud run services update` — exits 2). Cloud Run's public-access policy lives "
                 "in IAM and must be set via `gcloud run services add-iam-policy-binding`. Remove "

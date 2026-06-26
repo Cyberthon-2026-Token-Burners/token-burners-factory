@@ -43,7 +43,7 @@ def _archetype_guidance(environment_ids: str = "") -> str:
         try:
             _meta, body = _parse_frontmatter(get_skill(f"devops_{lang}"))
             blocks.append(body.strip())
-        except Exception:
+        except Exception:  # nosec B110 — missing skill for a language variant is a valid skip
             pass
     return "\n\n".join(blocks)
 
