@@ -227,11 +227,13 @@ class RunStructuredLlmRoutingTests(unittest.IsolatedAsyncioTestCase):
 
         set_model_provider("claude")
         captured: dict = {}
+        usage = {"input_tokens": 5, "output_tokens": 2, "cache_read_tokens": 0,
+                 "cache_write_tokens": 0, "cost_usd": Decimal("0.01")}
 
-        async def _fake_oneshot(prompt, model=None, timeout=None, idle_timeout=None):
-            captured["prompt"], captured["model"] = prompt, model
-            return ('Here you go: {"answer": "hi"} done', {"input_tokens": 5, "output_tokens": 2,
-                    "cache_read_tokens": 0, "cache_write_tokens": 0, "cost_usd": Decimal("0.01")})
+        async def _fake_oneshot(prompt, model=None, json_schema=None, timeout=None, idle_timeout=None):
+            captured.update(prompt=prompt, model=model, schema=json_schema)
+            # structured=None → exercises the free-text fallback parse path.
+            return ('Here you go: {"answer": "hi"} done', None, usage)
 
         with mock.patch.object(llm, "run_claude_cli_oneshot", new=_fake_oneshot), \
                 mock.patch.object(llm, "instructor_client",
@@ -242,8 +244,27 @@ class RunStructuredLlmRoutingTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(parsed.answer, "hi")                          # JSON extracted from free text + validated
         self.assertEqual(captured["model"], CLAUDE_CLI_MODEL)
+        self.assertEqual(captured["schema"]["title"], "_Out")          # Pydantic schema forwarded to --json-schema
         self.assertEqual(raw.claude_cli_usage["cost_usd"], Decimal("0.01"))  # usage surfaced for telemetry
-        self.assertIn("JSON Schema", captured["prompt"])               # schema embedded in the prompt
+        self.assertIn("JSON Schema", captured["prompt"])               # schema embedded in the prompt (fallback)
+
+    async def test_claude_cli_provider_uses_native_structured_output(self) -> None:
+        from pydantic import BaseModel
+        from src.shared.utils import llm
+
+        class _Out(BaseModel):
+            answer: str
+
+        set_model_provider("claude")
+
+        async def _fake_oneshot(prompt, model=None, json_schema=None, timeout=None, idle_timeout=None):
+            # structured_output present (CLI --json-schema) → no text parsing needed.
+            return ("", {"answer": "native"}, {"input_tokens": 1, "output_tokens": 1,
+                    "cache_read_tokens": 0, "cache_write_tokens": 0, "cost_usd": Decimal("0.02")})
+
+        with mock.patch.object(llm, "run_claude_cli_oneshot", new=_fake_oneshot):
+            parsed, raw = await llm.run_structured_llm("tpm", _Out, [{"role": "user", "content": "hi"}])
+        self.assertEqual(parsed.answer, "native")                      # validated from structured_output
 
 
 class DeveloperGeminiNodeTests(unittest.IsolatedAsyncioTestCase):

@@ -331,18 +331,21 @@ async def run_claude_cli(
 
 
 async def run_claude_cli_oneshot(
-    prompt: str, model: str | None = None,
+    prompt: str, model: str | None = None, json_schema: dict | None = None,
     timeout: float | None = None, idle_timeout: float | None = None,
-) -> tuple[str, dict | None]:
-    """One-shot, NON-agentic Claude Code CLI call: send ``prompt``, return ``(answer_text, usage)``.
+) -> tuple[str, dict | None, dict | None]:
+    """One-shot, NON-agentic Claude Code CLI call: send ``prompt``, return ``(answer_text, structured, usage)``.
 
-    Used by the provider=claude **structured** path (`run_structured_via_claude_cli` in `llm.py`) so the
+    Used by the provider=claude **structured** path (`_run_structured_via_claude_cli` in `llm.py`) so the
     same subscription Claude Code CLI that drives the Developer can also answer the structured roles —
     NO API key, NO file editing. The CLI runs in `--output-format stream-json --verbose` print mode (no
     `--dangerously-skip-permissions`, no file args) so it just answers; the final ``type:"result"`` event
-    carries both the assistant text (``result``) and the usage/cost envelope. cwd is a throwaway temp dir
-    so the inner Claude Code loads NO project context (its own `.git`-less dir bounds root detection),
-    keeping the orchestrator's `CLAUDE.md`/`.claude/` out of scope and the call cheap.
+    carries the usage/cost envelope plus, when ``json_schema`` is passed (CLI ``--json-schema``), the
+    schema-validated object in ``structured_output`` — the reliable path that sidesteps free-text JSON
+    parsing. ``structured`` is that object (or ``None`` if no schema / the CLI didn't honor it); ``text``
+    is the assistant's free text (used as the fallback). cwd is a throwaway temp dir so the inner Claude
+    Code loads NO project context (its own `.git`-less dir bounds root detection), keeping the
+    orchestrator's `CLAUDE.md`/`.claude/` out of scope and the call cheap.
 
     The same two kill switches as `run_claude_cli` bound a stall (idle watchdog + hard wall-clock); on a
     kill the answer is empty. Raises `ClaudeCliQuotaExhausted` on a subscription session/usage-limit block.
@@ -350,7 +353,9 @@ async def run_claude_cli_oneshot(
     cmd = [CLAUDE_CLI_BIN, "-p", prompt, "--output-format", "stream-json", "--verbose"]
     if model:
         cmd += ["--model", model]
-    log.debug(f"Executing structured Claude CLI subprocess (model={model}).")
+    if json_schema is not None:
+        cmd += ["--json-schema", json.dumps(json_schema)]
+    log.debug(f"Executing structured Claude CLI subprocess (model={model}, schema={'yes' if json_schema else 'no'}).")
     with tempfile.TemporaryDirectory(prefix="tbf_claude_struct_") as cwd:
         proc = await asyncio.create_subprocess_exec(
             *cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -396,19 +401,36 @@ async def run_claude_cli_oneshot(
 
     if state["killed"]:
         log.error(f"🚨 Structured Claude CLI killed: {state['killed']}.")
-        return "", None
+        return "", None, None
     quota_hint = detect_claude_quota_block(stdout_buffer)
     if quota_hint:
         log.error(f"🚨 Structured Claude CLI blocked by Claude provider quota/session limit: {quota_hint}")
         raise ClaudeCliQuotaExhausted(quota_hint)
-    # Prefer the FULL assistant text reconstructed from every streamed text block (robust when a long
-    # answer spans multiple assistant events); fall back to the result envelope's `result` field.
+    # Native structured output (CLI --json-schema): the validated object lands in `structured_output` on
+    # the result envelope — the reliable path. Fall back to the FULL assistant text (reconstructed from
+    # every streamed text block, robust across multi-event answers) else the `result` field for parsing.
+    structured = _structured_output_from_stream(stdout_buffer)
     text = _full_assistant_text(stdout_buffer)
     if not text:
         envelope = _find_result_envelope("\n".join(stdout_buffer))
         text = (envelope or {}).get("result", "") or ""
     usage = parse_claude_usage("\n".join(stdout_buffer))
-    return text, usage
+    return text, structured, usage
+
+
+def _structured_output_from_stream(raw_lines: list[str]) -> dict | None:
+    """Return the CLI's schema-validated ``structured_output`` object (from ``--json-schema``) if present
+    in any captured line — works for both `stream-json` (it rides the final result event) and the single
+    `json` blob. Returns the LAST non-null occurrence, else ``None``. Never raises."""
+    found = None
+    for line in raw_lines:
+        try:
+            obj = json.loads(line)
+        except (ValueError, TypeError):
+            continue
+        if isinstance(obj, dict) and obj.get("structured_output") is not None:
+            found = obj["structured_output"]
+    return found
 
 
 def _full_assistant_text(raw_lines: list[str]) -> str:

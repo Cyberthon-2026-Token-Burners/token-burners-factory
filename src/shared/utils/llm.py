@@ -167,9 +167,15 @@ async def _run_structured_via_claude_cli(
     """Drive one structured role through the Claude Code CLI: embed the model's JSON Schema in the prompt,
     one-shot the CLI, extract + validate the JSON, and re-prompt with the validation error on a miss.
 
+    Primary path: the CLI's native ``--json-schema`` structured output (the validated object arrives in
+    the result envelope's ``structured_output``) — reliable, no free-text JSON parsing. Fallback (if the
+    CLI didn't honor the schema, e.g. an unsupported `$ref`): extract + validate the JSON from the answer
+    text. Either way the validation error is fed back and the call retried.
+
     Returns ``(parsed_model, _ClaudeCliRaw)`` — the raw carries the summed usage across attempts so the
     caller's ``log_token_usage`` bills the role authoritatively. Raises after the attempt budget."""
-    schema = json.dumps(response_model.model_json_schema(), ensure_ascii=False)
+    schema = response_model.model_json_schema()
+    schema_str = json.dumps(schema, ensure_ascii=False)
     base = _messages_to_prompt(messages)
     directive = (
         "\n\n=== OUTPUT FORMAT (STRICT) ===\n"
@@ -177,7 +183,7 @@ async def _run_structured_via_claude_cli(
         "markdown code fences. Emit it as minified JSON on a single line. Inside every string value you "
         "MUST escape each double quote as \\\" and each newline as \\n (never an unescaped \" or a literal "
         "newline). Finish the object — the final character must be the closing }. Do NOT truncate. It MUST "
-        "validate against this JSON Schema:\n" + schema
+        "validate against this JSON Schema:\n" + schema_str
     )
     agg = {"input_tokens": 0, "output_tokens": 0, "cache_read_tokens": 0,
            "cache_write_tokens": 0, "cost_usd": Decimal(0)}
@@ -185,8 +191,9 @@ async def _run_structured_via_claude_cli(
     last_err: Exception | None = None
     last_text = ""
     for attempt in range(1, _CLI_STRUCTURED_MAX_ATTEMPTS + 1):
-        text, usage = await run_claude_cli_oneshot(
-            prompt, model=model, timeout=DEVELOPER_CLI_TIMEOUT, idle_timeout=DEVELOPER_CLI_IDLE_TIMEOUT,
+        text, structured, usage = await run_claude_cli_oneshot(
+            prompt, model=model, json_schema=schema,
+            timeout=DEVELOPER_CLI_TIMEOUT, idle_timeout=DEVELOPER_CLI_IDLE_TIMEOUT,
         )
         last_text = text
         if usage:
@@ -194,17 +201,19 @@ async def _run_structured_via_claude_cli(
                 agg[k] += usage.get(k, 0)
             agg["cost_usd"] += usage.get("cost_usd", Decimal(0))
         try:
-            parsed = response_model.model_validate_json(_extract_json_object(text))
+            # Prefer the CLI's native schema-validated object; fall back to parsing the free-text answer.
+            parsed = (response_model.model_validate(structured) if structured is not None
+                      else response_model.model_validate_json(_extract_json_object(text)))
             return parsed, _ClaudeCliRaw(agg)
         except Exception as e:  # validation / JSON parse error → feed it back and retry
             last_err = e
-            log.warning(f"{agent_name} (Claude CLI) returned invalid JSON on attempt "
+            log.warning(f"{agent_name} (Claude CLI) returned invalid output on attempt "
                         f"{attempt}/{_CLI_STRUCTURED_MAX_ATTEMPTS}: {e}")
             prompt = (base + directive + f"\n\n=== CORRECTION (attempt {attempt} was rejected) ===\n"
                       f"Your previous reply did not validate against the schema: {e}\n"
                       "Output ONLY the corrected single JSON object.")
     raise ValueError(
-        f"{agent_name}: Claude Code CLI did not return schema-valid JSON after "
+        f"{agent_name}: Claude Code CLI did not return schema-valid output after "
         f"{_CLI_STRUCTURED_MAX_ATTEMPTS} attempts (last error: {last_err}). "
         f"Last answer tail: …{last_text[-200:]!r}"
     )
