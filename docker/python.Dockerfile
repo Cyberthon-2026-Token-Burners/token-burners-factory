@@ -12,6 +12,12 @@ RUN command -v update-ca-certificates >/dev/null && update-ca-certificates || tr
 # EPERM on the root-owned empty volume. The volume is RW only on the network-ON restore phase.
 RUN mkdir -p /cache && chmod 0777 /cache
 
+# System packages required by compiled Python wheels that generated apps may declare:
+# libpq-dev + gcc → psycopg2-binary; without these the pip install fails with a compiler error.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpq-dev gcc \
+    && rm -rf /var/lib/apt/lists/*
+
 # pytest = the gate's test runner; ruff powers the post-QA format pass (format_cmd) — autofixes lint
 # and strips unused imports off freshly generated tests. The CA layer above lets this fetch succeed
 # behind the TLS-intercepting proxy.

@@ -31,3 +31,22 @@ When using an **in-process / in-memory HTTP test transport** (e.g. a test server
 
 ## Security
 * Zero tolerance for vulnerabilities. Run the ecosystem's standard SAST scanner before review.
+
+## Data Governance & Privacy (GDPR-aligned)
+* **PII in logs is forbidden.** Never emit user names, email addresses, query text, IP addresses,
+  API keys, or any personally-identifiable value to any log sink. Log only opaque IDs, token
+  counts, latency, and status codes.
+* **Audit log**: any route that reads or mutates user data MUST append a structured entry to an
+  audit log (table or append-only file) containing: timestamp (UTC), user/session ID (opaque),
+  action (e.g. `"query"`, `"delete"`), and resource ID. Never include payload content.
+* **Route separation**: unauthenticated public endpoints MUST be under `/api/public/`; any route
+  that touches user data or internal state MUST be under `/api/internal/` (or equivalent
+  access-controlled prefix) and require a valid session/token.
+* **JWT / token comparison**: always use a constant-time equality function (e.g.
+  `hmac.compare_digest` in Python) when comparing tokens or secrets; never use `==`.
+* **Retention / right-to-erasure**: if the application stores user-generated content, provide a
+  delete path that removes all associated records (DB rows + vector store objects) for a given
+  user ID. Stub the implementation if the ticket scope does not cover the full flow, but declare
+  the interface.
+* **Dependency PII scope**: third-party clients (vector DB, LLM API) receive only the content
+  strictly required for the operation — no user metadata, no internal IDs beyond the query text.
