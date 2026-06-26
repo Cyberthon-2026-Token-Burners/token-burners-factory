@@ -442,6 +442,12 @@ class GlobalPipelineContext(BaseModel):
     contract: TechLeadContract | None = None
     production_code_snapshot: dict[str, str] = Field(default_factory=dict)
     production_code_diff: str = ""
+    # SHA-256 of the current cycle's production_code_snapshot (recomputed by build_production_snapshot).
+    # prev_production_code_hash captures the snapshot hash at the end of the previous cycle so the Arbiter
+    # can detect whether the Developer made any net change this cycle — a no-change cycle where the same
+    # test is still failing is a production_bug, not a test_bug, regardless of QA compile errors.
+    production_code_hash: str = ""
+    prev_production_code_hash: str = ""
     test_code_snapshot: str = ""
     error_trace: str = ""           # Developer channel: production-code fix instructions only.
     qa_error_trace: str = ""        # QA channel: test-suite fix instructions only (isolated from Dev).
