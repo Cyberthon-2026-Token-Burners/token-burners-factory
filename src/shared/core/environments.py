@@ -128,6 +128,7 @@ SUPPORTED_ENVIRONMENTS = {
         "description": "Python 3.12 core runtime (pytest; Semgrep SAST).",
     },
     "go-1.23-cli": {
+        "enabled": False,
         "image": "sdlc-sandbox/go:latest",
         "build_cmd": "go build ./...",
         "test_cmd": "go test ./...",
@@ -197,6 +198,7 @@ SUPPORTED_ENVIRONMENTS = {
         "description": "Node.js 22 / JS / React (node, npm — frontend build & tests; Semgrep SAST).",
     },
     "dotnet-10-sdk": {
+        "enabled": False,
         "image": "sdlc-sandbox/dotnet:latest",
         "build_cmd": "dotnet build",
         "test_cmd": "dotnet test",

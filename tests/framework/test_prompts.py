@@ -79,8 +79,10 @@ class GetSystemPromptTests(unittest.TestCase):
         self.assertNotIn("{injected_env_commands}", result)
         self.assertIn("## Getting Started", result)             # scaffold section injected
         self.assertIn("## Running Tests", result)
-        self.assertIn("go build ./...", result)                 # real go env command injected
+        self.assertIn("npm run build", result)                  # real node env command injected
         self.assertIn("python -m pytest", result)               # real python env command injected
+        self.assertNotIn("go build ./...", result)              # go is disabled — must not appear
+        self.assertNotIn("dotnet build", result)                # dotnet is disabled — must not appear
 
     def test_techwriter_owns_docs_set_and_preserves_url_markers(self) -> None:
         # The techwriter prompt owns README/CHANGELOG/ADR, keeps the deploy/release URL markers verbatim

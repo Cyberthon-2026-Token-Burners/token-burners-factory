@@ -31,6 +31,8 @@ def _format_supported_platforms() -> str:
     from src.shared.core.environments import SUPPORTED_ENVIRONMENTS
     lines: list[str] = []
     for key, env in SUPPORTED_ENVIRONMENTS.items():
+        if not env.get("enabled", True):
+            continue
         lines.append(f"- {key}: {env['description']}")
         for bullet in env.get("authoring_contract", ()):
             lines.append(f"    - {bullet}")
@@ -111,6 +113,7 @@ def _format_env_commands() -> str:
     return "\n".join(
         f"- `{env_id}`: setup `{env['setup_cmd']}` | build `{env['build_cmd']}` | test `{env['test_cmd']}`"
         for env_id, env in SUPPORTED_ENVIRONMENTS.items()
+        if env.get("enabled", True)
     )
 
 
