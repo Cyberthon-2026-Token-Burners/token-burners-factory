@@ -266,5 +266,25 @@ class DeveloperGeminiNodeTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse((repo / "stale.py").exists())
 
 
+class ClaudeCliStructuredHelpersTests(unittest.TestCase):
+    def test_extract_json_from_free_text(self) -> None:
+        from src.shared.utils.llm import _extract_json_object
+        self.assertEqual(_extract_json_object('Here: {"a": 1} thanks'), '{"a": 1}')
+
+    def test_extract_json_from_fence(self) -> None:
+        from src.shared.utils.llm import _extract_json_object
+        self.assertEqual(_extract_json_object('```json\n{"a": 1}\n```'), '{"a": 1}')
+
+    def test_full_assistant_text_concatenates_events(self) -> None:
+        import json as _json
+        from src.shared.utils.subprocess_helpers import _full_assistant_text
+        lines = [
+            _json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": '{"mark'}]}}),
+            _json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": 'down": "hi"}'}]}}),
+            _json.dumps({"type": "result", "result": "ignored-when-stream-present"}),
+        ]
+        self.assertEqual(_full_assistant_text(lines), '{"markdown": "hi"}')
+
+
 if __name__ == "__main__":
     unittest.main()

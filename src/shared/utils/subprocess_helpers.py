@@ -401,7 +401,31 @@ async def run_claude_cli_oneshot(
     if quota_hint:
         log.error(f"🚨 Structured Claude CLI blocked by Claude provider quota/session limit: {quota_hint}")
         raise ClaudeCliQuotaExhausted(quota_hint)
-    envelope = _find_result_envelope("\n".join(stdout_buffer))
-    text = (envelope or {}).get("result", "") or ""
+    # Prefer the FULL assistant text reconstructed from every streamed text block (robust when a long
+    # answer spans multiple assistant events); fall back to the result envelope's `result` field.
+    text = _full_assistant_text(stdout_buffer)
+    if not text:
+        envelope = _find_result_envelope("\n".join(stdout_buffer))
+        text = (envelope or {}).get("result", "") or ""
     usage = parse_claude_usage("\n".join(stdout_buffer))
     return text, usage
+
+
+def _full_assistant_text(raw_lines: list[str]) -> str:
+    """Concatenate the text of every ``assistant`` event's text blocks from a stream-json capture.
+
+    The CLI splits a long answer across multiple ``assistant`` events; the final ``result`` envelope
+    normally carries the full text too, but reconstructing from the stream is strictly more complete and
+    immune to any result-field quirk. Never raises — best-effort, returns ``""`` on no text."""
+    parts: list[str] = []
+    for line in raw_lines:
+        try:
+            obj = json.loads(line)
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(obj, dict) or obj.get("type") != "assistant":
+            continue
+        for block in (obj.get("message") or {}).get("content") or []:
+            if isinstance(block, dict) and block.get("type") == "text" and block.get("text"):
+                parts.append(block["text"])
+    return "".join(parts)

@@ -173,17 +173,22 @@ async def _run_structured_via_claude_cli(
     base = _messages_to_prompt(messages)
     directive = (
         "\n\n=== OUTPUT FORMAT (STRICT) ===\n"
-        "Respond with ONE single JSON object and NOTHING else — no prose, no explanation, no markdown "
-        "code fences. It MUST validate against this JSON Schema:\n" + schema
+        "Respond with ONE single, COMPLETE JSON object and NOTHING else — no prose, no explanation, no "
+        "markdown code fences. Emit it as minified JSON on a single line. Inside every string value you "
+        "MUST escape each double quote as \\\" and each newline as \\n (never an unescaped \" or a literal "
+        "newline). Finish the object — the final character must be the closing }. Do NOT truncate. It MUST "
+        "validate against this JSON Schema:\n" + schema
     )
     agg = {"input_tokens": 0, "output_tokens": 0, "cache_read_tokens": 0,
            "cache_write_tokens": 0, "cost_usd": Decimal(0)}
     prompt = base + directive
     last_err: Exception | None = None
+    last_text = ""
     for attempt in range(1, _CLI_STRUCTURED_MAX_ATTEMPTS + 1):
         text, usage = await run_claude_cli_oneshot(
             prompt, model=model, timeout=DEVELOPER_CLI_TIMEOUT, idle_timeout=DEVELOPER_CLI_IDLE_TIMEOUT,
         )
+        last_text = text
         if usage:
             for k in ("input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens"):
                 agg[k] += usage.get(k, 0)
@@ -200,5 +205,6 @@ async def _run_structured_via_claude_cli(
                       "Output ONLY the corrected single JSON object.")
     raise ValueError(
         f"{agent_name}: Claude Code CLI did not return schema-valid JSON after "
-        f"{_CLI_STRUCTURED_MAX_ATTEMPTS} attempts (last error: {last_err})."
+        f"{_CLI_STRUCTURED_MAX_ATTEMPTS} attempts (last error: {last_err}). "
+        f"Last answer tail: …{last_text[-200:]!r}"
     )
