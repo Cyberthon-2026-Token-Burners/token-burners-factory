@@ -11,8 +11,11 @@ paths:
 
 Every agent except the Developer returns a forced-structured Pydantic model via `run_structured_llm`
 (the Developer is the agentic Claude CLI — see
-[agent-provider-model-map](agent-provider-model-map.md)). Models live in `src/shared/core/models.py`
-unless noted. Loop that consumes these: [pipeline-fsm-loops](pipeline-fsm-loops.md).
+[agent-provider-model-map](agent-provider-model-map.md); the lone exception is provider=gemini, where the
+Developer too becomes structured, returning `DeveloperFileSet{files: list[DeveloperFileWrite{file_path,
+content}], files_to_delete}` which `developer.py::_run_developer_gemini` materializes into the sandbox
+`repo/` — its field descriptions carry the output-shape directives, NOT a `prompts/system/` edit). Models
+live in `src/shared/core/models.py` unless noted. Loop that consumes these: [pipeline-fsm-loops](pipeline-fsm-loops.md).
 
 ## Models (output → consumer)
 - **PO** → `EpicDocument{markdown}` (`src/nexus/agents/po.py`). Stack-agnostic, no env_id. `get_system_prompt("po")`. Persisted `artifacts/epic.md`.

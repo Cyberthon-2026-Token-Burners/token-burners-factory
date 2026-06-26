@@ -27,14 +27,16 @@ flowchart TB
 
     gemini["☁️ Google Gemini API<br/>structured output via instructor"]
     claude["🤖 Claude Code CLI<br/>agentic file-editing (Developer)"]
+    anthropic["☁️ Anthropic API<br/>structured output (provider=claude)"]
     docker["🐳 Docker Engine<br/>sandboxed build / test / SAST"]
     github["🔗 Git / GitHub remote<br/>+ target repository"]
 
-    human -->|"--idea [--auto-execute] [--budget] [--scaffold-deploy] [--release] / --run / --resume (CLI)"| engine
+    human -->|"--idea [--auto-execute] [--budget] [--scaffold-deploy] [--release] [--provider] / --run / --resume (CLI)"| engine
     engine -->|"epic, blueprint, tickets;<br/>per-role/plane/time FinOps, atomic commit"| human
 
-    engine -->|"prompts → structured JSON<br/>(PO/SA/TPM, TechLead, QA, Reviewer,<br/>TechWriter, Arbiter, DevOps)"| gemini
-    engine -->|"prompt + tools → file edits<br/>(Developer only)"| claude
+    engine -->|"prompts → structured JSON<br/>(PO/SA/TPM, TechLead, QA, Reviewer,<br/>TechWriter, Arbiter, DevOps)<br/>[default/gemini providers]"| gemini
+    engine -->|"prompt + tools → file edits<br/>(Developer; default/claude providers)"| claude
+    engine -->|"structured JSON for every role<br/>(provider=claude only)"| anthropic
     engine -->|"run code in least-priv container"| docker
     engine -->|"shallow clone, branch, atomic commit,<br/>optional push, PR open/approve/merge,<br/>deploy-scaffold PR (--scaffold-deploy),<br/>release tag push (--release)"| github
 
@@ -42,7 +44,7 @@ flowchart TB
     classDef ext fill:#999,stroke:#6b6b6b,color:#fff;
     classDef person fill:#08427b,stroke:#052e56,color:#fff;
     class engine sys;
-    class gemini,claude,docker,github ext;
+    class gemini,claude,anthropic,docker,github ext;
     class human person;
 ```
 
@@ -54,7 +56,12 @@ flowchart TB
   re-passing a larger value on a `--resume` "adds money" and continues a budget-halted batch.
 - **Google Gemini API** — every *structured* agent (forced Pydantic output via `instructor`):
   PO/SA/TPM (planning) and TechLead/QA/Reviewer/TechWriter/Arbiter/DevOps (execution + deploy-scaffolding).
-- **Claude Code CLI** — the *Developer* agent only; agentic, edits files directly in the run's clone.
+- **Claude Code CLI** — the *Developer* agent (default + provider=claude); agentic, edits files directly in the run's clone.
+- **Anthropic API** — only under the **provider switch** (`MODEL_PROVIDER` env / `--provider claude`): every
+  *structured* role routes through the Anthropic API instead of Gemini (`instructor.from_anthropic`,
+  `CLAUDE_API_MODEL`). The switch's third state, `--provider gemini`, instead routes the *Developer* through
+  the Gemini API as a single-shot structured file emitter (no Claude CLI). Default is the mixed routing above.
+  See [agent-provider-model-map](../.claude/rules/agent-provider-model-map.md).
 - **Docker Engine** — runs the build, unit-test, and SAST gates in a hardened, least-privilege container
   (`--network none` for test/SAST).
 - **Git / GitHub remote + target repository** — the executor shallow-clones the target repo, works on a
@@ -86,6 +93,7 @@ flowchart TB
 
     gemini["☁️ Gemini API"]
     claude["🤖 Claude CLI"]
+    anthropic["☁️ Anthropic API<br/>(provider=claude)"]
     docker["🐳 Docker Engine"]
     github["🔗 Git / GitHub + target repo"]
 
@@ -105,6 +113,7 @@ flowchart TB
 
     shared -->|"structured calls (instructor)"| gemini
     shared -->|"agentic Developer session"| claude
+    shared -.->|"structured calls, every role<br/>(--provider claude)"| anthropic
     development -->|"run_in_image (gates)"| docker
     docker --> images
     nexus -->|"clone / branch / commit / push / PR+merge (--auto-merge)"| github
@@ -115,7 +124,7 @@ flowchart TB
     classDef ext fill:#999,stroke:#6b6b6b,color:#fff;
     class nexus,development,deployment,shared,prompts,images plane;
     class runstore store;
-    class gemini,claude,docker,github ext;
+    class gemini,claude,anthropic,docker,github ext;
 ```
 
 **Key:**
@@ -135,7 +144,9 @@ flowchart TB
 - **Shared plane** (`src/shared/`) — the engine SSOTs all planes import: `core/` (`models.py`,
   `config.py` incl. `ROLE_MODELS`, `observability.py`, `runs.py`, `docker_adapter.py`, `environments.py`,
   `prompts.py`) and `utils/` (`llm.py`, `api_retry.py`, `git_helpers.py`, `subprocess_helpers.py`,
-  `redaction.py`, `forge.py` — the `gh`-backed PR open/approve/merge seam). All LLM traffic flows through here.
+  `redaction.py`, `forge.py` — the `gh`-backed PR open/approve/merge seam). All LLM traffic flows through here,
+  and `config.py`'s provider switch (`MODEL_PROVIDER` / `--provider`) decides, per the active provider, whether
+  it leaves via Gemini, the Claude CLI, or the Anthropic API (see [agent-provider-model-map](../.claude/rules/agent-provider-model-map.md)).
 - **Prompt store** — per-role system prompts (`prompts/system/*.md`) + frontmatter-gated skill fragments
   (`prompts/skills/*.md`) assembled per node by `build_agent_context`.
 - **Sandbox images** — pre-built per-language Docker images invoked by `environment_id`.
@@ -350,13 +361,13 @@ for the full module map and [agent-contracts](../.claude/rules/agent-contracts.m
 | Deployment | Deploy-scaffold | `src/deployment/provision/scaffold.py` `run_devops_scaffold` | Post-batch terminal phase: clone `main` → DevOps node → `run_devops_gate` (`provision/gates.py`) → merge `chore/devops-scaffold` via the forge flow. |
 | Deployment | Deploy gate | `src/deployment/provision/gates.py` `run_devops_gate` | Static-lint the manifests (YAML + Dockerfile directives); for a `requires_public_invoker` target deterministically assert public invocation (no HTTP 403) + a repo-derived service name (no overwrite) — ADR 0026. |
 | Shared | Models | `src/shared/core/models.py` | `GlobalPipelineContext`, `TechLeadContract`, `ReviewReport`, `ArbiterVerdict`, `BatchState` (E3 batch checkpoint + E5 `app_telemetry`/`budget_marker`/`nexus_merged` + E6 `released_tag`), `DevOpsManifests` (E4 deploy config), `PipelineTelemetry` (per-agent tokens/cost/**plane**/**time** + `by_plane()`/`merge()`/`finops_report()`). |
-| Shared | Config | `src/shared/core/config.py` | `ROLE_MODELS`, `AGENT_PLANE` (label→plane), the app-wide money budget (`PIPELINE_APP_BUDGET_USD` + floor), `RELEASE_VERSION_BUMP` (E6 tag bump), pricing, FSM constants. |
-| Shared | Observability | `src/shared/core/observability.py` | Logging, per-role/**plane**/**time** FinOps telemetry (`log_token_usage` reads per-call time from the `run_structured_llm` ContextVar), money-only `log_finops_summary`, finish-reason diagnostics. |
+| Shared | Config | `src/shared/core/config.py` | `ROLE_MODELS`, `AGENT_PLANE` (label→plane), the **provider switch** (`MODEL_PROVIDER`/`--provider` → `active_provider`/`set_model_provider`, `structured_role_routing`, `developer_provider`, `get_anthropic_instructor_client`, `CLAUDE_API_MODEL`/`DEVELOPER_GEMINI_MODEL`), provider-aware `check_environment`, the app-wide money budget (`PIPELINE_APP_BUDGET_USD` + floor), `RELEASE_VERSION_BUMP` (E6 tag bump), Gemini + Anthropic pricing (`estimate_gemini_cost_usd`/`estimate_anthropic_cost_usd`), FSM constants. |
+| Shared | Observability | `src/shared/core/observability.py` | Logging, per-role/**plane**/**time** FinOps telemetry (`log_token_usage` reads per-call time from the `run_structured_llm` ContextVar; branches Gemini `usage_metadata` vs Anthropic `.usage` for the provider=claude path), money-only `log_finops_summary`, finish-reason diagnostics. |
 | Shared | Run layout | `src/shared/core/runs.py` | `Projects` store + `allocate_run_dir` (run-layout SSOT). |
 | Shared | Docker adapter | `src/shared/core/docker_adapter.py` | Least-privilege `run_in_image` / `execute_in_sandbox`. |
 | Shared | Environments | `src/shared/core/environments.py` | `SUPPORTED_ENVIRONMENTS` (image + build/test/**lint** cmds + `authoring_contract`/`dependency_manifest`); `lint_cmd` is the SSOT shared with the generated CI. ALSO `SUPPORTED_DEPLOY_TARGETS` (the WHERE-to-deploy SSOT — `archetypes`/`skill`/`runtime_constraints`/`requires_public_invoker`) + `deploy_target_for_archetype`/`deploy_skill_for_target`/`deploy_target_skills` (ADR 0026). |
 | Shared | Prompts | `src/shared/core/prompts.py` | `get_system_prompt*`, `build_agent_context` (skill routing). |
-| Shared | LLM / retry | `src/shared/utils/{llm,api_retry}.py` | `run_structured_llm` (relocates Jinja-marker system messages to a user turn for GenAI); backoff + non-retryable/RECITATION handling. |
+| Shared | LLM / retry | `src/shared/utils/{llm,api_retry}.py` | `run_structured_llm` (routes client/model/`max_tokens` by `structured_role_routing` — Gemini `instructor_client` vs Anthropic under provider=claude; relocates Jinja-marker system messages to a user turn for GenAI); backoff + non-retryable/RECITATION handling. |
 | Shared | PR forge | `src/shared/utils/forge.py` | Provider-agnostic `open_pr`/`approve_pr`/`merge_pr` (`gh`-backed, `--auto-merge` loop closure) + `list_remote_tags`/`push_tag` (E6 `--release` annotated-tag push, boundary-safe `_run_git`). |
 
 ---

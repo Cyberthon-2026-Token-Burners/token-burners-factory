@@ -1,6 +1,7 @@
 import time
+from pathlib import Path
 
-from src.shared.core.observability import log
+from src.shared.core.observability import log, log_token_usage
 
 # Instructional preamble prepended on a correction cycle. Kept at module level (not inline) so a
 # prompt engineer can find and tune it without reading the control flow.
@@ -8,15 +9,23 @@ _RETRY_PREAMBLE = (
     "⚠️ MANDATORY CORRECTION (overrides the Contract below for this turn) — your previous "
     "attempt was REJECTED. You MUST resolve the following before doing anything else:\n"
 )
-from src.shared.core.config import DEVELOPER_MODEL, DEVELOPER_EFFORT, DEVELOPER_CLI_TIMEOUT, DEVELOPER_CLI_IDLE_TIMEOUT
-from src.shared.core.models import GlobalPipelineContext
+from src.shared.core.config import (
+    DEVELOPER_MODEL, DEVELOPER_EFFORT, DEVELOPER_CLI_TIMEOUT, DEVELOPER_CLI_IDLE_TIMEOUT,
+    DEVELOPER_GEMINI_MODEL, developer_provider, PROVIDER_GEMINI,
+)
+from src.shared.core.models import GlobalPipelineContext, DeveloperFileSet
 from src.shared.core.prompts import get_system_prompt, build_agent_context
 from src.shared.utils.subprocess_helpers import run_claude_cli
+from src.shared.utils.llm import run_structured_llm
 
 async def run_developer_node(
     ctx: GlobalPipelineContext, error_trace: str = "", focus_files: list[str] | None = None
 ) -> None:
-    log.info(f"🟩 [ROLE] Developer Agent | [PROVIDER] Claude | [MODEL] {DEVELOPER_MODEL} | [EFFORT] {DEVELOPER_EFFORT}")
+    use_gemini = developer_provider() == PROVIDER_GEMINI
+    if use_gemini:
+        log.info(f"🟩 [ROLE] Developer Agent | [PROVIDER] Gemini | [MODEL] {DEVELOPER_GEMINI_MODEL}")
+    else:
+        log.info(f"🟩 [ROLE] Developer Agent | [PROVIDER] Claude | [MODEL] {DEVELOPER_MODEL} | [EFFORT] {DEVELOPER_EFFORT}")
 
     repo_dir_path = ctx.workspace_paths.repo_dir
     repo_dir = str(repo_dir_path)
@@ -62,6 +71,13 @@ async def run_developer_node(
             + prompt
         )
 
+    # Provider switch: under MODEL_PROVIDER=gemini the Developer runs on Gemini. Gemini is a single-shot
+    # structured model (not the agentic Claude CLI), so it RETURNS the complete file set and this node
+    # materializes it under the sandbox repo. The default/claude paths fall through to the CLI below.
+    if use_gemini:
+        await _run_developer_gemini(ctx, prompt, repo_dir_path)
+        return
+
     # The clone is already a git repo on feat/ticket-<id>; agents only mutate the working tree.
     code_files = [str(repo_dir_path / f) for f in ctx.contract.files_to_modify]
     # Surface the exact files a reroute targets (e.g. out-of-scope files to delete) so the CLI focuses
@@ -98,3 +114,44 @@ async def run_developer_node(
     # The orchestrator's build_production_snapshot() captures the real working-tree delta after this
     # node returns; the Developer no longer self-reports the snapshot (which caused Reviewer desync).
     log.info(f"   [MUTATION] Developer node complete (Exit Code: {returncode}).\n")
+
+
+def _within_sandbox(target: Path, root: Path) -> bool:
+    """True iff ``target`` resolves to ``root`` or a path strictly under it (write-sandbox guard)."""
+    target, root = target.resolve(), root.resolve()
+    return target == root or root in target.parents
+
+
+async def _run_developer_gemini(ctx: GlobalPipelineContext, prompt: str, repo_dir_path: Path) -> None:
+    """Developer on Gemini (provider=gemini): one structured call returns the full ``DeveloperFileSet``,
+    which is written/deleted under the run's ``repo/`` sandbox. Mirrors the Claude-CLI node's contract —
+    it only mutates the working tree (the orchestrator snapshots the delta afterwards) and records
+    telemetry under the identical "Developer Agent" label so FinOps/plane attribution is unchanged."""
+    parsed, raw = await run_structured_llm(
+        "developer", DeveloperFileSet, [{"role": "user", "content": prompt}]
+    )
+    log_token_usage(ctx.telemetry, "Developer Agent", raw, DEVELOPER_GEMINI_MODEL)
+
+    written, skipped, deleted = 0, 0, 0
+    for fw in parsed.files:
+        target = repo_dir_path / fw.file_path
+        if not _within_sandbox(target, repo_dir_path):
+            log.error(f"🚨 SECURITY: write blocked — '{fw.file_path}' resolves outside the sandbox.")
+            skipped += 1
+            continue
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(fw.content, encoding="utf-8")
+        log.info(f"   [Developer Agent] → Write {fw.file_path}")
+        written += 1
+
+    for rel in parsed.files_to_delete:
+        target = repo_dir_path / rel
+        if _within_sandbox(target, repo_dir_path) and target.is_file():
+            target.unlink()
+            log.info(f"   [Developer Agent] → Delete {rel}")
+            deleted += 1
+
+    log.info(
+        f"   [MUTATION] Developer node complete (Gemini: {written} written, "
+        f"{deleted} deleted, {skipped} blocked).\n"
+    )

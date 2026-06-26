@@ -22,6 +22,12 @@ fast-fail budget), `DEVOPS_MAX_RETRIES` (E4 deploy-manifest static-lint self-hea
 shared genai client as `http_options.timeout`), `RELEASE_VERSION_BUMP` (E6 — the `--release` tag bump level,
 `major`|`minor`|`patch`, default `minor`; a *policy* string, not a numeric cap, but env-overridable by the
 same convention), `RUNS_BASE`.
+The provider switch adds four (see [[agent-provider-model-map]]): `MODEL_PROVIDER` (env; the `--provider` CLI
+flag overrides it via `set_model_provider` — `api`/`google`/`gemini` | `claude`/`anthropic` | unset, the
+WHOLE-pipeline provider selector, a *policy* string), `CLAUDE_API_MODEL` (full Anthropic model id for the
+structured roles under provider=claude, default `claude-sonnet-4-6`), `ANTHROPIC_MAX_TOKENS` (output cap the
+Anthropic Messages API requires, default 8192), and `DEVELOPER_GEMINI_MODEL` (the model the Gemini Developer
+emitter uses under provider=gemini, default `GEMINI_3_5_FLASH`).
 The Arbiter self-healing knobs follow the same convention: `ARBITER_TRIGGER_ATTEMPT`,
 `MAX_CONTRACT_AMENDMENTS`, `AMENDMENT_RETRY_BONUS` (ADR 0016). The E2 auto-merge knobs live in
 `src/shared/utils/forge.py`: `GH_NETWORK_TIMEOUT` (gh call ceiling) and `GITHUB_MERGE_STRATEGY`

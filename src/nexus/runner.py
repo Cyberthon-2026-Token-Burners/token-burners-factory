@@ -19,6 +19,7 @@ from src.shared.core.observability import log_finops_summary as _render_finops_s
 from src.shared.core.config import (
     check_environment, PIPELINE_APP_BUDGET_USD, PIPELINE_APP_BUDGET_FLOOR_USD,
     EFFECTIVE_BUDGET_USD, effective_budget_usd, RELEASE_VERSION_BUMP,
+    set_model_provider,
 )
 from src.shared.core.models import GlobalPipelineContext, WorkspacePaths, RUNS_BASE, BatchState, PipelineTelemetry
 from src.shared.core.runs import Projects
@@ -93,6 +94,12 @@ def parse_args() -> RunConfig:
     parser.add_argument("--resume", nargs="+", metavar="TARGET",
                         help="Resume: a checkpoint JSON path, OR a project slug, OR a project slug + run number "
                              "(e.g. --resume my-proj 002). Project slug alone continues the latest Nexus run.")
+    parser.add_argument("--provider", metavar="NAME",
+                        help="Force the WHOLE pipeline onto one LLM provider, overriding MODEL_PROVIDER: "
+                             "'api'/'google'/'gemini' → Gemini for every role (incl. the Developer); "
+                             "'claude'/'anthropic' → Anthropic Claude for every role (needs ANTHROPIC_API_KEY); "
+                             "omitted → the default mixed routing (Gemini structured roles + Claude-CLI "
+                             "Developer). Not persisted — re-pass it on --resume.")
     parser.add_argument("--reset-attempts", action="store_true", help="Reset circuit breaker counter on resume.")
     parser.add_argument("--push", action="store_true", help="Push the feature branch to origin after the atomic success commit.")
     parser.add_argument("--idea", help="Raw idea → start a NEW project and run the Nexus planning pipeline.")
@@ -116,6 +123,12 @@ def parse_args() -> RunConfig:
                              "the batch's git push credentials.")
 
     args = parser.parse_args()
+
+    # Provider switch: apply the --provider flag NOW (before any RunConfig is built, check_environment
+    # runs, or a role resolves its model) so it overrides MODEL_PROVIDER globally for this process. It is
+    # a runtime knob, not persisted in RunConfig/checkpoints (like --budget) — re-pass it on --resume.
+    if args.provider:
+        log.info(f"🔌 Provider override: --provider {args.provider} → {set_model_provider(args.provider)}")
 
     # --auto-merge needs the branch on origin before a PR can reference it, so it implies --push.
     push = args.push or args.auto_merge

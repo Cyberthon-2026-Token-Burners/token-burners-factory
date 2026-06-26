@@ -4,7 +4,10 @@ import time
 from contextvars import ContextVar
 from typing import Any, Type
 
-from src.shared.core.config import instructor_client, ROLE_MODELS
+from src.shared.core.config import (
+    instructor_client, structured_role_routing,
+    get_anthropic_instructor_client, ANTHROPIC_MAX_TOKENS, PROVIDER_CLAUDE,
+)
 from src.shared.core.observability import log, finish_reason_name
 from src.shared.utils.api_retry import with_api_retry
 
@@ -62,22 +65,33 @@ async def run_structured_llm(
     bridges the blocking instructor call onto a worker thread. Returns the
     (parsed_model, raw_response) tuple from create_with_completion.
 
+    The client/model are resolved per the active provider (``structured_role_routing``): Gemini via the
+    shared ``instructor_client`` (default/gemini), or the Anthropic API via ``instructor.from_anthropic``
+    (provider=claude, which additionally needs ``max_tokens``). The RECITATION recovery below is
+    Gemini-specific and simply never triggers on the Claude path.
+
     On a Gemini RECITATION block (deterministic — ``with_api_retry`` fails it fast), makes ONE
     paraphrase-guarded retry that appends ``RECITATION_GUARD`` to the messages. A second block (or any
     other failure) propagates so the caller halts with the actionable hint.
     """
-    model_name, agent_name = ROLE_MODELS[role]
+    model_name, agent_name, provider = structured_role_routing(role)
+    # Gemini uses the module-global instructor_client (also the patch point for the unit tests); the
+    # Anthropic client is built lazily and requires an explicit max_tokens on every call.
+    is_claude = provider == PROVIDER_CLAUDE
+    extra_kwargs = {"max_tokens": ANTHROPIC_MAX_TOKENS} if is_claude else {}
 
     @with_api_retry(max_retries=3, agent_name=agent_name)
     async def _invoke(msgs: list[dict]) -> tuple:
         safe_msgs = _relocate_jinja_system_messages(msgs)
+        client = get_anthropic_instructor_client() if is_claude else instructor_client
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
             None,
-            lambda: instructor_client.chat.completions.create_with_completion(
+            lambda: client.chat.completions.create_with_completion(
                 model=model_name,
                 response_model=response_model,
                 messages=safe_msgs,
+                **extra_kwargs,
             ),
         )
 

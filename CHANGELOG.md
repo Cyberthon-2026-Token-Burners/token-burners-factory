@@ -9,6 +9,33 @@ Decision Record (ADR) is linked from the version heading.
 
 ## [Unreleased]
 
+### Added
+- **Whole-pipeline provider switch (`MODEL_PROVIDER` env / `--provider` CLI flag).** A single knob forces
+  every role onto one LLM provider, overriding the default mixed routing:
+  - `api` / `google` / `gemini` → **Gemini everywhere**: the structured roles keep their `ROLE_MODELS`
+    Gemini models, and the Developer runs on a new **structured Gemini emitter**
+    (`src/development/agents/developer.py::_run_developer_gemini`) that returns a `DeveloperFileSet`
+    (`DeveloperFileWrite{file_path, content}` + `files_to_delete`) materialized into the run's `repo/`
+    sandbox — instead of the agentic Claude CLI.
+  - `claude` / `anthropic` → **Claude everywhere**: every structured role routes through the **Anthropic
+    API** (`instructor.from_anthropic`, `CLAUDE_API_MODEL`, `ANTHROPIC_MAX_TOKENS`); the Developer stays
+    the Claude CLI.
+  - unset / `default` → today's mixed routing (Gemini structured roles + Claude-CLI Developer).
+  The flag is applied in `parse_args` (`set_model_provider`) before any role resolves a model; it is a
+  runtime knob, **not persisted** (re-pass it on `--resume`). New config seam: `active_provider` /
+  `set_model_provider` / `normalize_provider`, `structured_role_routing`, `developer_provider`,
+  `get_anthropic_instructor_client`, the `PROVIDER_*` constants, and `DEVELOPER_GEMINI_MODEL`.
+- **Anthropic API cost estimation.** `estimate_anthropic_cost_usd` + `ANTHROPIC_PRICING` (USD/1M tokens,
+  cache-aware) estimate spend on the provider=claude structured path (the raw Anthropic API returns token
+  counts, no cost — unlike the authoritative Claude CLI); `observability.log_token_usage` now branches on
+  the response shape (Gemini `usage_metadata` vs Anthropic `.usage`) and records both. `anthropic` is a new
+  **optional** dependency (`requirements.txt`), imported lazily and needed only under provider=claude.
+
+### Changed
+- **`check_environment` is now provider-aware.** It requires only the credentials/binaries the active
+  provider actually exercises: `GEMINI_API_KEY` only when Gemini runs, `ANTHROPIC_API_KEY` only under
+  provider=claude, and the `claude` binary only when the Developer is the CLI.
+
 ## [v0.25.0] - 2026-06-25 — Deployment & tooling hardening: reachable/isolated services, environment-not-agent failures, autonomous URL publish
 
 ADR: [0026-deploy-target-registry-and-reachability-gates](./docs/decisions/0026-deploy-target-registry-and-reachability-gates.md)

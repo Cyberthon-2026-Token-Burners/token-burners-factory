@@ -140,6 +140,38 @@ class TechLeadContract(BaseModel):
             )
         return v
 
+
+class DeveloperFileWrite(BaseModel):
+    """One file the Gemini Developer creates or overwrites (provider=gemini path)."""
+    file_path: str = Field(description="Repo-root-relative path of the file to write (e.g. 'src/main.py'). NEVER absolute, never starts with '/', never escapes the repo root with '..'.")
+    content: str = Field(description="The COMPLETE final contents of the file — not a diff or a snippet. The file is overwritten verbatim with this text.")
+
+    @field_validator("file_path")
+    @classmethod
+    def _normalize_file_path(cls, v: str) -> str:
+        # Keep writes INSIDE the clone, same normalization as the contract's files_to_modify.
+        return normalize_repo_rel_path(v)
+
+
+class DeveloperFileSet(BaseModel):
+    """Structured output of the Developer when running on Gemini (provider=gemini). Since Gemini is a
+    single-shot structured model (not the agentic Claude CLI), it RETURNS the full set of files to write
+    rather than editing them in place; the node materializes them under the run's repo/ sandbox."""
+    files: list[DeveloperFileWrite] = Field(
+        default_factory=list,
+        description="Every source file required to satisfy the contract, each with its COMPLETE contents. Implement the full ticket — do not leave TODOs or stubs.",
+    )
+    files_to_delete: list[str] = Field(
+        default_factory=list,
+        description="Repo-root-relative paths of any existing files that must be removed (e.g. out-of-scope files flagged on a correction). Empty when nothing is deleted.",
+    )
+
+    @field_validator("files_to_delete")
+    @classmethod
+    def _normalize_deletions(cls, v: list[str]) -> list[str]:
+        return [normalize_repo_rel_path(f) for f in v]
+
+
 class AgentUsage(BaseModel):
     provider: str = "gemini"   # "gemini" (cost estimated) | "claude" (cost authoritative from CLI)
     plane: str = "development" # control plane this agent belongs to: nexus | development | deployment
