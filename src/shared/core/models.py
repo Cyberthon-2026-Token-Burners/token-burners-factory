@@ -121,6 +121,17 @@ class TechLeadContract(BaseModel):
     techlead_reasoning: str = Field(description="Justification for the chosen design.")
     domain_tags: list[str] = Field(description="Up to 5 lowercase tags for the target tech stack/language AND business domain — e.g. 'python', 'dotnet', 'typescript', 'math', 'database'. The language tag acts as the dynamic skill router and MUST be declared first.", default_factory=list)
     environment_id: str = Field(..., description="The Paved-Road platform id (e.g. 'python-3.12-core') this ticket executes on, copied verbatim from the ticket/blueprint. MUST be one of the strictly supported environments.")
+    working_directory: str | None = Field(
+        default=None,
+        description="Repo-root-relative subdirectory for all sandbox gate execution. "
+                    "None = repo root (single-runtime apps). For monorepo tickets: 'backend' or 'frontend'.")
+
+    @field_validator("working_directory")
+    @classmethod
+    def _validate_working_directory(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        return normalize_repo_rel_path(v)
 
     @field_validator("files_to_modify")
     @classmethod

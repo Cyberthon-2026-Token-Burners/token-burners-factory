@@ -704,6 +704,14 @@ def _cap_text(text: str, max_chars: int = FEEDBACK_MAX_CHARS) -> str:
     return f"{text[:half]}\n…[truncated]…\n{text[-half:]}"
 
 
+def _sandbox_root(ctx: GlobalPipelineContext) -> Path:
+    """Resolve the gate execution root: repo root for single-runtime tickets, subdir for monorepo."""
+    base = ctx.workspace_paths.repo_dir
+    if ctx.contract and ctx.contract.working_directory:
+        return base / ctx.contract.working_directory
+    return base
+
+
 def reconcile_feedback_routing(review_report, arbiter_verdict):
     """Single SSOT for assigning the two isolated feedback channels (BACKLOG #18/#25).
 
@@ -1444,7 +1452,7 @@ async def run_executor(cfg: RunConfig, run_dir: Path, resume_checkpoint: Path | 
                 # reroutes to the Developer (no functional-budget spent), exactly like the doc guardrail.
                 build_ok, build_lines = await _timed_phase(
                     ctx.telemetry, "build",
-                    run_build_gate(ctx.contract.environment_id, str(ctx.workspace_paths.repo_dir)),
+                    run_build_gate(ctx.contract.environment_id, str(_sandbox_root(ctx))),
                 )
                 if build_ok:
                     break  # documented + compiles → proceed to gates/Reviewer
@@ -1457,7 +1465,7 @@ async def run_executor(cfg: RunConfig, run_dir: Path, resume_checkpoint: Path | 
                     log.warning("🔶 Compile gate failed on a NETWORK/restore error (not a code defect) — retrying the build once before judging.")
                     build_ok, build_lines = await _timed_phase(
                         ctx.telemetry, "build",
-                        run_build_gate(ctx.contract.environment_id, str(ctx.workspace_paths.repo_dir)),
+                        run_build_gate(ctx.contract.environment_id, str(_sandbox_root(ctx))),
                     )
                     if build_ok:
                         break
@@ -1509,7 +1517,7 @@ async def run_executor(cfg: RunConfig, run_dir: Path, resume_checkpoint: Path | 
         for qa_gate_retries in range(QA_GATE_MAX_REROUTES + 1):
             tc_ok, tc_lines = await _timed_phase(
                 ctx.telemetry, "test-compile",
-                run_test_compile_gate(ctx.contract.environment_id, str(ctx.workspace_paths.repo_dir)),
+                run_test_compile_gate(ctx.contract.environment_id, str(_sandbox_root(ctx))),
             )
             if tc_ok:
                 break
@@ -1555,11 +1563,11 @@ async def run_executor(cfg: RunConfig, run_dir: Path, resume_checkpoint: Path | 
         for lint_retries in range(LINT_GATE_MAX_REROUTES + 1):
             await _timed_phase(
                 ctx.telemetry, "format",
-                run_format_pass(ctx.contract.environment_id, str(ctx.workspace_paths.repo_dir)),
+                run_format_pass(ctx.contract.environment_id, str(_sandbox_root(ctx))),
             )
             lint_ok, lint_lines = await _timed_phase(
                 ctx.telemetry, "lint",
-                run_lint_gate(ctx.contract.environment_id, str(ctx.workspace_paths.repo_dir)),
+                run_lint_gate(ctx.contract.environment_id, str(_sandbox_root(ctx))),
             )
             if lint_ok:
                 break
@@ -1635,11 +1643,11 @@ async def run_executor(cfg: RunConfig, run_dir: Path, resume_checkpoint: Path | 
             asyncio.gather(
                 run_qa_unit_tests(
                     environment_id=ctx.contract.environment_id,
-                    repo_root=str(ctx.workspace_paths.repo_dir),
+                    repo_root=str(_sandbox_root(ctx)),
                 ),
                 run_security_scan(
                     environment_id=ctx.contract.environment_id,
-                    repo_root=str(ctx.workspace_paths.repo_dir),
+                    repo_root=str(_sandbox_root(ctx)),
                 ),
             ),
         )
@@ -1719,8 +1727,10 @@ async def run_executor(cfg: RunConfig, run_dir: Path, resume_checkpoint: Path | 
                 amend_allowed = ctx.contract_amendments < MAX_CONTRACT_AMENDMENTS
                 if verdict.route == "contract" and amend_allowed:
                     pinned_env = ctx.contract.environment_id
+                    pinned_wd  = ctx.contract.working_directory
                     await run_techlead_node(ctx, amendment_feedback=verdict.contract_amendment_directive)
-                    ctx.contract.environment_id = pinned_env   # PIN: amendment never thrashes the platform
+                    ctx.contract.environment_id    = pinned_env   # PIN: amendment never thrashes the platform
+                    ctx.contract.working_directory = pinned_wd    # PIN: amendment never changes the sandbox root
                     ctx.contract_amendments += 1
                     regenerate_tests = True                    # QA re-derives tests vs the amended contract
                     ctx.error_trace = ""                       # stale: referenced the pre-amendment contract

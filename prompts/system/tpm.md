@@ -33,6 +33,7 @@ Return a `tasks` array; each ticket carries these fields:
 Each ticket's description MUST contain these sections, fully populated from the Blueprint:
 - **Objective:** one imperative sentence — what this task delivers.
 - **Environment:** restate the ticket's `environment_id` (the platform id from the output schema) inline so the executor sees it without the schema.
+- **Component:** the component this ticket belongs to (`BACKEND`, `FRONTEND`, `INFRA`, or `SHARED`). Required when the Blueprint is a fullstack monorepo; omit for single-runtime apps.
 - **File Path(s):** exact path(s) relative to the repo root that this task creates or modifies — PRODUCTION files, plus the test-PROJECT scaffold (directory + build manifest) where rule 5 requires it; NEVER individual test-CASE files (see rule 5).
 - **Tech Stack:** the exact libraries/runtime + pinned versions relevant to THIS task (copied from the Blueprint).
 - **Dependencies:** prior `TASK-XX` ids and any external packages required.
