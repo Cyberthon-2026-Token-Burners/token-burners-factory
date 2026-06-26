@@ -881,7 +881,11 @@ still runs fully offline and fails on a planted finding.
 
 ### CLI ergonomics
 
-## 30. [P3] `--idea` accepts only a raw string — no way to pass a long idea from a file
+## 30. [P3] ✅ RESOLVED — `--idea` accepts only a raw string — no way to pass a long idea from a file
+**Resolved:** `resolve_idea()` in `parse_args()` (`src/nexus/runner.py`) now reads + strips an existing
+file path, else uses the string verbatim; help text documents the dual mode. Tests in
+`tests/framework/test_orchestrator.py` (`ParseArgsProjectVerbsTests`). See `CHANGELOG.md`.
+
 **Symptom:** `--idea` is parsed as a single CLI string; ideas longer than a few sentences are awkward to
 pass (quoting, shell escaping) and cannot be stored in version control as a first-class artifact.
 **Fix direction:** in `parse_args()` (`src/nexus/runner.py`), resolve `cfg.idea` through a one-liner

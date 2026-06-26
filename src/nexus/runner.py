@@ -72,6 +72,27 @@ class RunConfig:
     budget_usd: Decimal | None = None  # --budget: app-wide money ceiling override for this invocation (E5); None → PIPELINE_APP_BUDGET_USD
 
 
+def resolve_idea(raw: str) -> str:
+    """Dual-mode ``--idea``: an existing file path → its stripped UTF-8 contents; else ``raw`` verbatim.
+
+    Lets a long idea live as a version-controlled artifact (e.g. ``idea.md``) instead of a
+    shell-escaped one-liner. Only an EXISTING regular file is treated as a path; any other string is
+    the idea itself. ``Path.is_file()`` is guarded against ``OSError`` so a very long literal idea
+    (which would overflow the OS path limit, ENAMETOOLONG) is treated as text, not crashed on.
+    """
+    try:
+        is_file = Path(raw).is_file()
+    except OSError:
+        is_file = False  # raw too long / invalid as a path → it's a literal idea, not a file
+    if not is_file:
+        return raw
+    text = Path(raw).read_text(encoding="utf-8").strip()
+    if not text:
+        log.error(f"🚨 --idea file is empty: {raw}")
+        sys.exit(1)
+    return text
+
+
 def parse_args() -> RunConfig:
     parser = argparse.ArgumentParser(
         description="Antigravity SDLC Orchestrator — git-anchored, per-run isolated pipeline."
@@ -94,7 +115,9 @@ def parse_args() -> RunConfig:
                              "(e.g. --resume my-proj 002). Project slug alone continues the latest Nexus run.")
     parser.add_argument("--reset-attempts", action="store_true", help="Reset circuit breaker counter on resume.")
     parser.add_argument("--push", action="store_true", help="Push the feature branch to origin after the atomic success commit.")
-    parser.add_argument("--idea", help="Raw idea → start a NEW project and run the Nexus planning pipeline.")
+    parser.add_argument("--idea", help="Idea for a NEW project → runs the Nexus planning pipeline. "
+                        "Accepts a raw string OR a path to a UTF-8 file holding the idea (an existing "
+                        "file path is read + stripped; anything else is used verbatim).")
     parser.add_argument("--auto-execute", action="store_true",
                         help="With --idea: after planning, drive the Executor over ALL planned tickets in "
                              "order (TASK-01→merge→TASK-02→…; E3). Requires --repo to clone, and IMPLIES "
@@ -115,6 +138,11 @@ def parse_args() -> RunConfig:
                              "the batch's git push credentials.")
 
     args = parser.parse_args()
+
+    # Dual-mode --idea: resolve a file path to its contents once, so every downstream consumer
+    # (run_nexus, projects.create, GlobalPipelineContext, techwriter) gets a plain idea string. (#30)
+    if args.idea:
+        args.idea = resolve_idea(args.idea)
 
     # --auto-merge needs the branch on origin before a PR can reference it, so it implies --push.
     push = args.push or args.auto_merge

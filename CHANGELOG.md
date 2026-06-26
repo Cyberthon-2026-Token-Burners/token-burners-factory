@@ -9,6 +9,13 @@ Decision Record (ADR) is linked from the version heading.
 
 ## [Unreleased]
 
+### Added
+- **`--idea` accepts a file path (BACKLOG #30).** `--idea` now takes either a raw string OR a path to a
+  UTF-8 file holding the idea: an existing file path is read + stripped, anything else is used verbatim.
+  Lets a long idea live as a version-controlled artifact instead of a shell-escaped one-liner. Resolved
+  once in `parse_args()` via a new `resolve_idea()` helper (`src/nexus/runner.py`), so every downstream
+  consumer still receives a plain string. An existing-but-empty idea file fails fast.
+
 ## [v0.25.0] - 2026-06-25 — Deployment & tooling hardening: reachable/isolated services, environment-not-agent failures, autonomous URL publish
 
 ADR: [0026-deploy-target-registry-and-reachability-gates](./docs/decisions/0026-deploy-target-registry-and-reachability-gates.md)

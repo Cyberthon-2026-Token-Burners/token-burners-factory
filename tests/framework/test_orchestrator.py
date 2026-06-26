@@ -146,6 +146,33 @@ class ParseArgsProjectVerbsTests(unittest.TestCase):
         self.assertEqual(cfg.idea, "json to csv")
         self.assertEqual(cfg.repo, "git@h:r.git")
 
+    def test_idea_raw_string_passes_through_unchanged(self) -> None:
+        # #30: a string that is not an existing file path is the idea verbatim (no path resolution).
+        cfg = self._parse("--idea", "json to csv converter")
+        self.assertEqual(cfg.idea, "json to csv converter")
+
+    def test_idea_resolves_an_existing_file_to_its_stripped_contents(self) -> None:
+        # #30: an existing file path → its stripped UTF-8 contents (long ideas as VC'd artifacts).
+        with TemporaryDirectory() as tmp:
+            idea_file = Path(tmp) / "idea.md"
+            idea_file.write_text("\n  Build a multi-tenant billing service.\n\n", encoding="utf-8")
+            cfg = self._parse("--idea", str(idea_file))
+        self.assertEqual(cfg.idea, "Build a multi-tenant billing service.")
+
+    def test_idea_empty_file_exits(self) -> None:
+        # #30: an existing-but-empty idea file is an operator error → fail fast, not an empty idea.
+        with TemporaryDirectory() as tmp:
+            idea_file = Path(tmp) / "empty.md"
+            idea_file.write_text("   \n", encoding="utf-8")
+            with self.assertRaises(SystemExit):
+                self._parse("--idea", str(idea_file))
+
+    def test_idea_very_long_literal_does_not_crash_on_path_check(self) -> None:
+        # #30: a literal idea longer than the OS path limit must be treated as text, not crash is_file().
+        long_idea = "x" * 5000
+        cfg = self._parse("--idea", long_idea)
+        self.assertEqual(cfg.idea, long_idea)
+
     def test_idea_auto_execute_implies_auto_merge_and_push(self) -> None:
         # E3: a multi-ticket batch only composes if each ticket merges to main before the next clone,
         # so --auto-execute turns on --auto-merge (and therefore --push) without an explicit flag.
