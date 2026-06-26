@@ -407,14 +407,24 @@ async def run_claude_cli_oneshot(
         log.error(f"🚨 Structured Claude CLI blocked by Claude provider quota/session limit: {quota_hint}")
         raise ClaudeCliQuotaExhausted(quota_hint)
     # Native structured output (CLI --json-schema): the validated object lands in `structured_output` on
-    # the result envelope — the reliable path. Fall back to the FULL assistant text (reconstructed from
-    # every streamed text block, robust across multi-event answers) else the `result` field for parsing.
+    # the result envelope — the reliable path. Fall back to text for parsing when structured is absent.
+    #
+    # Text source selection: `_full_assistant_text` reconstructs the answer from streamed assistant
+    # events, but when --json-schema is active with a complex schema (Pydantic $defs / $ref), the CLI
+    # may emit only REASONING content in assistant blocks (e.g. a file tree, a markdown paragraph) while
+    # placing the complete JSON answer exclusively in the result envelope's "result" field. In that case
+    # `_full_assistant_text` returns the partial reasoning fragment, and the `if not text:` guard never
+    # reaches the result field — so `_extract_json_object` receives non-JSON content and fails.
+    # Fix: always read the result envelope and take whichever source is longer; the result field is the
+    # authoritative complete answer and is never shorter than a partial reasoning fragment.
     structured = _structured_output_from_stream(stdout_buffer)
+    joined = "\n".join(stdout_buffer)
     text = _full_assistant_text(stdout_buffer)
-    if not text:
-        envelope = _find_result_envelope("\n".join(stdout_buffer))
-        text = (envelope or {}).get("result", "") or ""
-    usage = parse_claude_usage("\n".join(stdout_buffer))
+    envelope = _find_result_envelope(joined)
+    result_text = (envelope or {}).get("result", "") or ""
+    if len(result_text) > len(text):
+        text = result_text
+    usage = parse_claude_usage(joined)
     return text, structured, usage
 
 
