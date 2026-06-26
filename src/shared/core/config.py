@@ -41,9 +41,9 @@ DEVOPS_MODEL = GEMINI_3_5_FLASH       # Deploy-scaffolding finalizer (E4); match
 # Nexus Control Plane roles (Product Owner / Solution Architect / TPM). Defaulted to the
 # cheap flash-lite tier to match the worker roles and keep the PoC inexpensive; SA/TPM can be
 # bumped to GEMINI_2_5_PRO for deeper architectural reasoning.
-PO_MODEL = GEMINI_3_5_FLASH
-SA_MODEL = GEMINI_3_5_FLASH
-TPM_MODEL = GEMINI_3_5_FLASH
+PO_MODEL = GEMINI_2_5_FLASH     # lighter tier — avoids gemini-3.5-flash 503 high-demand spikes
+SA_MODEL = GEMINI_2_5_FLASH
+TPM_MODEL = GEMINI_2_5_FLASH
 # Available Claude models for the Developer agent (Claude CLI). The CLI --model accepts a tier
 # ALIAS (always resolves to the latest of that tier) or a pinned full id for reproducibility.
 # Ordered most → least capable / expensive:
