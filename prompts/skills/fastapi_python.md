@@ -2,13 +2,13 @@
 skill_id: fastapi_python
 type: domain
 triggers: [fastapi, backend]
-nodes: [developer, qa]
+nodes: [techlead, developer, qa]
 ---
 LANGUAGE TARGET: Python / FastAPI — production-code rules for a FastAPI backend in a fullstack monorepo.
 
 ## Project layout
 - All backend source code lives under `backend/` (relative to the repo root). Entry point: `backend/main.py` (or `backend/app/main.py` per the blueprint topology).
-- Dependency manifest: `backend/requirements.txt` — declare EVERY third-party runtime AND test dependency (e.g. `fastapi`, `uvicorn[standard]`, `pydantic`, `httpx`, `pytest`, `pytest-asyncio`), version-pinned, one per line. The toolchain restores from `pip install -r requirements.txt` inside the `backend/` sandbox root; a `pyproject.toml` alone is NOT sufficient.
+- Dependency manifest: `requirements.txt` at the **repository root** (NOT `backend/requirements.txt`) — declare EVERY third-party runtime AND test dependency (e.g. `fastapi`, `uvicorn[standard]`, `pydantic`, `httpx`, `pytest`, `pytest-asyncio`), version-pinned, one per line. The sandbox mounts the repo root at `/workspace` and restores with `pip install -r requirements.txt` from there; a manifest under `backend/` is never found. A `pyproject.toml` alone is NOT sufficient. `requirements.txt` MUST be in `files_to_modify` in the TechLead contract.
 
 ## FastAPI conventions
 - Define the application factory in a dedicated `create_app()` function so it can be instantiated independently in tests.

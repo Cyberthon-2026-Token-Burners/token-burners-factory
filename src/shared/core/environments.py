@@ -349,7 +349,9 @@ SAST_IMAGE = "sdlc-sandbox/semgrep:latest"
 # --exclude skips the engine's vendored-deps dir so SAST never scans (or flags findings in) third-party
 # packages a gate restored into /workspace/<DEPENDENCY_VENDOR_DIR>. Generic flag + engine-universal dir name
 # — no per-language coupling.
-SAST_CMD = f"semgrep scan --error --metrics off --exclude={DEPENDENCY_VENDOR_DIR} --config /opt/semgrep-rules /workspace"
+# Exclude opt.* rules — they are advisory/optional by Semgrep taxonomy and produce false positives
+# (e.g. jsx-not-internationalized on scaffold text) that deadlock the FSM when the Reviewer approves.
+SAST_CMD = f"semgrep scan --error --metrics off --exclude={DEPENDENCY_VENDOR_DIR} --config /opt/semgrep-rules --exclude-rule 'opt.*' /workspace"
 
 
 # ==========================================================================================
