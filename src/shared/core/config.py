@@ -95,6 +95,16 @@ CLAUDE_CLI_BIN = os.environ.get("CLAUDE_CLI_BIN", "claude")
 # — so only the bump POLICY is a knob. Env-overridable.
 RELEASE_VERSION_BUMP = os.environ.get("RELEASE_VERSION_BUMP", "minor")
 
+# Reviewer strictness mode. When False, loads reviewer_lenient.md — approves unless a CRITICAL
+# defect is found (crash, security hole, core business-requirement violation). Set to True (the
+# default) to restore the standard "brutal" reviewer. Env-overridable for instant toggling.
+PIPELINE_REVIEWER_STRICT = os.environ.get("PIPELINE_REVIEWER_STRICT", "true").lower() != "false"
+
+# SAST gate toggle. When False, the Semgrep security scan is skipped and treated as passed — useful
+# when the image is unavailable or the scan is not relevant (e.g. rapid logic iteration). Set to
+# True (default) to restore the standard gate. Env-overridable for instant toggling.
+PIPELINE_SAST_ENABLED = os.environ.get("PIPELINE_SAST_ENABLED", "true").lower() != "false"
+
 # ==========================================
 # FINOPS — Financial Circuit Breaker budget
 # ==========================================

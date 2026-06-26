@@ -18,7 +18,7 @@ from src.shared.core.observability import log, reconfigure_logging
 from src.shared.core.observability import log_finops_summary as _render_finops_summary
 from src.shared.core.config import (
     check_environment, PIPELINE_APP_BUDGET_USD, PIPELINE_APP_BUDGET_FLOOR_USD,
-    EFFECTIVE_BUDGET_USD, effective_budget_usd, RELEASE_VERSION_BUMP,
+    EFFECTIVE_BUDGET_USD, effective_budget_usd, RELEASE_VERSION_BUMP, PIPELINE_SAST_ENABLED,
 )
 from src.shared.core.models import GlobalPipelineContext, WorkspacePaths, RUNS_BASE, BatchState, PipelineTelemetry
 from src.shared.core.runs import Projects
@@ -1638,6 +1638,17 @@ async def run_executor(cfg: RunConfig, run_dir: Path, resume_checkpoint: Path | 
         log.debug("Triggering parallel validation gates (QA & Security)")
         # Timed as ONE "qa+sast" phase = the gather's true wall-clock (= max of the two, they run in
         # parallel), so the parallel work is NOT double-counted in the infra total.
+        async def _sast_stub() -> tuple[bool, list[str]]:
+            return True, ["SAST disabled (PIPELINE_SAST_ENABLED=false)."]
+
+        sast_coro = (
+            run_security_scan(
+                environment_id=ctx.contract.environment_id,
+                repo_root=str(_sandbox_root(ctx)),
+            )
+            if PIPELINE_SAST_ENABLED
+            else _sast_stub()
+        )
         qa_result, sec_result = await _timed_phase(
             ctx.telemetry, "qa+sast",
             asyncio.gather(
@@ -1645,14 +1656,13 @@ async def run_executor(cfg: RunConfig, run_dir: Path, resume_checkpoint: Path | 
                     environment_id=ctx.contract.environment_id,
                     repo_root=str(_sandbox_root(ctx)),
                 ),
-                run_security_scan(
-                    environment_id=ctx.contract.environment_id,
-                    repo_root=str(_sandbox_root(ctx)),
-                ),
+                sast_coro,
             ),
         )
         qa_success, qa_lines = qa_result
         sec_success, sec_lines = sec_result
+        if not PIPELINE_SAST_ENABLED:
+            log.info("  [GATE][SAST-SECURITY] SKIPPED (PIPELINE_SAST_ENABLED=false)")
 
         # 5. Comprehensive Audit Phase (Reviewer Agent) — failure log sliced marker-aware so the root
         #    ImportError/Traceback is preserved even when buried above a long stack.
