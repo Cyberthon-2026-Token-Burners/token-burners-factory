@@ -11,6 +11,7 @@ LANGUAGE TARGET: Python / FastAPI — production-code rules for a FastAPI backen
 - All backend source code lives under `backend/` (relative to the repo root). Entry point: `backend/main.py` (or `backend/app/main.py` per the blueprint topology).
 - Dependency manifest: `requirements.txt` at the repository root — declare EVERY third-party runtime AND test dependency (e.g. `fastapi`, `uvicorn[standard]`, `pydantic`, `httpx`, `pytest`, `pytest-asyncio`), version-pinned, one per line. A `pyproject.toml` alone is NOT sufficient. `requirements.txt` MUST be in `files_to_modify` in the TechLead contract.
 - Dockerfile lives at `backend/Dockerfile`. Docker build context is always the **repository root** (`docker build -f backend/Dockerfile .`), so root-level files are accessible inside the build. Use `COPY requirements.txt .` — never `COPY backend/requirements.txt .`.
+- TechLead contract: do NOT set `working_directory` — leave it unset (null). All gate execution (dependency restore, tests, lint, security) runs from the repository root; the `env_overrides` in this skill are calibrated for `/workspace = repo root`.
 
 ## FastAPI conventions
 - Define the application factory in a dedicated `create_app()` function so it can be instantiated independently in tests.
