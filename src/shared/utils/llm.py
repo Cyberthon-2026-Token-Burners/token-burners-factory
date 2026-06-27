@@ -10,6 +10,7 @@ from src.shared.core.config import (
     instructor_client, structured_role_routing,
     PROVIDER_CLAUDE,
     DEVELOPER_CLI_TIMEOUT, DEVELOPER_CLI_IDLE_TIMEOUT,
+    CLAUDE_CLI_STRUCTURED_EFFORT,
 )
 from src.shared.core.observability import log, finish_reason_name
 from src.shared.utils.api_retry import with_api_retry
@@ -168,15 +169,16 @@ async def _run_structured_via_claude_cli(
     Returns ``(parsed_model, _ClaudeCliRaw)`` — the raw carries the summed usage across attempts so the
     caller's ``log_token_usage`` bills the role authoritatively. Raises after the attempt budget."""
     schema = response_model.model_json_schema()
-    schema_str = json.dumps(schema, ensure_ascii=False)
     base = _messages_to_prompt(messages)
+    # The schema is passed natively to the CLI via --json-schema (see run_claude_cli_oneshot below),
+    # so we do NOT embed it in the text prompt — that would double the schema tokens on every call.
+    # The directive only carries the behavioural constraint (minified JSON, escape rules).
     directive = (
         "\n\n=== OUTPUT FORMAT (STRICT) ===\n"
         "Respond with ONE single, COMPLETE JSON object and NOTHING else — no prose, no explanation, no "
         "markdown code fences. Emit it as minified JSON on a single line. Inside every string value you "
         "MUST escape each double quote as \\\" and each newline as \\n (never an unescaped \" or a literal "
-        "newline). Finish the object — the final character must be the closing }. Do NOT truncate. It MUST "
-        "validate against this JSON Schema:\n" + schema_str
+        "newline). Finish the object — the final character must be the closing }. Do NOT truncate."
     )
     agg = {"input_tokens": 0, "output_tokens": 0, "cache_read_tokens": 0,
            "cache_write_tokens": 0, "cost_usd": Decimal(0)}
@@ -186,6 +188,7 @@ async def _run_structured_via_claude_cli(
     for attempt in range(1, _CLI_STRUCTURED_MAX_ATTEMPTS + 1):
         text, structured, usage = await run_claude_cli_oneshot(
             prompt, model=model, json_schema=schema,
+            effort=CLAUDE_CLI_STRUCTURED_EFFORT,
             timeout=DEVELOPER_CLI_TIMEOUT, idle_timeout=DEVELOPER_CLI_IDLE_TIMEOUT,
         )
         last_text = text

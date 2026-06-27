@@ -332,6 +332,7 @@ async def run_claude_cli(
 
 async def run_claude_cli_oneshot(
     prompt: str, model: str | None = None, json_schema: dict | None = None,
+    effort: str | None = None,
     timeout: float | None = None, idle_timeout: float | None = None,
 ) -> tuple[str, dict | None, dict | None]:
     """One-shot, NON-agentic Claude Code CLI call: send ``prompt``, return ``(answer_text, structured, usage)``.
@@ -353,9 +354,11 @@ async def run_claude_cli_oneshot(
     cmd = [CLAUDE_CLI_BIN, "-p", prompt, "--output-format", "stream-json", "--verbose"]
     if model:
         cmd += ["--model", model]
+    if effort:
+        cmd += ["--effort", effort]
     if json_schema is not None:
         cmd += ["--json-schema", json.dumps(json_schema)]
-    log.debug(f"Executing structured Claude CLI subprocess (model={model}, schema={'yes' if json_schema else 'no'}).")
+    log.debug(f"Executing structured Claude CLI subprocess (model={model}, effort={effort}, schema={'yes' if json_schema else 'no'}).")
     with tempfile.TemporaryDirectory(prefix="tbf_claude_struct_") as cwd:
         proc = await asyncio.create_subprocess_exec(
             *cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,

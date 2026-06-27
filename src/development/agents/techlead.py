@@ -50,13 +50,13 @@ async def run_techlead_node(ctx: GlobalPipelineContext, amendment_feedback: str 
         production_code = "\n\n".join(
             f"=== FILE: {p} ===\n{c}" for p, c in ctx.production_code_snapshot.items()
         ) or "No production code captured."
-        review = ctx.review_report.model_dump_json(indent=2) if ctx.review_report else "None"
+        review = ctx.review_report.model_dump_json() if ctx.review_report else "None"
         user_content = (
             "=== CONTRACT AMENDMENT MODE ===\n"
             "The current contract led the pipeline into a STUCK loop. Produce a REVISED contract that "
             "resolves the conflict described below. Keep `environment_id` UNCHANGED.\n\n"
             f"=== ARBITER AMENDMENT DIRECTIVE ===\n{amendment_feedback}\n\n"
-            f"=== CURRENT (FAILING) CONTRACT ===\n{ctx.contract.model_dump_json(indent=2)}\n\n"
+            f"=== CURRENT (FAILING) CONTRACT ===\n{ctx.contract.model_dump_json()}\n\n"
             f"=== REVIEWER REPORT ===\n{review}\n\n"
             f"=== GENERATED PRODUCTION CODE ===\n{production_code}\n\n"
             f"=== GENERATED TEST SUITE ===\n{ctx.test_code_snapshot}\n\n"

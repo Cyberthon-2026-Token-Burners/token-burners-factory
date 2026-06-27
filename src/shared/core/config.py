@@ -67,6 +67,11 @@ AVAILABLE_EFFORT_LEVELS = (EFFORT_LOW, EFFORT_MEDIUM, EFFORT_HIGH, EFFORT_XHIGH,
 DEVELOPER_MODEL  = os.environ.get("DEVELOPER_MODEL", CLAUDE_SONNET)   # any of AVAILABLE_CLAUDE_MODELS (or a pinned full id)
 DEVELOPER_EFFORT = os.environ.get("DEVELOPER_EFFORT", EFFORT_MEDIUM)  # any of AVAILABLE_EFFORT_LEVELS
 
+# Reasoning effort for STRUCTURED one-shot CLI roles (techlead, reviewer, qa, arbiter, …) on the
+# provider=claude path. These tasks only emit a JSON object, so "low" thinking budget is sufficient
+# and cuts thinking tokens significantly vs the default. Env-overridable to bump if a role hallucinates.
+CLAUDE_CLI_STRUCTURED_EFFORT = os.environ.get("CLAUDE_CLI_STRUCTURED_EFFORT", EFFORT_LOW)
+
 # ==========================================
 # PROVIDER SWITCH (single knob: which LLM provider drives EVERY role)
 # ==========================================
