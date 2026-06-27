@@ -91,6 +91,31 @@ class NexusRunDirTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("## Component: BACKEND", t1)
             self.assertIn("## Component: FRONTEND", t2)
 
+    async def test_component_tag_plain_string_when_tpm_returns_enum_objects(self) -> None:
+        # Regression: model_dump() returns ComponentType enum objects, not plain strings. f-string
+        # formatting of a str-subclass enum on Python 3.11+ produces "ComponentType.BACKEND" instead
+        # of "BACKEND", breaking _pin_working_directory_from_component's regex. The tag must always
+        # be the plain uppercase string value so the pinning regex (\w+) captures "BACKEND"/"FRONTEND".
+        from src.nexus.agents.tpm import ComponentType
+        tasks = [
+            {"ticket_id": "TASK-01", "title": "Backend", "description": "b", "environment_id": "python-3.12-core",
+             "component": ComponentType.BACKEND},
+            {"ticket_id": "TASK-02", "title": "Frontend", "description": "f", "environment_id": "node-22-web",
+             "component": ComponentType.FRONTEND},
+        ]
+        with TemporaryDirectory() as td:
+            run_dir = Path(td) / "run_enum"
+            p_po, p_sa, p_tpm = _patch_agents(tpm=tasks)
+            with p_po, p_sa, p_tpm:
+                await run_nexus("an idea", run_dir=run_dir)
+
+            t1 = (run_dir / "artifacts" / "TASK-01.md").read_text(encoding="utf-8")
+            t2 = (run_dir / "artifacts" / "TASK-02.md").read_text(encoding="utf-8")
+            self.assertIn("## Component: BACKEND", t1)
+            self.assertNotIn("ComponentType", t1)
+            self.assertIn("## Component: FRONTEND", t2)
+            self.assertNotIn("ComponentType", t2)
+
     async def test_task01_gitignore_covers_all_project_envs(self) -> None:
         # For a fullstack monorepo both python and node patterns must be present in TASK-01's gitignore.
         tasks = [
