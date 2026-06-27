@@ -714,7 +714,7 @@ def _sandbox_root(ctx: GlobalPipelineContext) -> Path:
 
 # Matches ONLY the engine-authored byte-stable heading nexus_runner writes (`## Component: BACKEND`),
 # never the TPM's `**Component:**` prose line — so the pin keys off the deterministic tag.
-_COMPONENT_TAG_RE = re.compile(r"^##\s*Component:\s*(\w+)", re.MULTILINE)
+_COMPONENT_TAG_RE = re.compile(r"^##\s*Component:\s*(?:\w+\.)?(\w+)", re.MULTILINE)
 
 
 def _pin_working_directory_from_component(ctx: GlobalPipelineContext) -> None:

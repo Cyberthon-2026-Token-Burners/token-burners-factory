@@ -50,8 +50,16 @@ LANGUAGE TARGET: Python / FastAPI — production-code rules for a FastAPI backen
 - **Test ONLY contracted behavior (scope discipline):** cover exactly the endpoints, status codes, and
   behaviors the contract / acceptance examples specify — never framework features the contract does not add.
   Do NOT test CORS/preflight unless the contract adds CORS middleware; do NOT test auth unless contracted.
-  FastAPI's default `redirect_slashes=True` makes a trailing-slash path (`/healthz/`) 307-redirect to the
-  canonical route (→ 200), so NEVER assert 404 for a trailing slash.
+- **Endpoint scope pre-flight (MANDATORY before writing any test class):** Extract every path listed in
+  `function_signatures`. A test class that targets a path NOT in that list is a hallucination — delete it.
+  Never write tests for an endpoint absent from `function_signatures`, regardless of what you infer from
+  the blueprint or general REST conventions.
+- **Trailing-slash rule:** FastAPI's default `redirect_slashes=True` makes a trailing-slash variant of any
+  contracted path 307-redirect to the canonical route and return **the contracted status code for that
+  route** (e.g. a trailing-slash `DELETE` that returns `204`, not `200`). Therefore: **NEVER assert `404`
+  for a trailing-slash variant of a contracted path.** If the trailing-slash behaviour is not explicitly
+  stated in the contract, **omit the trailing-slash test entirely** — do not guess or invent the expected
+  status code.
 - Every contracted endpoint MUST have at least one happy-path test and one key-error-path test (e.g. 404, 422 validation failure).
 - **Separate test execution**: backend tests run independently of frontend tests; do not mix test frameworks or import across the `backend/` ↔ `frontend/` boundary.
 

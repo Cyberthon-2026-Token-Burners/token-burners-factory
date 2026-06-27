@@ -12,6 +12,9 @@ system prompt; this skill only maps them to Python idioms.
 - Use ONLY the standard-library `unittest`. Parametrize with `self.subTest(case=...)` loops over an
   explicit input/expected data table — prefer one parametrized loop over near-duplicate methods.
 - STRICTLY BAN `pytest`, `parameterized`, and any third-party parametrization helper.
+- **Domain-skill override:** if a framework-specific domain skill (e.g. `fastapi_python`) is also
+  loaded, its **Testing** section governs the test runner and framework choice — follow that skill's
+  instructions instead of the `unittest`-only rule above.
 
 ## Assertions & Exceptions (concrete API for the system-prompt CRITICAL RULE)
 - Verify exceptions with `with self.assertRaises(ExceptionType):` ONLY. BAN `assertRaisesRegex` and any

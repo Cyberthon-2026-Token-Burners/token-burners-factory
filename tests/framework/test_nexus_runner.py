@@ -91,17 +91,16 @@ class NexusRunDirTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("## Component: BACKEND", t1)
             self.assertIn("## Component: FRONTEND", t2)
 
-    async def test_component_tag_plain_string_when_tpm_returns_enum_objects(self) -> None:
-        # Regression: model_dump() returns ComponentType enum objects, not plain strings. f-string
-        # formatting of a str-subclass enum on Python 3.11+ produces "ComponentType.BACKEND" instead
-        # of "BACKEND", breaking _pin_working_directory_from_component's regex. The tag must always
-        # be the plain uppercase string value so the pinning regex (\w+) captures "BACKEND"/"FRONTEND".
-        from src.nexus.agents.tpm import ComponentType
+    async def test_component_tag_plain_string_no_class_prefix(self) -> None:
+        # Regression: tpm.py used model_dump() (Python mode) which could return ComponentType enum
+        # instances; f-string formatting then produced "ComponentType.BACKEND" instead of "BACKEND",
+        # breaking _pin_working_directory_from_component's regex. Fix: model_dump(mode="json") in
+        # tpm.py always emits plain strings. nexus_runner.py reads those plain strings directly.
         tasks = [
             {"ticket_id": "TASK-01", "title": "Backend", "description": "b", "environment_id": "python-3.12-core",
-             "component": ComponentType.BACKEND},
+             "component": "BACKEND"},
             {"ticket_id": "TASK-02", "title": "Frontend", "description": "f", "environment_id": "node-22-web",
-             "component": ComponentType.FRONTEND},
+             "component": "FRONTEND"},
         ]
         with TemporaryDirectory() as td:
             run_dir = Path(td) / "run_enum"

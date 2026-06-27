@@ -101,4 +101,4 @@ async def run_tpm(epic_text: str, blueprint_text: str, telemetry: PipelineTeleme
         log_token_usage(telemetry, "Technical Project Manager Agent", raw_response, TPM_MODEL)
     log.info("   [THOUGHT] Decomposed the Blueprint into atomic, ordered Developer task tickets.")
     log.info(f"   [ARTIFACT] Planned {len(result.tasks)} task ticket(s).")
-    return [t.model_dump() for t in result.tasks]
+    return [t.model_dump(mode="json") for t in result.tasks]

@@ -60,7 +60,10 @@ not `/mnt/c/…`) — see [run-tests-via-wsl](../../rules/run-tests-via-wsl.md).
 ## Step 2 — Gather state (in this order)
 1. **Checkpoint** — `reports/checkpoint.json`. Executor (`GlobalPipelineContext`): `current_attempt`,
    `contract` (the TechLead spec — `instruction`, `function_signatures`, `architectural_constraints`,
-   `files_to_modify`, `environment_id`, `topology_contract`), `review_report`
+   `files_to_modify`, `environment_id`, `topology_contract`), `production_code_hash`/`prev_production_code_hash`
+   (E7 SHA-256 of the production snapshot, recomputed each cycle; the Arbiter receives a `production_code_changed`
+   boolean — a cycle where the Developer ran but produced zero diff routes QA-persistent failures as
+   `production_bug` even without new code), `review_report`
    (`code_quality_approved`/`test_integrity_approved` + `code_quality_analysis`/`test_integrity_analysis`/
    `log_verification_analysis` + `dev_diagnostic_payload`/`qa_diagnostic_payload`/`dev_evidence_citation`),
    `error_trace`/`qa_error_trace`, and the Arbiter fields `arbiter_verdict{root_cause_class,route,reasoning,
@@ -131,7 +134,10 @@ Then map the evidence to one class (decisive — pick the dominant one and say s
   [agent-contracts](../../rules/agent-contracts.md). NEVER hand-add the manifest to the run clone.
   **Monorepo note:** for a `fullstack_monorepo` ticket, the gate runs inside the component's
   `working_directory` (`backend/` or `frontend/`), so the missing manifest is `backend/requirements.txt` or
-  `frontend/package.json` — check the `topology_contract`/`working_directory` field in the checkpoint.
+  `frontend/package.json`. `working_directory` is **not** a checkpoint field — it is derived at runtime from
+  the `## Component: <BACKEND|FRONTEND>` tag the TPM writes into the ticket via `working_directory_for_component`
+  (`src/shared/core/environments.py`). Read the ticket's `## Component:` line or the `topology_contract`
+  `file_path` prefixes to infer which component's directory is under test.
 - **Guardrail hard-halt (Developer pre-Reviewer fast-fail loops)** — a Developer guardrail loop hit its
   `GUARDRAIL_MAX_REROUTES` cap and aborted *before* the Reviewer ever ran. Three distinct headers/causes,
   each pointing at a different fix:
@@ -160,6 +166,11 @@ Then map the evidence to one class (decisive — pick the dominant one and say s
   `reconcile_feedback_routing` (ADR 0024). So a genuine stuck loop now points at: a contract flaw the Arbiter
   didn't route to `contract`, a correct-but-unfixable repeated failure, or a mis-route that recurred on cycle 1
   (before the Arbiter is eligible) or that the Arbiter agreed with.
+  **E7 no-change tell:** if `production_code_hash == prev_production_code_hash` across a cycle (Developer ran,
+  produced zero diff), the Arbiter's `production_code_changed = False` routes persistent QA failures as
+  `production_bug` → Developer. Grep FinOps for a Developer call count that does not advance the code (diff
+  the checkpoint hashes), and cross-check whether the Developer actually had a viable path (a
+  contract/environment issue that prevents the file from being writable is the common cause).
 - **Developer CLI provider-quota exhaustion (infra halt — Claude session/usage limit)** — the agentic
   Developer's Claude CLI hit the subscription's rolling session/usage limit. **Tell:** a `You've hit your
   session limit · resets <time>` line in `sdlc_audit.log` (logged from `stream_claude_stdout`), the

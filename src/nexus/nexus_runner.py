@@ -142,11 +142,7 @@ async def run_nexus(
         description = task.get("description", "").strip()
         # Write the component tag as a byte-stable engine-authored section BEFORE the LLM description
         # so the TechLead reads it directly and never has to infer working_directory from file paths.
-        # model_dump() returns the ComponentType enum object; extract .value so the tag is the plain
-        # uppercase string ("BACKEND"), not the repr-style "ComponentType.BACKEND" Python produces for
-        # str-subclass enums in f-strings on Python 3.11+.
-        raw_component = task.get("component", "BACKEND")
-        component = raw_component.value if hasattr(raw_component, "value") else str(raw_component)
+        component = task.get("component", "BACKEND")
         if i == 1:
             description = f"{description}\n\n{build_gitignore_baseline_block(all_env_ids)}"
         ticket_path = state.artifacts_dir / f"{ticket_id}.md"
