@@ -3,13 +3,14 @@ skill_id: fastapi_python
 type: domain
 triggers: [fastapi, backend]
 nodes: [techlead, developer, qa]
-env_overrides: {"python-3.12-core": {"setup_cmd": "pip install --target=/workspace/.sdlc_deps -r /workspace/requirements.txt", "test_cmd": "PYTHONPATH=/workspace:/workspace/.sdlc_deps python -m pytest /workspace/tests/", "test_compile_cmd": "PYTHONPATH=/workspace:/workspace/.sdlc_deps python -m pytest --collect-only -q /workspace/tests/"}}
+env_overrides: {"python-3.12-core": {"test_cmd": "PYTHONPATH=/workspace:/workspace/.sdlc_deps python -m pytest /workspace/backend/tests/", "test_compile_cmd": "PYTHONPATH=/workspace:/workspace/.sdlc_deps python -m pytest --collect-only -q /workspace/backend/tests/"}}
 ---
 LANGUAGE TARGET: Python / FastAPI — production-code rules for a FastAPI backend in a fullstack monorepo.
 
 ## Project layout
 - All backend source code lives under `backend/` (relative to the repo root). Entry point: `backend/main.py` (or `backend/app/main.py` per the blueprint topology).
-- Dependency manifest: `requirements.txt` at the **repository root** (NOT `backend/requirements.txt`) — declare EVERY third-party runtime AND test dependency (e.g. `fastapi`, `uvicorn[standard]`, `pydantic`, `httpx`, `pytest`, `pytest-asyncio`), version-pinned, one per line. The sandbox mounts the repo root at `/workspace` and restores with `pip install -r requirements.txt` from there; a manifest under `backend/` is never found. A `pyproject.toml` alone is NOT sufficient. `requirements.txt` MUST be in `files_to_modify` in the TechLead contract.
+- Dependency manifest: `requirements.txt` at the repository root — declare EVERY third-party runtime AND test dependency (e.g. `fastapi`, `uvicorn[standard]`, `pydantic`, `httpx`, `pytest`, `pytest-asyncio`), version-pinned, one per line. A `pyproject.toml` alone is NOT sufficient. `requirements.txt` MUST be in `files_to_modify` in the TechLead contract.
+- Dockerfile lives at `backend/Dockerfile`. Docker build context is always the **repository root** (`docker build -f backend/Dockerfile .`), so root-level files are accessible inside the build. Use `COPY requirements.txt .` — never `COPY backend/requirements.txt .`.
 
 ## FastAPI conventions
 - Define the application factory in a dedicated `create_app()` function so it can be instantiated independently in tests.
