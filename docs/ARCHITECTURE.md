@@ -295,7 +295,7 @@ sequenceDiagram
     N->>FS: artifacts/{epic,blueprint,TASK-*.md} + NexusState checkpoint
     N-->>H: planned tickets (Nexus FinOps summary)
 
-    Note over H,X: --run &lt;project&gt; -f TASK-01 (one ticket)<br/>OR --auto-execute drives ALL tickets via run_batch (E3)<br/>under ONE money budget; halts cleanly if exhausted (E5)
+    Note over H,X: --run [project] -f TASK-01, one ticket<br/>OR --auto-execute drives ALL tickets via run_batch E3<br/>under ONE money budget; halts cleanly if exhausted E5
 
     loop each planned ticket → main, in TPM order (--auto-execute)
         X->>X: remaining = app_budget − app_telemetry.spent<br/>stop cleanly if remaining ≤ floor

@@ -5,7 +5,7 @@ from pathlib import Path
 from src.shared.core.observability import log
 from src.shared.core.environments import (
     SUPPORTED_ENVIRONMENTS, SAST_IMAGE, SAST_CMD, is_test_file, all_source_extensions,
-    dependency_manifest, resolve_environment,
+    dependency_manifest, resolve_environment, repo_map_ignore_dirs,
 )
 from src.shared.core.docker_adapter import execute_in_sandbox, run_in_image
 
@@ -237,9 +237,9 @@ def _has_test_files(environment_id: str, repo_root: str) -> bool:
     even present. None present → the functional gate is a no-op pass (e.g. a ticket with no testable
     source, like a thin scaffold/entrypoint). The Reviewer's test_integrity gate remains the backstop
     when tests WERE expected."""
+    ignore = repo_map_ignore_dirs(environment_id) | {".git"}
     for root, dirs, files in os.walk(repo_root):
-        if ".git" in dirs:
-            dirs.remove(".git")  # never descend into git internals
+        dirs[:] = [d for d in dirs if d not in ignore]
         if any(is_test_file(environment_id, name) for name in files):
             return True
     return False
