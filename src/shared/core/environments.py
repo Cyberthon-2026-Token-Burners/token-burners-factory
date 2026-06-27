@@ -170,7 +170,7 @@ SUPPORTED_ENVIRONMENTS = {
     "node-22-web": {
         "image": "sdlc-sandbox/node:latest",
         "build_cmd": "npm run build --if-present",
-        "test_cmd": "npm test",
+        "test_cmd": "CI=true npm test",
         "setup_cmd": "npm ci || npm install",
         # lint_cmd: HARD lint gate via the project's own eslint. SELF-GUARDS in the command itself: if the
         # clone carries no eslint config (flat eslint.config.* / legacy .eslintrc* / an "eslintConfig" key
