@@ -64,7 +64,7 @@ EFFORT_MAX    = "max"
 AVAILABLE_EFFORT_LEVELS = (EFFORT_LOW, EFFORT_MEDIUM, EFFORT_HIGH, EFFORT_XHIGH, EFFORT_MAX)
 
 # Developer agent (Claude CLI) — set each to any value from the catalogs above.
-DEVELOPER_MODEL  = os.environ.get("DEVELOPER_MODEL", CLAUDE_SONNET)   # any of AVAILABLE_CLAUDE_MODELS (or a pinned full id)
+DEVELOPER_MODEL  = os.environ.get("DEVELOPER_MODEL", CLAUDE_HAIKU)   # any of AVAILABLE_CLAUDE_MODELS (or a pinned full id)
 DEVELOPER_EFFORT = os.environ.get("DEVELOPER_EFFORT", EFFORT_MEDIUM)  # any of AVAILABLE_EFFORT_LEVELS
 
 # Reasoning effort for STRUCTURED one-shot CLI roles (techlead, reviewer, qa, arbiter, …) on the
