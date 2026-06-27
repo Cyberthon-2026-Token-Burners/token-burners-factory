@@ -261,7 +261,7 @@ async def run_claude_cli(
     Developer code defect.
     """
     _assert_within_root(files, allowed_root)
-    cmd = [CLAUDE_CLI_BIN, "-p", prompt, "--output-format", "stream-json", "--verbose"]
+    cmd = [CLAUDE_CLI_BIN, "-p", "-", "--output-format", "stream-json", "--verbose"]
     if model:
         cmd += ["--model", model]
     if effort:
@@ -272,9 +272,20 @@ async def run_claude_cli(
     # `.git`, which bounds Claude's upward project-root detection, so it loads the sandbox's
     # CLAUDE.md/.claude — NOT the orchestrator's `.claude/`/CLAUDE.md sitting in a parent directory.
     proc = await asyncio.create_subprocess_exec(
-        *cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        *cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         limit=_STREAM_LIMIT, cwd=allowed_root,
     )
+
+    # Feed the prompt via stdin concurrently with stdout/stderr reading to avoid pipe-buffer deadlock.
+    async def _feed_stdin_dev() -> None:
+        try:
+            proc.stdin.write(prompt.encode())
+            await proc.stdin.drain()
+            proc.stdin.close()
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+
+    stdin_task = asyncio.create_task(_feed_stdin_dev())
 
     loop = asyncio.get_event_loop()
     state = {"last": loop.time(), "killed": None}
@@ -309,10 +320,12 @@ async def run_claude_cli(
         proc.kill()
     finally:
         watchdog.cancel()
-        try:
-            await watchdog
-        except asyncio.CancelledError:
-            pass
+        stdin_task.cancel()
+        for t in (watchdog, stdin_task):
+            try:
+                await t
+            except asyncio.CancelledError:
+                pass
 
     await proc.wait()                  # reap — no <defunct> zombie
     if state["killed"]:
@@ -351,7 +364,7 @@ async def run_claude_cli_oneshot(
     The same two kill switches as `run_claude_cli` bound a stall (idle watchdog + hard wall-clock); on a
     kill the answer is empty. Raises `ClaudeCliQuotaExhausted` on a subscription session/usage-limit block.
     """
-    cmd = [CLAUDE_CLI_BIN, "-p", prompt, "--output-format", "stream-json", "--verbose"]
+    cmd = [CLAUDE_CLI_BIN, "-p", "-", "--output-format", "stream-json", "--verbose"]
     if model:
         cmd += ["--model", model]
     if effort:
@@ -361,9 +374,20 @@ async def run_claude_cli_oneshot(
     log.debug(f"Executing structured Claude CLI subprocess (model={model}, effort={effort}, schema={'yes' if json_schema else 'no'}).")
     with tempfile.TemporaryDirectory(prefix="tbf_claude_struct_") as cwd:
         proc = await asyncio.create_subprocess_exec(
-            *cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            *cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             limit=_STREAM_LIMIT, cwd=cwd,
         )
+
+        # Feed the prompt via stdin concurrently with stdout/stderr reading to avoid pipe-buffer deadlock.
+        async def _feed_stdin_struct() -> None:
+            try:
+                proc.stdin.write(prompt.encode())
+                await proc.stdin.drain()
+                proc.stdin.close()
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+
+        stdin_task = asyncio.create_task(_feed_stdin_struct())
 
         loop = asyncio.get_event_loop()
         state = {"last": loop.time(), "killed": None}
@@ -395,10 +419,12 @@ async def run_claude_cli_oneshot(
             proc.kill()
         finally:
             watchdog.cancel()
-            try:
-                await watchdog
-            except asyncio.CancelledError:
-                pass
+            stdin_task.cancel()
+            for t in (watchdog, stdin_task):
+                try:
+                    await t
+                except asyncio.CancelledError:
+                    pass
 
         await proc.wait()
 

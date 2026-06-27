@@ -18,19 +18,31 @@ async def run_arbiter_node(
     """Triage a stuck cycle into an ArbiterVerdict (route + reasoning [+ amendment directive])."""
     log_role_banner("arbiter", "⚖️")
 
-    production_code = "\n\n".join(
-        f"=== FILE: {p} ===\n{c}" for p, c in ctx.production_code_snapshot.items()
-    ) or "No production code captured."
-    review = ctx.review_report.model_dump_json(indent=2) if ctx.review_report else "None"
+
     production_code_changed = (
         not ctx.prev_production_code_hash
         or ctx.production_code_hash != ctx.prev_production_code_hash
+    )
+    # Skip sending the full code when it didn't change — the Arbiter's stuck-loop case is precisely
+    # when the Developer produced no new code, so the snapshot is identical to last cycle.
+    if production_code_changed:
+        production_code = "\n\n".join(
+            f"=== FILE: {p} ===\n{c}" for p, c in ctx.production_code_snapshot.items()
+        ) or "No production code captured."
+    else:
+        production_code = "(unchanged from previous cycle — see prior fix instructions above)"
+    # Exclude observability-only analysis texts; booleans + payloads + citation carry the decision signal.
+    review = (
+        ctx.review_report.model_dump_json(
+            exclude={"code_quality_analysis", "test_integrity_analysis", "log_verification_analysis"}
+        )
+        if ctx.review_report else "None"
     )
 
     user_content = (
         "A pipeline cycle FAILED again after a prior fix attempt. Classify the root cause and route it.\n\n"
         f"=== PRODUCTION CODE CHANGED THIS CYCLE ===\n{production_code_changed}\n\n"
-        f"=== ARCHITECT CONTRACT ===\n{ctx.contract.model_dump_json(indent=2)}\n\n"
+        f"=== ARCHITECT CONTRACT ===\n{ctx.contract.model_dump_json(exclude={'techlead_reasoning'})}\n\n"
         f"=== REVIEWER REPORT (this cycle) ===\n{review}\n\n"
         f"=== PRIOR DEVELOPER FIX INSTRUCTION (last cycle) ===\n{prev_dev_trace or 'None'}\n\n"
         f"=== PRIOR QA FIX INSTRUCTION (last cycle) ===\n{prev_qa_trace or 'None'}\n\n"

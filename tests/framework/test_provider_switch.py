@@ -170,7 +170,7 @@ class RunStructuredLlmRoutingTests(unittest.IsolatedAsyncioTestCase):
         usage = {"input_tokens": 5, "output_tokens": 2, "cache_read_tokens": 0,
                  "cache_write_tokens": 0, "cost_usd": Decimal("0.01")}
 
-        async def _fake_oneshot(prompt, model=None, json_schema=None, timeout=None, idle_timeout=None):
+        async def _fake_oneshot(prompt, model=None, json_schema=None, effort=None, timeout=None, idle_timeout=None):
             captured.update(prompt=prompt, model=model, schema=json_schema)
             # structured=None → exercises the free-text fallback parse path.
             return ('Here you go: {"answer": "hi"} done', None, usage)
@@ -197,7 +197,7 @@ class RunStructuredLlmRoutingTests(unittest.IsolatedAsyncioTestCase):
 
         set_model_provider("claude")
 
-        async def _fake_oneshot(prompt, model=None, json_schema=None, timeout=None, idle_timeout=None):
+        async def _fake_oneshot(prompt, model=None, json_schema=None, effort=None, timeout=None, idle_timeout=None):
             # structured_output present (CLI --json-schema) → no text parsing needed.
             return ("", {"answer": "native"}, {"input_tokens": 1, "output_tokens": 1,
                     "cache_read_tokens": 0, "cache_write_tokens": 0, "cost_usd": Decimal("0.02")})

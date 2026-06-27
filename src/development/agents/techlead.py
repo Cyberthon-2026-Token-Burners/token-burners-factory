@@ -47,16 +47,26 @@ async def run_techlead_node(ctx: GlobalPipelineContext, amendment_feedback: str 
     if amending:
         # Re-derivation: hand the model the failing contract + the Arbiter directive + the evidence so it
         # can produce a corrected spec. environment_id MUST stay byte-identical (pinned again in runner).
+        # Filter the snapshot to files_to_modify — the full codebase is redundant for contract amendment.
+        relevant_files = set(ctx.contract.files_to_modify)
         production_code = "\n\n".join(
-            f"=== FILE: {p} ===\n{c}" for p, c in ctx.production_code_snapshot.items()
+            f"=== FILE: {p} ===\n{c}"
+            for p, c in ctx.production_code_snapshot.items()
+            if p in relevant_files
         ) or "No production code captured."
-        review = ctx.review_report.model_dump_json() if ctx.review_report else "None"
+        # Exclude observability-only fields that add tokens without aiding amendment decisions.
+        review = (
+            ctx.review_report.model_dump_json(
+                exclude={"code_quality_analysis", "test_integrity_analysis", "log_verification_analysis"}
+            )
+            if ctx.review_report else "None"
+        )
         user_content = (
             "=== CONTRACT AMENDMENT MODE ===\n"
             "The current contract led the pipeline into a STUCK loop. Produce a REVISED contract that "
             "resolves the conflict described below. Keep `environment_id` UNCHANGED.\n\n"
             f"=== ARBITER AMENDMENT DIRECTIVE ===\n{amendment_feedback}\n\n"
-            f"=== CURRENT (FAILING) CONTRACT ===\n{ctx.contract.model_dump_json()}\n\n"
+            f"=== CURRENT (FAILING) CONTRACT ===\n{ctx.contract.model_dump_json(exclude={'techlead_reasoning'})}\n\n"
             f"=== REVIEWER REPORT ===\n{review}\n\n"
             f"=== GENERATED PRODUCTION CODE ===\n{production_code}\n\n"
             f"=== GENERATED TEST SUITE ===\n{ctx.test_code_snapshot}\n\n"

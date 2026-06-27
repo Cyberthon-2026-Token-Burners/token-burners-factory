@@ -185,18 +185,14 @@ async def run_qa_agent_node(ctx: GlobalPipelineContext, error_trace: str = "") -
         )
         qa_system_prompt += "\n\n=== TOPOLOGY CONTRACT (language-neutral dependency graph) ===\n" + topo
 
-    # When production code already exists (any regeneration after the Developer has run) it is the
-    # source of truth for symbol locations — this is what stops the import guessing that breaks
-    # test collection and triggers the QA↔Developer loop.
-    if ctx.production_code_snapshot:
-        snapshot = "\n\n".join(
-            f"=== FILE: {path} ===\n{content}"
-            for path, content in ctx.production_code_snapshot.items()
-        )
-        qa_system_prompt += f"\n\n=== PRODUCTION CODE SNAPSHOT (source of truth for imports) ===\n{snapshot}"
-
     if error_trace and ctx.test_code_snapshot:
         qa_system_prompt += f"\n\n=== PREVIOUS TEST SUITE STATE ===\n{ctx.test_code_snapshot}"
+
+    # Build a dependency lookup once for snapshot filtering inside _generate.
+    _topo_deps: dict[str, set[str]] = {
+        n.file_path: set(n.depends_on)
+        for n in (ctx.contract.topology_contract or [])
+    }
 
     feedback = f"\n\nPrevious failure feedback to address:\n{error_trace}" if error_trace else ""
 
@@ -219,11 +215,26 @@ async def run_qa_agent_node(ctx: GlobalPipelineContext, error_trace: str = "") -
         existing_source = test_path.read_text(encoding="utf-8") if test_path.exists() else ""
         if existing_source:
             user_prompt += f"\n\n=== EXISTING TEST SUITE ===\n{existing_source}"
+
+        # Inject only the files relevant to this module: itself + its direct topology dependencies.
+        # Avoids sending the entire codebase to every per-module LLM call (60-80% token reduction on
+        # multi-file apps where the full snapshot would repeat N times for N testable modules).
+        sys_prompt = qa_system_prompt
+        if ctx.production_code_snapshot:
+            relevant = {module_file} | _topo_deps.get(module_file, set())
+            snapshot = "\n\n".join(
+                f"=== FILE: {path} ===\n{content}"
+                for path, content in ctx.production_code_snapshot.items()
+                if path in relevant
+            )
+            if snapshot:
+                sys_prompt += f"\n\n=== PRODUCTION CODE SNAPSHOT (source of truth for imports) ===\n{snapshot}"
+
         suite, raw_response = await run_structured_llm(
             "qa",
             QATestSuite,
             [
-                {"role": "system", "content": qa_system_prompt},
+                {"role": "system", "content": sys_prompt},
                 {"role": "user", "content": user_prompt},
             ],
         )

@@ -54,7 +54,7 @@ async def run_techwriter_node(ctx: GlobalPipelineContext) -> None:
         else "(No usage guide yet.)"
     )
 
-    contract_text = ctx.contract.model_dump_json(indent=2) if ctx.contract else "(no contract)"
+    contract_text = ctx.contract.model_dump_json(exclude={"techlead_reasoning", "instruction"}) if ctx.contract else "(no contract)"
     environment_id = ctx.contract.environment_id if ctx.contract else "(unknown)"
     code_text = "\n\n".join(
         f"### {path}\n{content}" for path, content in sorted(ctx.production_code_snapshot.items())
